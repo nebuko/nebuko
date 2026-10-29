@@ -22,8 +22,8 @@ from build_output import (
     is_malformed_final_message,
     load_prev_state_or_recover,
 )
-from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
-from workflow_state import (
+from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     GateLock,
     GateStatus,
@@ -34,8 +34,8 @@ from workflow_state import (
     TurnStatus,
     WorkflowState,
 )
-from workflow_state.features.comment.to_git_comment import format_collapsed_section
-from workflow_state.features.to_json.to_json import state_to_json
+from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import format_collapsed_section
+from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
 
 
 class TestResolvePin(unittest.TestCase):
@@ -83,13 +83,13 @@ class TestAgentPrefsReachTheResolution(unittest.TestCase):
     """
 
     def setUp(self):
-        from agent_script.features.dispatch_next_tool import reset_registry
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool import reset_registry
 
         reset_registry()
 
     def test_dispatch_next_prefs_reach_resolution_and_pin(self):
         import build_output as bo
-        from agent_script.features.dispatch_next_tool import (
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
             DispatchNextTool,
             TurnOutcomeAction,
         )
@@ -110,7 +110,7 @@ class TestAgentPrefsReachTheResolution(unittest.TestCase):
 
     def test_finalize_route_prefs_reach_resolution_and_pin(self):
         import build_output as bo
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="conv-finalize-prefs")[0]
         tool.executor(
@@ -526,7 +526,7 @@ class TestGateLockArming(unittest.TestCase):
         """
         import build_output as bo
         from types import SimpleNamespace as NS
-        from workflow_state import GateLock, RunPrefs, WorkflowState
+        from nebuko.engine.lib.workflow_state import GateLock, RunPrefs, WorkflowState
 
         prior = WorkflowState(
             workflow="wf",
@@ -596,7 +596,7 @@ class TestGateLockArming(unittest.TestCase):
         """A non-consult run must not spend a round (issue #1003 review)."""
         import build_output as bo
         from types import SimpleNamespace as NS
-        from workflow_state import GateLock, RunPrefs, WorkflowState
+        from nebuko.engine.lib.workflow_state import GateLock, RunPrefs, WorkflowState
 
         prior = WorkflowState(
             workflow="wf",
@@ -753,7 +753,7 @@ class TestIsHumanGateHold(unittest.TestCase):
         from types import SimpleNamespace as NS
 
         import build_output as bo
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.workflow_state import FunctionCall
 
         captured = {}
 
@@ -1031,7 +1031,7 @@ class TestHumanGateLayeredWorkflowLookup(unittest.TestCase):
 
     def test_workflow_dirs_prefers_the_local_env_override(self):
         """``LOCAL_WORKFLOWS_DIR`` pins the local layer; empty falls back to cwd."""
-        import default_paths
+        import nebuko.engine.lib.default_paths
 
         shipped = os.path.join(self._repo, "shipped")
         local = os.path.join(self._repo, "elsewhere", "workflows")
@@ -1065,7 +1065,7 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
         # The shipped definitions, not the per-repo ``.nebuko`` override:
         # ``config_dir`` prefers a checkout-local override directory whose
         # contents vary per machine, so pin the packaged defaults.
-        from default_paths import checkout_root
+        from nebuko.engine.lib.default_paths import checkout_root
         return str(checkout_root() / "defaults" / "workflows")
 
     def setUp(self):
@@ -1100,7 +1100,7 @@ class TestHumanGateRealWorkflowYaml(unittest.TestCase):
         """A plain advance run from stub_approval is intercepted to a hold, but
         resolving its downstream routing lands on the implement step's agent -
         proving 'next: implement' is load-bearing."""
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
         import json
         prompt_base = tempfile.mkdtemp()
         for role in ("dev", "architect", "context", "review"):
@@ -1404,7 +1404,7 @@ def _finalize_action_event(text: str, tool_name: str | None = "finalize") -> "ob
     the generic SDK action model dumps it as ``{}`` and the turn is recognizable
     only by its tool name — the same shape the engine harvests at runtime.
     """
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
@@ -1482,7 +1482,7 @@ class TestEngineOwnedTerminalTurns(unittest.TestCase):
         """
         from types import SimpleNamespace
 
-        from agent_script.features.build_output.build_output import _work_loop_events
+        from nebuko.engine.lib.agent_script.features.build_output.build_output import _work_loop_events
 
         events = [
             _msg_event("the real work-loop answer"),
@@ -1498,7 +1498,7 @@ class TestEngineOwnedTerminalTurns(unittest.TestCase):
     def test_without_a_closing_turn_the_events_are_unchanged(self):
         from types import SimpleNamespace
 
-        from agent_script.features.build_output.build_output import _work_loop_events
+        from nebuko.engine.lib.agent_script.features.build_output.build_output import _work_loop_events
 
         events = [_msg_event("answer")]
         self.assertEqual(_work_loop_events(events, SimpleNamespace()), events)
@@ -1538,7 +1538,7 @@ class TestExtractStandaloneAnswer(unittest.TestCase):
 
 def _outcome_with_offset(offset) -> "object":
     """Fake RunOutcome carrying the fields build_output reads."""
-    from agent_script.features.run_agent.run_outcome import OutcomeStatus
+    from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
 
     return SimpleNamespace(
         status=OutcomeStatus.SUCCESS, dispatch_recall_event_offset=offset
@@ -1680,7 +1680,7 @@ class TestCommentSplitLength(unittest.TestCase):
 
     def test_uses_policy_max_comment_chars(self):
         from build_output import _comment_split_length
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         self.assertEqual(
             _comment_split_length(),
@@ -1771,7 +1771,7 @@ class TestBuildOutputScaffoldBranchWiring(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self, finish_message, latest_answer_text):
-        from metrics_schema import Metrics
+        from nebuko.engine.lib.metrics_schema import Metrics
         from build_output import build_output
 
         conv = SimpleNamespace(
@@ -1858,7 +1858,7 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
     tool-first precedence, marker fallback intact, registry cleanup."""
 
     def setUp(self):
-        from agent_script.features.scaffold_branch_tool import reset_registry
+        from nebuko.engine.lib.agent_script.features.scaffold_branch_tool import reset_registry
 
         self._reset_registry = reset_registry
         reset_registry()
@@ -1884,7 +1884,7 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self, finish_message, latest_answer_text):
-        from metrics_schema import Metrics
+        from nebuko.engine.lib.metrics_schema import Metrics
         from build_output import build_output
 
         conv = SimpleNamespace(
@@ -1896,7 +1896,7 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
         return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
     def _record_tool(self, branch):
-        from agent_script.features.scaffold_branch_tool import record_scaffold_branch
+        from nebuko.engine.lib.agent_script.features.scaffold_branch_tool import record_scaffold_branch
 
         record_scaffold_branch(self._conv_id, branch)
 
@@ -1915,7 +1915,7 @@ class TestBuildOutputScaffoldBranchToolWiring(unittest.TestCase):
         self.assertNotIn("Scaffold branch:", result["final_message"])
 
         # Run-scoped registry cleaned up on the exit path.
-        from agent_script.features.scaffold_branch_tool import (
+        from nebuko.engine.lib.agent_script.features.scaffold_branch_tool import (
             get_recorded_scaffold_branch,
         )
 
@@ -1990,7 +1990,7 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
         self.assertEqual(calls["args"], ("owner/repo", 648))
 
     def test_valid_handoff_does_not_fetch_comments(self):
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         WorkflowStateCodec().save_prev(self._state())
 
@@ -2015,7 +2015,7 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
         """The comment recovery path must not re-paginate the whole thread (#805)."""
         from unittest.mock import patch
 
-        from thread_snapshot import state_tail_limit
+        from nebuko.engine.lib.thread_snapshot import state_tail_limit
 
         with patch(
             "build_output.get_issue_comments",
@@ -2094,7 +2094,7 @@ class TestBuildOutputPrevStateIntegration(unittest.TestCase):
         )
 
     def _run(self, **kwargs):
-        from metrics_schema import Metrics
+        from nebuko.engine.lib.metrics_schema import Metrics
         from build_output import build_output
 
         return build_output(

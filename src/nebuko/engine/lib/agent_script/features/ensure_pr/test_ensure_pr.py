@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_script.features.ensure_pr.ensure_pr import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import (
     ENGINE_OWNED_PATHS,
     EnsurePrResult,
     _default_base,
@@ -26,8 +26,8 @@ from agent_script.features.ensure_pr.ensure_pr import (
     ensure_pr,
     pr_title,
 )
-from agent_script.features.ensure_pr.ensure_pr import PublishSplit
-from agent_script.features.ensure_pr.workflow_patch import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import PublishSplit
+from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
     PATCH_FILENAME,
     WORKFLOW_DIR,
 )
@@ -899,7 +899,7 @@ class TestRealGitTokenBoundary(unittest.TestCase):
         ).stdout
 
     def test_the_pushed_commit_has_no_workflow_path(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         workflow = ".github/workflows/internal-tests.yaml"
         code = "src/thing.py"
@@ -1021,7 +1021,7 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
         ).stdout
 
     def test_new_workflow_file_is_patched_committed_and_deleted(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         workflow = ".github/workflows/new-pipeline.yaml"
 
@@ -1194,7 +1194,7 @@ class TestRealGitMissingLocalBase(unittest.TestCase):
         return _Transport()
 
     def test_ensure_pr_keeps_the_committed_workflow_path_out_of_the_push(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         with tempfile.TemporaryDirectory() as root:
             remote, work = self._repo_without_local_main(root)
@@ -1229,7 +1229,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
     """Unit-level contract of the shared base-ref resolver and the guard."""
 
     def test_resolve_base_ref_prefers_the_remote_tracking_ref(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         calls: list[str] = []
 
@@ -1242,7 +1242,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
         self.assertEqual(calls, ["rev-parse --verify origin/main^{commit}"])
 
     def test_resolve_base_ref_falls_back_then_raises(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         seen: list[str] = []
 
@@ -1268,7 +1268,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
                 mod._resolve_base_ref("main", "origin")
 
     def test_unpushed_commit_paths_raises_when_the_diff_fails(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         def git(args, **kwargs):
             raise RuntimeError("fatal: ambiguous argument 'main'")

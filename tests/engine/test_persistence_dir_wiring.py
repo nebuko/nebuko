@@ -29,7 +29,7 @@ def _make_conversation(status_after: str = "finished") -> MagicMock:
 
 def _run_agent(monkeypatch):
     """Drive ``run_agent`` with a mocked SDK and return the Conversation kwargs."""
-    from agent_script.features.run_agent import run_agent as module
+    from nebuko.engine.lib.agent_script.features.run_agent import run_agent as module
 
     with patch.object(module, "Conversation") as conversation_cls, patch.object(
         module, "Agent"

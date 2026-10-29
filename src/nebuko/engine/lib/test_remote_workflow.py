@@ -12,7 +12,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from config import WorkflowStep, load_workflow
+from nebuko.engine.lib.config import WorkflowStep, load_workflow
 
 
 # \u2500\u2500 Schema Validation Tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -143,7 +143,7 @@ class TestCacheUtils:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import remote_workflow
+        import nebuko.engine.lib.remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -195,7 +195,7 @@ class TestFetchRemoteWorkflow:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import remote_workflow
+        import nebuko.engine.lib.remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -321,7 +321,7 @@ class TestCacheCleanup:
             os.environ.pop("WORKFLOW_CACHE_DIR", None)
 
     def _import_module(self):
-        import remote_workflow
+        import nebuko.engine.lib.remote_workflow
         importlib.reload(remote_workflow)
         return remote_workflow
 
@@ -407,7 +407,7 @@ class TestResolverWithRemoteWorkflows:
         # in every other module that imported the enum (issue #964). The tests
         # below patch ``fetch_remote_workflow`` on the module, so the binding
         # does not need refreshing.
-        import resolve_workflow
+        import nebuko.engine.lib.resolve_workflow
 
         return resolve_workflow.resolve_workflow_routing
 
@@ -436,7 +436,7 @@ class TestResolverWithRemoteWorkflows:
         mock_wf_path = str(tmp_path / "mock_deploy.yaml")
         Path(mock_wf_path).write_text(mock_wf_content)
 
-        import resolve_workflow as rw_mod
+        import nebuko.engine.lib.resolve_workflow as rw_mod
 
         with patch.object(rw_mod, "fetch_remote_workflow", return_value=mock_wf_path):
             result = resolve(
@@ -461,7 +461,7 @@ class TestResolverWithRemoteWorkflows:
             }],
         }))
 
-        import resolve_workflow as rw_mod
+        import nebuko.engine.lib.resolve_workflow as rw_mod
 
         with patch.object(rw_mod, "fetch_remote_workflow", side_effect=RuntimeError("network error")):
             result = resolve(

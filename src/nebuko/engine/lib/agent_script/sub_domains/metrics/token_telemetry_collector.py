@@ -33,7 +33,7 @@ from typing import Any
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
-from agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
 
 
 @dataclass(frozen=True)

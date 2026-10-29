@@ -10,12 +10,8 @@ import os
 import sys
 import unittest
 
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-)
 
-from workflow_state import CircuitBreakerState, WorkflowState, build_state, to_json
+from nebuko.engine.lib.workflow_state import CircuitBreakerState, WorkflowState, build_state, to_json
 
 
 class TestCircuitBreakerStateModel(unittest.TestCase):

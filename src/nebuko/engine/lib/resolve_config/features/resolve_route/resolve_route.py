@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Optional
 
-from config import (
+from nebuko.engine.lib.config import (
     WorkflowDefinition,
     WorkflowStep,
     load_workflow,
@@ -21,7 +21,7 @@ from config import (
     StepPath,
     StepRef,
 )
-from resolve_workflow import (
+from nebuko.engine.lib.resolve_workflow import (
     resolve_next_from_workflow,
     RouteKind,
     RouteResolution,
@@ -32,7 +32,7 @@ from resolve_workflow import (
     resolve_workflow_reference,
     TASK_TO_PROMPT,
 )
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     FunctionCall,
     GateDecision,
@@ -1975,7 +1975,7 @@ def _default_workflow_name() -> str:
     Best-effort: an unreadable manifest degrades to the built-in default so a
     bare run command never crashes resolution.
     """
-    from default_paths import user_dir
+    from nebuko.engine.lib.default_paths import user_dir
 
     try:
         import yaml

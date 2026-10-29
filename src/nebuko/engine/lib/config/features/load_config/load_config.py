@@ -26,7 +26,7 @@ def load_config(path: str = "agent-config.yaml") -> AppConfig:
         ValueError: If the config fails validation or cannot be parsed.
     """
     if not os.path.isfile(path):
-        from default_paths import config_path
+        from nebuko.engine.lib.default_paths import config_path
 
         path = config_path(path)
     if not os.path.isfile(path):

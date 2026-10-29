@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from config import HookSpec
+from nebuko.engine.lib.config import HookSpec
 from nebuko.engine import hook_runner
 from nebuko.engine.hook_runner import (
     STEP_HOOKS_KEY,

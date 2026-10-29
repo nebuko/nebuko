@@ -27,7 +27,7 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
-from workflow_state import FunctionCall
+from nebuko.engine.lib.workflow_state import FunctionCall
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation

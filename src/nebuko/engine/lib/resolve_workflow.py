@@ -33,7 +33,7 @@ from typing import Optional, Union
 
 import yaml
 
-from config import (
+from nebuko.engine.lib.config import (
     SkillSpec,
     WorkflowStep,
     WorkflowDefinition,
@@ -49,7 +49,7 @@ from config import (
 )
 
 try:
-    from remote_workflow import fetch_remote_workflow
+    from nebuko.engine.lib.remote_workflow import fetch_remote_workflow
 except ImportError:
     fetch_remote_workflow = None  # type: ignore
 
@@ -189,7 +189,7 @@ def _specs_to_env(specs: list) -> str:
     Imported lazily: ``resolve_config`` imports this module, so a module-level
     import of its ``skill_context`` feature would close a cycle.
     """
-    from resolve_config.features.skill_context.skill_context import specs_to_env
+    from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import specs_to_env
 
     return specs_to_env(specs)
 
@@ -2928,7 +2928,7 @@ def _classify_terminal_kind(
 
 
 def main():
-    import default_paths
+    import nebuko.engine.lib.default_paths
 
     parser = argparse.ArgumentParser(description="Resolve workflow routing for agent")
     parser.add_argument(

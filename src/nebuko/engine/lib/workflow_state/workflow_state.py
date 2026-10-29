@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Any, Mapping, Optional
 
-from config import (
+from nebuko.engine.lib.config import (
     POSITION_STATE_VERSION,
     ComplexityPolicy,
     StepRef,

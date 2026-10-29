@@ -3,9 +3,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import StepPath, WorkflowDefinition, WorkflowStep  # noqa: E402
-from resolve_config.sub_domains.workflow_entry.workflow_entry import (  # noqa: E402
+from nebuko.engine.lib.config import StepPath, WorkflowDefinition, WorkflowStep
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_entry.workflow_entry import (
     WorkflowEntryPoint,
 )
 

@@ -35,7 +35,7 @@ from nebuko.engine.finalize import (
     step_output_contract,
 )
 
-from workflow_state import Appreciation
+from nebuko.engine.lib.workflow_state import Appreciation
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_FILE = REPO_ROOT / ".nebuko" / "workflows" / "default-with-output.yaml"
@@ -74,7 +74,7 @@ class TestFinalizeToolRegistration:
         assert DEFAULT_ENGINE_TOOLS.work_loop_presence("finalize") == "terminator"
 
     def test_finalize_tool_exposes_the_turn_outcome_only_schema(self) -> None:
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c1")[0]
         schema = tool.response_schema
@@ -82,7 +82,7 @@ class TestFinalizeToolRegistration:
         assert list(schema["properties"]) == ["turn_outcome"]
 
     def test_finalize_tool_takes_the_report_as_an_argument(self) -> None:
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-report")[0]
         action = tool.action_from_arguments(
@@ -93,10 +93,10 @@ class TestFinalizeToolRegistration:
         assert action.structured_output["turn_outcome"]["appreciation"] == "approved"
 
     def test_finalize_action_records_the_typed_turn_outcome(self) -> None:
-        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
         )
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-route")[0]
         action = tool.action_from_arguments(
@@ -111,10 +111,10 @@ class TestFinalizeToolRegistration:
 
     def test_the_agent_call_becomes_the_recorded_hand_off(self) -> None:
         """``agent_call`` is the only hand-off channel (issue #1033)."""
-        from agent_script.features.call_agent_tool.call_agent_tool import (
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
             get_recorded_function_call,
         )
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-handoff")[0]
         action = tool.action_from_arguments(
@@ -135,10 +135,10 @@ class TestFinalizeToolRegistration:
 
     def test_a_missing_hold_kind_is_rejected_with_an_agent_facing_error(self) -> None:
         """Conditional rules are enforced at runtime (issue #1033)."""
-        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
         )
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-bad-hold")[0]
         action = tool.action_from_arguments({"turn_outcome": {"appreciation": "hold"}})
@@ -166,7 +166,7 @@ class TestFinalizeToolRegistration:
         loop turns into a tool error, ``agent.py``). The point under test is that
         the axis never reaches the outcome — not which layer says so.
         """
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-reject")[0]
         with pytest.raises(ValueError):
@@ -181,10 +181,10 @@ class TestFinalizeToolRegistration:
     )
     def test_unusable_agent_input_never_records_an_outcome(self, payload: dict) -> None:
         """A runtime rule violation is returned to the agent, never recorded."""
-        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_turn_outcome,
         )
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-reject")[0]
         observation = tool.executor(tool.action_from_arguments({"turn_outcome": payload}))
@@ -194,10 +194,10 @@ class TestFinalizeToolRegistration:
 
     def test_finalize_action_records_the_route_prefs(self) -> None:
         """The route's tier/pin travel with the outcome (issue #964 round 6)."""
-        from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
             get_recorded_run_prefs,
         )
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
         tool = FinalizeTool.create(conversation_id="c-route-prefs")[0]
         action = tool.action_from_arguments(
@@ -305,10 +305,8 @@ class TestStepOutputContract:
 
 class TestDefaultWithOutputWorkflow:
     def test_the_workflow_file_is_resolved_by_name(self) -> None:
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from config import load_workflow_with_dirs
+        from nebuko.engine.lib.config import load_workflow_with_dirs
 
         resolved = load_workflow_with_dirs(
             "default-with-output",
@@ -318,10 +316,8 @@ class TestDefaultWithOutputWorkflow:
         assert Path(resolved) == WORKFLOW_FILE
 
     def test_report_steps_declare_an_output_and_context_does_not(self) -> None:
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from config import load_workflow
+        from nebuko.engine.lib.config import load_workflow
 
         workflow = load_workflow(str(WORKFLOW_FILE))
         declared = {step.name: step.output is not None for step in workflow.steps}
@@ -334,10 +330,8 @@ class TestDefaultWithOutputWorkflow:
         }
 
     def test_the_resolver_hands_the_declaration_to_the_run(self) -> None:
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         resolved = resolve_config(
             "/nebuko run workflow --name default-with-output",
@@ -363,10 +357,8 @@ class TestDefaultWithOutputWorkflow:
         ``default_paths.workflow_dirs()``; both layers are exported on the step
         so that check no longer falls back to the child's ``cwd``.
         """
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         shipped = str(REPO_ROOT / "defaults" / "workflows")
         local = str(REPO_ROOT / ".nebuko" / "workflows")
@@ -382,10 +374,8 @@ class TestDefaultWithOutputWorkflow:
         assert resolved["LOCAL_WORKFLOWS_DIR"] == local
 
     def test_an_absent_local_dir_is_exported_as_empty(self) -> None:
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config import resolve_config
 
         resolved = resolve_config(
             "/nebuko run workflow --name default",
@@ -412,7 +402,7 @@ def _finalize_event(
     text: str, route: dict[str, Any] | None = None, report: str = ""
 ) -> object:
     """A real ``finalize`` action event carrying the turn's report text."""
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
@@ -455,10 +445,8 @@ def _run_recorded_finalize_actions(events: list[Any], conversation: Any) -> None
     the turn without the SDK, so the executor is invoked here to record the
     typed outcome in the run-scoped registry exactly as a live run would.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
 
     executor = FinalizeExecutor(conversation_id=_FAKE_CONVERSATION_ID)
     for event in events:
@@ -522,7 +510,7 @@ def _with_observations(events: list[Any]) -> list[Any]:
     ``tool_name``: a harvest that matches on the name alone lands on it instead
     of on the call (issue #1038).
     """
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeObservation
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeObservation
     from openhands.sdk.event import ObservationEvent
 
     stream: list[Any] = []
@@ -625,9 +613,8 @@ def _host_for(
             lib = (
                 repo_root / "src" / "nebuko" / "engine" / "lib"
             )
-            sys.path.insert(0, str(lib))
             try:
-                from agent_script.features.build_output import build_output
+                from nebuko.engine.lib.agent_script.features.build_output import build_output
 
                 build_output._get_run_outcome = lambda *_: SimpleNamespace(
                     status=None, dispatch_recall_event_offset=None
@@ -1179,7 +1166,7 @@ class TestFinalizeHarvestAnchor:
     def test_a_text_less_finalize_is_refused_and_records_nothing(self) -> None:
         # Repro #1038: an accepted text-less call recorded the outcome, and the
         # agent then acknowledged "Report posted above" with nothing to post.
-        from agent_script.features.finalize_tool.finalize_tool import (
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
             NO_REPORT_TEXT,
             FinalizeExecutor,
         )
@@ -1203,7 +1190,7 @@ class TestFinalizeHarvestAnchor:
     def test_outside_the_closing_turn_an_outcome_only_finalize_is_accepted(self) -> None:
         # The dispatch recall pass asks for the outcome alone ("do not restate
         # your answer"); only the engine's closing turn owes a report.
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
 
         conversation = _FinalizeConversation(turns=[])
         conversation.id = "conv-recall-outcome-only"
@@ -1335,7 +1322,7 @@ class TestFinalizeHarvestAnchor:
         assert result["deliverable"] == plan
 
     def test_a_blank_report_argument_is_refused_in_the_closing_turn(self) -> None:
-        from agent_script.features.finalize_tool.finalize_tool import (
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
             NO_REPORT_TEXT,
             FinalizeExecutor,
         )
@@ -1355,7 +1342,7 @@ class TestFinalizeHarvestAnchor:
         assert observation.text == NO_REPORT_TEXT
 
     def test_a_report_written_before_finalize_is_accepted(self) -> None:
-        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
 
         conversation = _FinalizeConversation(turns=[])
         conversation.id = "conv-accepted-with-report-text"
@@ -1439,7 +1426,7 @@ def _recorded_turn_outcome_fields(conversation: Any) -> dict[str, Any] | None:
     Mirrors the real tool executor, which records the outcome in the run-scoped
     registry that ``build_output`` reads (issue #1033).
     """
-    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+    from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
         get_recorded_turn_outcome,
     )
 

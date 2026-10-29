@@ -23,7 +23,7 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field, field_validator
 from rich.text import Text
 
-from workflow_state import Appreciation, HoldKind, RunPrefs, TurnOutcome
+from nebuko.engine.lib.workflow_state import Appreciation, HoldKind, RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation

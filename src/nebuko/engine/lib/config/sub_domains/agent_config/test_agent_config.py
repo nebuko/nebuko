@@ -9,8 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import ProviderConfig, LLMConfig, AgentConfig, SkillSpec, load_config
+from nebuko.engine.lib.config import ProviderConfig, LLMConfig, AgentConfig, SkillSpec, load_config
 
 
 class TestAgentConfig:

@@ -30,7 +30,7 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
-from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+from nebuko.engine.lib.agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     validate_scaffold_branch_ref,
 )
 

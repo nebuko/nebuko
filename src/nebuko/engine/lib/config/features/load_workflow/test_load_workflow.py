@@ -9,8 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import (
+from nebuko.engine.lib.config import (
     is_path_like_reference,
     is_valid_workflow_reference,
     load_workflow,
@@ -131,7 +130,7 @@ class TestLoadWorkflow:
 
     def test_load_real_default_workflow(self):
         """Load the actual workflows/default.yaml and verify structure."""
-        from default_paths import checkout_root
+        from nebuko.engine.lib.default_paths import checkout_root
         workflow_path = str(
             checkout_root() / "defaults" / "workflows" / "default.yaml"
         )
@@ -149,7 +148,7 @@ class TestLoadWorkflow:
 
     def test_load_real_review_only_workflow(self):
         """Load the actual workflows/review-only.yaml."""
-        from default_paths import checkout_root
+        from nebuko.engine.lib.default_paths import checkout_root
         workflow_path = str(
             checkout_root() / "defaults" / "workflows" / "review-only.yaml"
         )
@@ -237,7 +236,7 @@ class TestLoadWorkflowWithDirs:
         }
 
     def test_local_wins_over_base(self, tmp_dirs):
-        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+        from nebuko.engine.lib.config.features.load_workflow.load_workflow import load_workflow_with_dirs
 
         base, local = tmp_dirs
         self._write(base / "foo.yaml", self._wf(agent="dev"))
@@ -246,7 +245,7 @@ class TestLoadWorkflowWithDirs:
         assert winner == local / "foo.yaml"
 
     def test_base_used_when_local_absent(self, tmp_dirs):
-        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+        from nebuko.engine.lib.config.features.load_workflow.load_workflow import load_workflow_with_dirs
 
         base, local = tmp_dirs
         self._write(base / "foo.yaml", self._wf())
@@ -254,7 +253,7 @@ class TestLoadWorkflowWithDirs:
         assert winner == base / "foo.yaml"
 
     def test_invalid_local_override_fails_loudly(self, tmp_dirs):
-        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+        from nebuko.engine.lib.config.features.load_workflow.load_workflow import load_workflow_with_dirs
 
         base, local = tmp_dirs
         self._write(base / "foo.yaml", self._wf())
@@ -263,7 +262,7 @@ class TestLoadWorkflowWithDirs:
             load_workflow_with_dirs("foo", str(base), str(local))
 
     def test_missing_everywhere_lists_all_searched(self, tmp_dirs):
-        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+        from nebuko.engine.lib.config.features.load_workflow.load_workflow import load_workflow_with_dirs
 
         base, local = tmp_dirs
         with pytest.raises(FileNotFoundError) as excinfo:
@@ -273,7 +272,7 @@ class TestLoadWorkflowWithDirs:
         assert str(local / "nope.yaml") in msg
 
     def test_duplicate_dirs_scanned_once(self, tmp_dirs):
-        from config.features.load_workflow.load_workflow import load_workflow_with_dirs
+        from nebuko.engine.lib.config.features.load_workflow.load_workflow import load_workflow_with_dirs
 
         base, local = tmp_dirs
         with pytest.raises(FileNotFoundError) as excinfo:

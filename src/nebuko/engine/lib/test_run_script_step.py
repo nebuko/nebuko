@@ -13,9 +13,9 @@ Covers the resolver->env-var contract that GHA branches on:
 import os
 import tempfile
 
-from resolve_config import resolve_config
-from resolve_config.features.build_result.build_result import _build_result
-from resolve_workflow import (
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
+from nebuko.engine.lib.resolve_workflow import (
     TASK_TO_PROMPT,
     RouteKind,
     resolve_next_from_workflow,

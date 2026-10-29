@@ -12,15 +12,14 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from resolve_config import resolve_config
-from resolve_config.features.resolve_route.resolve_route import (
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
     _resolve_outcome_path,
     resolve_max_soft_retries,
     resolve_soft_kill_route,
 )
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     IncompleteReason,
     SoftRetryState,
     TurnOutcome,

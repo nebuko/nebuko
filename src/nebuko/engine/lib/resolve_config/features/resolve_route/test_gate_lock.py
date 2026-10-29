@@ -20,12 +20,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from config import StepRef  # noqa: E402
+from nebuko.engine.lib.config import StepRef
 
-from resolve_config import resolve_config  # noqa: E402
-from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
     _armed_gate,
     _resolve_gate_consult,
     _resolve_gate_decision_path,
@@ -33,14 +32,14 @@ from resolve_config.features.resolve_route.resolve_route import (  # noqa: E402
     _resolve_outcome_path,
     _resolve_resume_path,
 )
-from resolve_config.sub_domains.author_identity.author_identity import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
     AuthorIdentity,
 )
-from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
     parse_workflow_command,
 )
-from nebuko.engine.models import ExitCode, SkipKind, SkipOutcome  # noqa: E402
-from workflow_state import (  # noqa: E402
+from nebuko.engine.models import ExitCode, SkipKind, SkipOutcome
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     FunctionCall,
     GateLock,
@@ -51,7 +50,7 @@ from workflow_state import (  # noqa: E402
     TurnStatus,
     WorkflowState,
 )
-from workflow_state.features.build_state.build_state import build_state  # noqa: E402
+from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
 
 
 # A hand-off the parse-time registry accepts but the routing guard rejects
@@ -510,7 +509,7 @@ class TestGateReleasePrecedence(unittest.TestCase):
 
     def test_bot_retrigger_on_the_armed_gate_holds_with_the_typed_kind(self):
         """The state-only bot path carries the same benign verdict."""
-        from resolve_config.features.resolve_route.resolve_route import (
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
             _resolve_bot_fallback_path,
         )
 
@@ -557,7 +556,7 @@ class TestGateArmingFromTheWorkflowDefinition(unittest.TestCase):
         self.assertEqual(cmd.action, "approve")
 
     def test_gated_step_in_the_yaml_declares_the_gate(self):
-        from config import load_workflow
+        from nebuko.engine.lib.config import load_workflow
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(_write_workflow(tmpdir), "default.yaml")

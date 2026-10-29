@@ -22,16 +22,15 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from validate_output import strip_agent_run_config
-from workflow_state.features.comment.to_git_comment import (
+from nebuko.engine.lib.validate_output import strip_agent_run_config
+from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
     format_collapsed_section,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.adapters.base import Poster
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -689,7 +688,7 @@ def _read_workflow_state() -> WorkflowState | None:
     if not _artifact_has_content(WORKFLOW_STATE_FILE):
         return None
     try:
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState.model_validate(json.loads(_read_artifact(WORKFLOW_STATE_FILE)))
     except Exception as exc:  # noqa: BLE001 - a bad artifact must not block posting

@@ -16,7 +16,7 @@ from openhands.sdk.context.condenser.llm_summarizing_condenser import (
     LLMSummarizingCondenser,
 )
 
-from config import TokenBudgetPolicy
+from nebuko.engine.lib.config import TokenBudgetPolicy
 
 #: Effective input limit used when the provider route exposes no static context
 #: window (e.g. the self-hosted vLLM endpoint resolves ``None`` at construction).

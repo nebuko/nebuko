@@ -33,10 +33,8 @@ def default_target() -> str:
     Mirrors the runtime default: the repo's ``.nebuko/agents/agent-config.yaml``
     override when present, else the ``defaults/agents/`` copy shipped with Nebuko.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from default_paths import agent_config_file
+    from nebuko.engine.lib.default_paths import agent_config_file
 
     return agent_config_file()
 

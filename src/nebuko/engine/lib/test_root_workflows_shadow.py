@@ -6,7 +6,7 @@ both a root `workflows/` dir and `defaults/workflows/`.
 
 from pathlib import Path
 
-from remote_workflow import workflow_candidate_paths
+from nebuko.engine.lib.remote_workflow import workflow_candidate_paths
 
 
 def test_root_workflows_dir_never_shadows_defaults(tmp_path, monkeypatch):

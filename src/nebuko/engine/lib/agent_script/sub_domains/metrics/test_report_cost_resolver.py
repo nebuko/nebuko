@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_script.sub_domains.metrics import report_cost_resolver as mod
-from agent_script.sub_domains.metrics.report_cost_resolver import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics import report_cost_resolver as mod
+from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import (
     PLACEHOLDER_MODEL,
     ReportCostResolver,
 )
-from metrics_schema import Metrics
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 # tests live at <lib>/agent_script/sub_domains/metrics/, so the importable lib
 # root is parents[3] (parents[4] would be.../engine, which cannot satisfy

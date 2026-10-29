@@ -22,10 +22,10 @@ from nebuko.engine.context_selection import (
     InjectionMode,
 )
 from nebuko.adapters.local import LocalAdapter
-from config import AgentStartNotice, HumanActionNotice, brand
+from nebuko.engine.lib.config import AgentStartNotice, HumanActionNotice, brand
 from nebuko.engine.models import CommentEntry, ExitCode, RunOutcome, Trigger
 from nebuko.engine.paths import repo_root
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
     IncompleteReason,
@@ -35,7 +35,7 @@ from workflow_state import (
     TurnStatus,
     build_state,
 )
-from workflow_state.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.input_wiring import Materialization
 from nebuko.engine.run_loop import (
     CONTEXT_BODIES_ENV,
@@ -60,9 +60,9 @@ from nebuko.engine.run_loop import (
 from nebuko.engine.lib.git import branch_scaffold
 from nebuko.engine.lib.git import git_session
 from nebuko.engine.lib.git import pr_finalize
-from agent_script.features.run_agent.run_outcome import OutcomeStatus
-from workflow_state import extract_state_from_body
-from workflow_state.step_output_record import StepOutputRecord
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.workflow_state import extract_state_from_body
+from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 CONTINUE_TOKEN = "<!-- workflow-continue -->"
@@ -157,7 +157,7 @@ def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
 
 def _outcome(appreciation: str = "approved", **overrides) -> "TurnOutcome":
     """The engine-side view of the ``dispatch_next`` payload above."""
-    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+    from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
     return TurnOutcome(
         status=TurnStatus.COMPLETED,
@@ -179,8 +179,8 @@ def _arm_gate_lock(engine: Engine, step: str = "plan") -> None:
     own verdict stays free (``approved`` here), and the gate alone is what owes
     the human an approval ping and blocks the advance.
     """
-    from workflow_state.workflow_state import WorkflowState
-    from workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
 
     state = engine.adapter.load_state()
     if state is None:
@@ -361,7 +361,7 @@ def _bot_marker_comments(count: int) -> list:
 
 def _circuit_breaker_state_comment(limit: int):
     from nebuko.engine.models import CommentEntry
-    from workflow_state import CircuitBreakerState, to_git_comment
+    from nebuko.engine.lib.workflow_state import CircuitBreakerState, to_git_comment
 
     state = WorkflowState(circuit_breaker=CircuitBreakerState(limit=limit))
     return CommentEntry(
@@ -851,7 +851,7 @@ class TestScriptStepComments:
         assert "import sys" not in outcome.posted_body
 
     def test_script_comments_do_not_count_as_agent_calls(self, tmp_path, monkeypatch):
-        from circuit_breaker import count_bot_markers
+        from nebuko.engine.lib.circuit_breaker import count_bot_markers
 
         engine = _engine(tmp_path)
         self._stub_script(monkeypatch)
@@ -1973,7 +1973,7 @@ class TestRunLoop:
         self, tmp_path, monkeypatch
     ):
         """A long answer posts as several comments, not one truncated body (#913)."""
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(
@@ -2019,7 +2019,7 @@ class TestRunLoop:
         enlarged RELEVANT SNIPPETS never reach the agent. Every part carrying the
         bot marker keeps them agent output, rendered verbatim.
         """
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2045,8 +2045,8 @@ class TestRunLoop:
         self, tmp_path, monkeypatch
     ):
         """The state-bearing header rides on part 1, not the last part (#913)."""
-        from config import CommentSizePolicy
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import CommentSizePolicy
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2083,8 +2083,8 @@ class TestRunLoop:
         issue_comment workflow, so every part must keep the bot marker in its
         opening lines and carry no unescaped trigger token.
         """
-        from config import CommentSizePolicy
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.config import CommentSizePolicy
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             extract_mention_agent,
             is_bot_comment,
             is_machine_comment,
@@ -2127,7 +2127,7 @@ class TestRunLoop:
         Exactly one part may therefore carry the payload; the others must be
         stamped as answer continuations, a token the gate rejects on.
         """
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2292,7 +2292,7 @@ class TestRunLoop:
 
 class TestStatePhase:
     def _state(self):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=3, workflow="spec-driven-impl", step="implement", agent="dev"
@@ -2370,9 +2370,9 @@ class TestPreviousStateHandoff:
     @staticmethod
     def _previous_state(*, history_len: int = 2):
         """A previous state carrying ``history_len`` history entries."""
-        from config import StepRef
-        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         entries = [
             HistoryEntry(
@@ -2528,8 +2528,8 @@ class TestWorkflowIdentityBackfill:
 
     @staticmethod
     def _state():
-        from config import StepRef
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=3,
@@ -2797,7 +2797,7 @@ class TestHonestPublish:
 
     def _run_with_failed_publish(self, tmp_path, monkeypatch, *, answer="*Dev answer*"):
         from nebuko.adapters.github import PublishError
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
@@ -2841,7 +2841,7 @@ class TestHonestPublish:
         assert saved["publish_failed"] is True
 
     def test_a_successful_publish_leaves_the_flag_unset(self, tmp_path, monkeypatch):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
@@ -2994,7 +2994,7 @@ class TestWorkflowStateAnswerComment:
 
     @staticmethod
     def _agent_state(history=None):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=6,
@@ -3056,7 +3056,7 @@ class TestWorkflowStateAnswerComment:
         summaries are LLM-authored prose. ``publish`` therefore runs the framed
         body through ``escape_agent_triggers`` before ``adapter.post``.
         """
-        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
 
         state = self._agent_state(
             history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue", turn_outcome=_entry_outcome())]
@@ -3463,9 +3463,9 @@ class TestStepInputSeam:
         """
         import tempfile
 
-        from config import StepRef, WorkflowPosition
-        from resolve_config.features.build_result.build_result import _build_result
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.config import StepRef, WorkflowPosition
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tempfile.mkdtemp()
         for name in set(TASK_TO_PROMPT.values()):
@@ -3596,7 +3596,7 @@ class TestStepOutputScope:
     @staticmethod
     def _comment(step, text, comment_id):
         from nebuko.engine.models import CommentEntry
-        from workflow_state import WorkflowState, to_git_comment
+        from nebuko.engine.lib.workflow_state import WorkflowState, to_git_comment
 
         state = WorkflowState(workflow="w", step=step, agent="dev")
         body = f"{text}\n\n{to_git_comment(state)}"
@@ -3636,7 +3636,7 @@ class TestStepOutputScope:
 
     def test_declared_output_sections_are_addressable(self, tmp_path, monkeypatch):
         """A step declaring ``output:`` exposes ``<step>.<field>`` refs (#973)."""
-        from config import StepOutput
+        from nebuko.engine.lib.config import StepOutput
 
         engine = _engine(tmp_path)
         output = StepOutput.model_validate(
@@ -4421,7 +4421,7 @@ class TestBuildPromptPreviousSessionHandoff:
 
 def _state_block(state) -> str:
     """One posted answer's inline workflow-state block."""
-    from workflow_state import STATE_MARKER_START
+    from nebuko.engine.lib.workflow_state import STATE_MARKER_START
 
     return f"{STATE_MARKER_START}\n{state.model_dump_json()}\n<!-- WORKFLOW_STATE_END -->"
 
@@ -4514,7 +4514,7 @@ class TestTwoStepWorkflowPrompt:
     @staticmethod
     def _with_outcome(state):
         """A completed step, as its agent child records it."""
-        from workflow_state import TurnStatus
+        from nebuko.engine.lib.workflow_state import TurnStatus
 
         history = list(state.history)
         for index, node in enumerate(history):

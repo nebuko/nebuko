@@ -6,8 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import MCPServerConfig
+from nebuko.engine.lib.config import MCPServerConfig
 
 
 class TestMCPServerConfig:

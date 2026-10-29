@@ -14,7 +14,6 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Sequence
 
-from nebuko.engine.paths import ensure_import_path
 from nebuko.adapters.base import HistoryPage, PostedComment, PosterCapabilities
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
@@ -22,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
     from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 from nebuko.adapters.base import PostedComment, PosterCapabilities
 
@@ -145,7 +144,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         path = self._run_dir / STATE_FILE
         if not path.is_file():
             return None
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -201,8 +200,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     @staticmethod
     def _ensure_terminal_marker(body: str) -> str:
-        ensure_import_path()
-        from github_client import ensure_bot_marker
+        from nebuko.engine.lib.github_client import ensure_bot_marker
 
         return ensure_bot_marker(body)
 
@@ -246,8 +244,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         answer already opens with the marker on its own line 1 (issue #978), so
         ``post`` injects nothing and there is nothing to strip.
         """
-        ensure_import_path()
-        from github_client import BOT_MARKER
+        from nebuko.engine.lib.github_client import BOT_MARKER
 
         if body == BOT_MARKER:
             return ""

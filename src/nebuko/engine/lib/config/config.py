@@ -6,7 +6,7 @@ from features/sub-domains and provides convenience wrapper functions
 that delegate to feature modules.
 
 External consumers should prefer importing from the package facade:
-    from config import load_config, load_workflow
+    from nebuko.engine.lib.config import load_config, load_workflow
 """
 
 CONFIG_DEFAULT_PATH = "agent-config.yaml"

@@ -18,12 +18,12 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Tuple
 
-from github_client import fetch_issue_comments
-from workflow_state import extract_latest_state_from_comments
+from nebuko.engine.lib.github_client import fetch_issue_comments
+from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from github_client import GitHubTransport
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.github_client import GitHubTransport
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 __all__ = [
     "ThreadSnapshot",
@@ -81,7 +81,7 @@ def build_comment_index(
     GitHub adapter's ``post`` returns a URL while raw comments carry a numeric
     id (issue #756).
     """
-    from workflow_state.features.comment.to_git_comment import strip_state_section
+    from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
 
     index: dict[str, str] = {}
     for comment in comments:

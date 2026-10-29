@@ -6,9 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.features.build_result.build_result import _build_result  # noqa: E402
-from resolve_workflow import TASK_TO_PROMPT  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
 
 def _make_dirs():
@@ -304,7 +303,7 @@ class TestComplexityGovernanceOverlay:
         return prompt_base, workflows_dir
 
     def _adjustment(self, delta):
-        from complexity_governor import ComplexityAdjustment, EvidenceBundle
+        from nebuko.engine.lib.complexity_governor import ComplexityAdjustment, EvidenceBundle
 
         return ComplexityAdjustment(
             delta=delta, trigger="evidence-drift", evidence=EvidenceBundle()

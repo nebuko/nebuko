@@ -16,8 +16,8 @@ from collections.abc import Sequence
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Optional, Self
 
-from complexity_governor.complexity_governor import ComplexityReviewRequest
-from complexity_governor.evidence import EvidenceBundle
+from nebuko.engine.lib.complexity_governor.complexity_governor import ComplexityReviewRequest
+from nebuko.engine.lib.complexity_governor.evidence import EvidenceBundle
 from openhands.sdk import get_logger
 from openhands.sdk.tool.tool import (
     Action,
@@ -129,7 +129,7 @@ def action_to_request(action: "ComplexityReviewAction") -> Optional[ComplexityRe
     evidence bundle or a blank ``feeling`` — so a malformed tool call can never
     poison downstream adjudication.
     """
-    from validate_output import validate_complexity_review
+    from nebuko.engine.lib.validate_output import validate_complexity_review
 
     verdict = validate_complexity_review(action)
     if not verdict.is_valid:

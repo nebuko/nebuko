@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
-from agent_script.features.run_agent.run_agent import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
     _SYSTEM_PROMPT,
     _build_mcp_servers,
     _discard_token,
@@ -20,12 +20,12 @@ from agent_script.features.run_agent.run_agent import (
     _run_supervised,
     run_agent,
 )
-from agent_script.features.run_agent.run_failure import RunFailureKind
-from agent_script.features.run_agent.run_outcome import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailureKind
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
 )
-from agent_script.features.run_agent.run_watchdog import RunWatchdog
+from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
 
 # SDK registry sections the static prompt used to carry. Issue #943 removes all
@@ -178,7 +178,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         main_convo = _make_conversation("paused")
         mock_conversation_cls.return_value = main_convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         calls = {"n": 0}
 
@@ -305,7 +305,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(5)]
         mock_conversation_cls.return_value = convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         # Both the main pass and the recall pass complete within budget.
         def fake_supervised(c, budget_s, label):
@@ -351,7 +351,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(3)]
         mock_conversation_cls.return_value = convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         with patch(
             "agent_script.features.run_agent.run_agent._run_supervised",
@@ -472,7 +472,7 @@ class TestMCPServerWiring(unittest.TestCase):
     """``mcp_servers`` config → SDK server handles (issue #823)."""
 
     def _spec(self, name="brave-search", env=None, args=None):
-        from config import MCPServerConfig
+        from nebuko.engine.lib.config import MCPServerConfig
 
         return MCPServerConfig(
             name=name,
@@ -590,7 +590,7 @@ class TestParseContextBodiesEnv(unittest.TestCase):
             self._os.environ["CONTEXT_BODIES"] = self._prior
 
     def test_reads_bodies_from_the_path_and_removes_the_file(self) -> None:
-        from agent_script.features.run_agent.run_agent import (
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
             _parse_context_bodies_env,
         )
 
@@ -603,7 +603,7 @@ class TestParseContextBodiesEnv(unittest.TestCase):
         self.assertFalse(self._os.path.exists(path))
 
     def test_missing_file_degrades_to_an_empty_map(self) -> None:
-        from agent_script.features.run_agent.run_agent import (
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
             _parse_context_bodies_env,
         )
 

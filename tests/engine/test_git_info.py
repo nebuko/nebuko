@@ -7,7 +7,7 @@ typed.
 
 from __future__ import annotations
 
-from workflow_state.sub_domains.git_info.git_info import (
+from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
     GitActionStatus,
     GitHistoryEntry,
     GitInfo,

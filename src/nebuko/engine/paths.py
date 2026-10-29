@@ -52,7 +52,6 @@ __all__ = [
     "LIB_DIR",
     "NebukoPaths",
     "defaults_dir",
-    "ensure_import_path",
     "repo_root",
 ]
 
@@ -84,14 +83,6 @@ def repo_root() -> Path:
 def defaults_dir() -> Path:
     """The shipped ``defaults/`` tree, sibling of ``src/`` in the checkout."""
     return repo_root() / "defaults"
-
-
-# @stub-protected
-def ensure_import_path() -> None:
-    """Append :data:`LIB_DIR` to ``sys.path`` (no-op when already present)."""
-    path = str(LIB_DIR)
-    if path not in sys.path:
-        sys.path.append(path)
 
 
 # @stub-protected

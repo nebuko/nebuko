@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from agent_script.sub_domains.tool_call_repair.tool_call_repair import (
+from nebuko.engine.lib.agent_script.sub_domains.tool_call_repair.tool_call_repair import (
     install,
     parse_tool_call_arguments,
 )
@@ -71,7 +71,7 @@ class TestActionFromArgumentsRepair:
         install()
 
     def _tool(self, action_type):
-        from agent_script.features.bounded_file_editor.bounded_file_editor import (
+        from nebuko.engine.lib.agent_script.features.bounded_file_editor.bounded_file_editor import (
             BoundedFileEditorTool,
         )
 

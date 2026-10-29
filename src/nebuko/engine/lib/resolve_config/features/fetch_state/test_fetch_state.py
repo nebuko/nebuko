@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.features.fetch_state.fetch_state import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import (
     _fetch_workflow_state_from_history,
 )
 

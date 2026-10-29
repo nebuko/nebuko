@@ -95,7 +95,7 @@ def validate_complexity_review(data) -> ValidationResult:
     Returns:
         ValidationResult listing every contract violation found.
     """
-    from complexity_governor.evidence import EvidenceBundle, is_empty_evidence
+    from nebuko.engine.lib.complexity_governor.evidence import EvidenceBundle, is_empty_evidence
 
     result = ValidationResult(is_valid=True)
     if isinstance(data, dict):

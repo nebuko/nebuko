@@ -11,7 +11,7 @@ import pytest
 
 from nebuko.engine.lib.git import branch_scaffold, git_session, pr_finalize
 from nebuko.engine.lib.git.git_session import GuardResult
-from workflow_state.sub_domains.git_info.git_info import GitActionStatus
+from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitActionStatus
 
 from tests.engine.test_run_loop import (
     _agent_result,

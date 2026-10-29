@@ -8,12 +8,12 @@ import json
 import os
 from typing import Optional
 
-from complexity_governor.complexity_governor import ComplexityGovernor
-from config import StepRef, WorkflowPosition
-from resolve_config.features.skill_context.skill_context import (
+from nebuko.engine.lib.complexity_governor.complexity_governor import ComplexityGovernor
+from nebuko.engine.lib.config import StepRef, WorkflowPosition
+from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     specs_to_env,
 )
-from resolve_workflow import (
+from nebuko.engine.lib.resolve_workflow import (
     resolve_workflow_routing,
     build_workflow_position,
     build_workflow_position_value,
@@ -170,7 +170,7 @@ def _agent_skill_specs(role_name: str) -> list:
     this reads the same file rather than duplicating the roster into the
     dispatch payload.
     """
-    from config import load_config
+    from nebuko.engine.lib.config import load_config
 
     path = os.environ.get("AGENT_CONFIG_PATH", "agent-config.yaml")
     try:
@@ -186,7 +186,7 @@ def _skills_dir() -> str:
     Absolute because the prompt builder and the agent child run in different
     working directories; a relative value would resolve differently in each.
     """
-    import default_paths
+    import nebuko.engine.lib.default_paths
 
     return os.path.abspath(default_paths.config_dir("skills", "SKILLS_DIR"))
 

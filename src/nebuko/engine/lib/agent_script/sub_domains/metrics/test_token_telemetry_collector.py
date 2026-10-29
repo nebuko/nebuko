@@ -7,8 +7,8 @@ import types
 import litellm
 import pytest
 
-from agent_script.sub_domains.metrics import token_telemetry_collector as seam
-from agent_script.sub_domains.metrics.token_telemetry_collector import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics import token_telemetry_collector as seam
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collector import (
     CallStamps,
     TokenTelemetryCollector,
     install,

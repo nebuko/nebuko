@@ -10,7 +10,7 @@ import threading
 import time
 import unittest
 
-from agent_script.features.run_agent.checkpoints import (
+from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
     CHECKPOINT_FRACTIONS,
     CheckpointEvent,
     CheckpointScheduler,

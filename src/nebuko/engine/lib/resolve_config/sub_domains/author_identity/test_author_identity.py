@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.sub_domains.author_identity.author_identity import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
     BOT_LOGIN_DENYLIST,
     AuthorIdentity,
     build_author_identity,

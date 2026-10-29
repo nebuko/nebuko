@@ -3,8 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-from github_client import GitHubTransport
-from thread_snapshot import (
+from nebuko.engine.lib.github_client import GitHubTransport
+from nebuko.engine.lib.thread_snapshot import (
     STATE_TAIL_FLOOR,
     ThreadSnapshot,
     build_comment_index,
@@ -32,20 +32,20 @@ def _ok_page(comments, last_page=None):
 
 
 def _state_body(state_json):
-    from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
+    from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
 
     return f"{STATE_MARKER_START}\n{state_json}\n{STATE_MARKER_END}"
 
 
 def _state_json(*, history_len=1):
-    from config import StepRef
-    from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
-    from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+    from nebuko.engine.lib.config import StepRef
+    from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+    from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
         Appreciation,
         TurnOutcome,
         TurnStatus,
     )
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
     state = WorkflowState(
         version=7,
@@ -183,7 +183,7 @@ class TestBuildCommentIndex:
         assert index == {"5": "hello"}
 
     def test_strips_the_state_section(self):
-        from workflow_state import WorkflowState, to_git_comment
+        from nebuko.engine.lib.workflow_state import WorkflowState, to_git_comment
 
         state = WorkflowState(workflow="w", step="plan", agent="architect")
         body = f"agent answer\n\n{to_git_comment(state)}"

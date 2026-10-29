@@ -2,8 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from config import StepRef
-from complexity_governor.complexity_governor import (
+from nebuko.engine.lib.config import StepRef
+from nebuko.engine.lib.complexity_governor.complexity_governor import (
     ComplexityAdjustment,
     ComplexityReviewRequest,
 )

@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from agent_script.features.dispatch_next_tool import (
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
     DispatchNextTool,
     TurnOutcomeAction,
     action_to_payload,
@@ -14,7 +14,7 @@ from agent_script.features.dispatch_next_tool import (
     get_recorded_turn_outcome,
     reset_registry,
 )
-from workflow_state import TurnOutcome
+from nebuko.engine.lib.workflow_state import TurnOutcome
 
 
 class TestTurnOutcomeActionToPayload(unittest.TestCase):

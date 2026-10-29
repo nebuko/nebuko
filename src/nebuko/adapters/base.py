@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.models import CommentEntry, Trigger
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 __all__ = [
     "HistoryPage",

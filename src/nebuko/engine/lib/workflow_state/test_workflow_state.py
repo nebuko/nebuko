@@ -2,8 +2,7 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     WorkflowState,
     Appreciation,
     HistoryEntry,
@@ -12,7 +11,7 @@ from workflow_state import (
     TurnStatus,
     workflow_ref_from_env,
 )
-from workflow_state.sub_domains.gate_decision import GateDecision
+from nebuko.engine.lib.workflow_state.sub_domains.gate_decision import GateDecision
 
 
 def _outcome() -> TurnOutcome:
@@ -74,8 +73,8 @@ class TestWorkflowStateSchema(unittest.TestCase):
         non-empty refs list — the history[-1].position == position
         invariant depends on this seam."""
         import json
-        from config import StepRef
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         refs = [
             StepRef(workflow="plan-orchestration", step="sub_impl"),
@@ -105,7 +104,7 @@ class TestWorkflowStateSchema(unittest.TestCase):
         comment-embedded state JSON is now the single metrics authority, so
         exclude_defaults must NOT collapse a populated metrics object."""
         import json
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         metrics = StateMetrics(
             run_id="run-1",
@@ -168,7 +167,7 @@ class TestWorkflowStateGateFields(unittest.TestCase):
     @staticmethod
     def _decision(status: str, step: str = "plan") -> GateDecision:
         from datetime import datetime, timezone
-        from config import StepRef
+        from nebuko.engine.lib.config import StepRef
 
         return GateDecision(
             status=status,
@@ -207,7 +206,7 @@ class TestWorkflowStateGateFields(unittest.TestCase):
     def test_to_json_round_trip_preserves_gate_fields(self):
         """The <details> state JSON carries the decision and the full audit."""
         import json
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         approved = self._decision("approved", "plan")
         rejected = self._decision("rejected", "stub_approval")
@@ -227,7 +226,7 @@ class TestWorkflowStateGateFields(unittest.TestCase):
     def test_to_json_omits_empty_gate_fields(self):
         """Defaults are excluded, so legacy states stay byte-identical."""
         import json
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         raw = json.loads(to_json(WorkflowState(workflow="default", step="plan")))
         self.assertNotIn("gate_decision", raw)
@@ -297,7 +296,7 @@ class TestStateMetricsProviderHealth(unittest.TestCase):
         self.assertIsNone(metrics.time_to_first_token)
 
     def test_provider_health_round_trips_from_metrics_to_dict(self):
-        from metrics_schema import Metrics
+        from nebuko.engine.lib.metrics_schema import Metrics
 
         original = Metrics(
             run_id="r1",
@@ -336,7 +335,7 @@ class TestStateMetricsToolTime(unittest.TestCase):
         self.assertEqual(metrics.wall_clock_ms, 0.0)
 
     def test_tool_time_round_trips_from_metrics_to_dict(self):
-        from metrics_schema import Metrics
+        from nebuko.engine.lib.metrics_schema import Metrics
 
         original = Metrics(
             run_id="r1",
@@ -384,7 +383,7 @@ class TestWorkflowRefProvenance(unittest.TestCase):
 
     def test_round_trip_preserves_value(self):
         import json
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         ref = "octocat/hello-world/.github/workflows/nebuko-workflow.yaml@refs/tags/v1.2"
         state = WorkflowState(
@@ -400,7 +399,7 @@ class TestWorkflowRefProvenance(unittest.TestCase):
 
     def test_to_json_omits_none_workflow_ref(self):
         import json
-        from workflow_state.workflow_state import to_json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
 
         state = WorkflowState(workflow="default", step="analyze", agent="architect")
         self.assertNotIn("workflow_ref", json.loads(to_json(state)))
