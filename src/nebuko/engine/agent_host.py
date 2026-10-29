@@ -143,7 +143,10 @@ class InProcessAgentHost:
         caller's workspace, where the agent's git operations must land; it
         defaults to ``repo_root`` so a same-repo run keeps one root.
         """
-        raise NotImplementedError
+        self._repo_root = Path(repo_root)
+        self._load_pipeline = load_pipeline
+        self._env = env
+        self._caller_root = Path(caller_root) if caller_root is not None else Path(repo_root)
 
     def run(self, prompt: str) -> dict[str, Any]:
         # @stub-protected: signature defined by architect — do not modify
@@ -162,12 +165,34 @@ class InProcessAgentHost:
         Raises:
             EngineAgentUnavailable: Setup failed before the run began.
         """
-        raise NotImplementedError
+        script = self._entry_point()
+        ensure_import_path()
+        pipeline = self._load_pipeline()
+
+        with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
+            work = Path(workdir)
+            # The temp dir is the cwd only for *artefact staging* (the legacy
+            # steps write latest_answer.md / state here). Control-plane work that
+            # must target the real checkout — the conversation workspace and the
+            # wind-down git ops — is bound explicitly (issue #766), and it is the
+            # *caller's* checkout, not the engine's (issue #1208).
+            with _applied_env(
+                _child_env(script, self._env, repo_root=self._caller_root)
+            ), contextlib.chdir(workdir):
+                with _capture_console() as console:
+                    conversation = _run_pipeline(pipeline, prompt, self._caller_root, self)
+                    console_log = console.getvalue()
+            return self._capture_artifacts(work, conversation, console_log)
 
     def _entry_point(self) -> Path:
         # @stub-protected: signature defined by architect — do not modify
         """The frozen legacy entry point this host imports, or declare it out."""
-        raise NotImplementedError
+        script = self._repo_root / _AGENT_SCRIPT
+        if not script.is_file():
+            raise EngineAgentUnavailable(
+                f"legacy agent entry point not found: {script}"
+            )
+        return script
 
     def _capture_artifacts(
         self, work: Path, conversation: Any, console_log: str
