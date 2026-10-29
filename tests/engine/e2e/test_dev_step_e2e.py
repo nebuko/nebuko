@@ -43,12 +43,38 @@ class GitCommandRecorder:
     def install(self, monkeypatch) -> None:
         """Wrap subprocess.run in git_session, branch_scaffold and ensure_pr:
         record " ".join(args) when args[0] == "git", then delegate to the real run."""
-        raise NotImplementedError
+        import importlib
+        import subprocess
+
+        from nebuko.engine.lib.git import branch_scaffold, git_session
+
+        recorder = self
+        real_run = subprocess.run
+
+        class _RecordingSubprocess:
+            """Delegates to the real ``subprocess`` module, recording git argv."""
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(subprocess, name)
+
+            def run(self, args: Any, *rest: Any, **kwargs: Any) -> Any:
+                argv = [args] if isinstance(args, (str, bytes)) else list(args)
+                if argv and str(argv[0]) == "git":
+                    recorder.commands.append(" ".join(str(part) for part in argv))
+                return real_run(args, *rest, **kwargs)
+
+        proxy = _RecordingSubprocess()
+        for module in (
+            git_session,
+            branch_scaffold,
+            importlib.import_module("agent_script.features.ensure_pr.ensure_pr"),
+        ):
+            monkeypatch.setattr(module, "subprocess", proxy)
 
     # @stub-protected: signature defined by architect — do not modify
     def matching(self, fragment: str) -> list[str]:
         """Recorded command lines containing `fragment`, in order."""
-        raise NotImplementedError
+        return [command for command in self.commands if fragment in command]
 
 
 class ScriptedDevConversation:
@@ -61,32 +87,61 @@ class ScriptedDevConversation:
 
     # @stub-protected: signature defined by architect — do not modify
     def __init__(self, turns: list[list[Any]]) -> None:
-        raise NotImplementedError
+        self.id = "conv-e2e-dev-step"
+        self.turns = list(turns)
+        self.prompts = []
+        self.state = SimpleNamespace(events=[])
+        self.rejections = []
+        self.execution_status = SimpleNamespace(value="running")
 
     # @stub-protected: signature defined by architect — do not modify
     def send_message(self, prompt: str) -> None:
-        raise NotImplementedError
+        self.prompts.append(prompt)
 
     # @stub-protected: signature defined by architect — do not modify
     def run(self) -> None:
         """Pop the next turn, extend state.events, run the real FinalizeExecutor
         over its finalize actions (errors land in self.rejections as observations),
         and set execution_status to finished when no turns remain."""
-        raise NotImplementedError
+        if self.turns:
+            events = self.turns.pop(0)
+            self.state.events.extend(events)
+            self._execute_finalize(events)
+        if not self.turns:
+            self.execution_status = SimpleNamespace(value="finished")
+
+    def _execute_finalize(self, events: list[Any]) -> None:
+        """Run the real ``finalize`` executor over the turn's terminal calls."""
+        from nebuko.engine.paths import ensure_import_path
+
+        ensure_import_path()
+        from agent_script.features.finalize_tool.finalize_tool import FinalizeExecutor
+
+        executor = FinalizeExecutor(conversation_id=self.id)
+        for event in events:
+            if getattr(event, "tool_name", None) != "finalize":
+                continue
+            action = getattr(event, "action", None)
+            if action is None:
+                continue
+            observation = executor(action, self)
+            if getattr(observation, "is_error", False):
+                self.rejections.append(observation.text)
 
     # @stub-protected: signature defined by architect — do not modify
     async def arun(self) -> None:
         """Async twin of run() (the host/_run_supervised path may use either)."""
-        raise NotImplementedError
+        self.run()
 
     # @stub-protected: signature defined by architect — do not modify
     def interrupt(self) -> None:
-        raise NotImplementedError
+        # Scripted turns are instantaneous: there is never a turn to interrupt.
+        return None
 
     # @stub-protected: signature defined by architect — do not modify
     def rejection_texts(self) -> list[str]:
         """The finalize rejections recorded so far."""
-        raise NotImplementedError
+        return list(self.rejections)
 
 
 def _finalize_turn(*, report: str, turn_outcome: dict[str, Any] | None) -> list[Any]:
@@ -94,7 +149,28 @@ def _finalize_turn(*, report: str, turn_outcome: dict[str, Any] | None) -> list[
     _structured_output={"turn_outcome": turn_outcome} and the report text.
     turn_outcome=None or a dict missing required keys (e.g. {"note": "done"})
     produces the malformed first-turn finalize."""
-    raise NotImplementedError
+    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from openhands.sdk.event import ActionEvent
+    from openhands.sdk.llm.message import MessageToolCall, TextContent
+
+    action = FinalizeAction(report=report)
+    action._structured_output = {"turn_outcome": turn_outcome}
+    return [
+        ActionEvent(
+            source="agent",
+            tool_name="finalize",
+            thought=[TextContent(text=report)],
+            action=action,
+            tool_call_id="tc-finalize",
+            tool_call=MessageToolCall(
+                id="tc-finalize",
+                name="finalize",
+                arguments="{}",
+                origin="completion",
+            ),
+            llm_response_id="r-finalize",
+        )
+    ]
 
 
 def _install_scripted_pipeline(
@@ -104,7 +180,38 @@ def _install_scripted_pipeline(
     (pattern: tests/engine/test_agent_runner_contract.py::_install_fake_pipeline),
     resolve_llm_config returns (object(), prompt, object()),
     run_agent returns `conversation`."""
-    raise NotImplementedError
+    import json
+
+    from nebuko.engine import agent_runner
+
+    def _build_output(conversation, metrics, args, prev_state=None):
+        Path("latest_answer.md").write_text(REPORT, encoding="utf-8")
+        Path("final_message.txt").write_text("finish note", encoding="utf-8")
+        Path("workflow_state.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "workflow": "wf",
+                    "step": "implement",
+                    "agent": "dev",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _run_agent(
+        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None
+    ):
+        return conversation
+
+    pipeline = SimpleNamespace(
+        build_output=_build_output,
+        collect_and_save_metrics=lambda conversation, agent_cfg: object(),
+        load_prev_state_or_recover=lambda: None,
+        resolve_llm_config=lambda args, prompt: (object(), prompt, object()),
+        run_agent=_run_agent,
+    )
+    monkeypatch.setattr(agent_runner, "_load_pipeline", lambda: pipeline)
 
 
 def _dev_checkout(tmp_path) -> Path:
@@ -117,7 +224,45 @@ def _dev_checkout(tmp_path) -> Path:
     the branch, merge the base) — what a second dev turn on the issue really
     does.
     """
-    raise NotImplementedError
+    import subprocess
+
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    _git(seed, "config", "user.name", "t")
+    _git(seed, "config", "user.email", "t@example.com")
+    _git(seed, "remote", "add", "origin", remote.as_uri())
+
+    # The in-process agent seam only checks that the legacy entry point exists
+    # (it imports the assembly, never executes this file).
+    entry_point = seed / "src/nebuko/engine/lib/agent_script/agent_script.py"
+    entry_point.parent.mkdir(parents=True, exist_ok=True)
+    entry_point.write_text("# imported, never executed\n", encoding="utf-8")
+    (seed / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-q", "-m", "base")
+    _git(seed, "push", "-q", "origin", "main")
+
+    # A previous round's branch, cut before the base moves on.
+    _git(seed, "checkout", "-q", "-b", BRANCH)
+    (seed / "round.txt").write_text("previous round\n", encoding="utf-8")
+    _git(seed, "add", "round.txt")
+    _git(seed, "commit", "-q", "-m", "previous round")
+    _git(seed, "push", "-q", "origin", BRANCH)
+    _git(seed, "checkout", "-q", "main")
+    (seed / "base.txt").write_text("base\nmoved on\n", encoding="utf-8")
+    _git(seed, "commit", "-q", "-am", "base moves on")
+    _git(seed, "push", "-q", "origin", "main")
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+    _git(work, "config", "user.name", "t")
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "remote", "add", "origin", remote.as_uri())
+    _git(work, "fetch", "-q", "origin", "main")
+    _git(work, "checkout", "-q", "-B", "main", "origin/main")
+    return work
 
 
 def _dev_engine(tmp_path, root, trigger) -> Engine:
@@ -126,7 +271,15 @@ def _dev_engine(tmp_path, root, trigger) -> Engine:
     established _patch_resolver/_resolved_with_hooks pattern with TASK=dev,
     ROLE_NAME=dev, WORKFLOW_STEP=implement, SKIP_AGENT=false, PROMPT_LOCATION=''.
     The three git engine seams are NOT stubbed — that is the point."""
-    raise NotImplementedError
+    adapter = LocalAdapter(tmp_path / "runs" / "e2e", trigger=trigger)
+    env = {
+        "CIRCUIT_BREAKER_THRESHOLD": "3",
+        "GITHUB_REPOSITORY": "nebuko/nebuko",
+        # The engine's git seams act on the caller workspace; without this the
+        # anchor would fall back to the pytest cwd (the real repository).
+        "GITHUB_WORKSPACE": str(root),
+    }
+    return Engine(adapter=adapter, repo_root=root, env=env)
 
 
 def _resolved() -> dict[str, str]:
