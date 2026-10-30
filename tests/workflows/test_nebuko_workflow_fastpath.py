@@ -124,3 +124,96 @@ def test_engine_steps_do_not_resync() -> None:
     for body in run_bodies:
         assert "--no-sync" in body, f"step re-resolves: {body}"
         assert "--extra runtime" not in body, f"step re-resolves extra: {body}"
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _setup_uv_with(self: dict[str, Any]) -> dict[str, Any] | None:
+    """The setup-uv step of a job, if any."""
+    for step in self.get("steps", []):
+        if "setup-uv" in str(step.get("uses", "")):
+            return step
+    return None
+
+
+def test_setup_uv_pins_version() -> None:
+    """Given the run-task job's setup-uv step, when its `with:` is inspected,
+    then a uv version is pinned so setup-uv skips the astral versions fetch
+    (~2 s of per-run setup)."""
+    spec = WorkflowSpec.load()
+    step = _setup_uv_with(spec.job("run-task"))
+    assert step is not None, "run-task has no setup-uv step"
+    version = step.get("with", {}).get("version")
+    assert version, "setup-uv does not pin a uv version"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"bad version pin: {version}"
+
+
+def test_banner_suppressed_in_run_task_env() -> None:
+    """Given the run-task job's env, when inspected, then
+    OPENHANDS_SUPPRESS_BANNER=1 so SDK import banners stay out of the logs
+    and the engine start stays cheap."""
+    spec = WorkflowSpec.load()
+    env = spec.job("run-task").get("env", {})
+    assert str(env.get("OPENHANDS_SUPPRESS_BANNER")) == "1"
+
+
+def test_secret_step_uses_no_sync() -> None:
+    """Given the secret-materialize step, when its run body is inspected,
+    then it runs the engine module with --no-sync (no re-resolution)."""
+    spec = WorkflowSpec.load()
+    bodies = [b for b in spec.run_bodies("run-task") if "secret_env" in b]
+    assert len(bodies) == 1
+    assert "--no-sync" in bodies[0]
+
+
+def test_secret_env_module_is_stdlib_only() -> None:
+    """Given the secret_env module source, when its imports are parsed,
+    then only stdlib modules are imported (issue #1240: the step must not
+    boot the OpenHands SDK, which cost ~9 s of per-run setup)."""
+    import ast
+    import sys
+
+    path = Path(__file__).resolve().parents[2] / "src" / "nebuko" / "engine" / "lib" / "secret_env.py"
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                assert root in sys.stdlib_module_names, f"non-stdlib import: {alias.name}"
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, "relative import found"
+            root = (node.module or "").split(".")[0]
+            assert root in sys.stdlib_module_names, f"non-stdlib import: {node.module}"
+
+
+def test_secret_env_output_contract() -> None:
+    """Given slots in the environment, when main() materializes them, then it
+    prints the 'Materialized N secret env var(s)' line and appends heredoc
+    blocks to $GITHUB_ENV, and values never appear in stdout."""
+    import importlib
+    import os
+
+    module = importlib.import_module("nebuko.engine.lib.secret_env")
+    env = {f"EXTRA_SECRET_{i}_NAME": "" for i in range(1, 10)}
+    env.update({"EXTRA_SECRET_1_NAME": "BRAVE_KEY", "EXTRA_SECRET_1_VALUE": "s3cret"})
+    secret_env = module.SecretEnvironment.from_slots(env)
+    assert secret_env.values == {"BRAVE_KEY": "s3cret"}
+    lines = secret_env.github_env_lines()
+    assert lines[0] == "BRAVE_KEY<<NEBUKO_SECRET_EOF_0"
+    assert "s3cret" in lines[1]
+
+    # The stdout contract: names and counts only, never values.
+    import contextlib
+    import io
+
+    module_env_backup = dict(os.environ)
+    try:
+        os.environ.update(env)
+        os.environ.pop("GITHUB_ENV", None)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            module.main()
+    finally:
+        os.environ.clear()
+        os.environ.update(module_env_backup)
+    stdout = out.getvalue()
+    assert stdout.strip() == "Materialized 1 secret env var(s): BRAVE_KEY"
+    assert "s3cret" not in stdout
