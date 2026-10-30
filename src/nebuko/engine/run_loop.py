@@ -248,8 +248,6 @@ def _is_bot_trigger(trigger: Trigger) -> bool:
             is_routable_agent_answer,
         )
 
-        # @stub-protected: signature defined by architect — do not modify
-        raise NotImplementedError
         return is_bot_comment(trigger.body or "") and not is_routable_agent_answer(
             trigger.body or ""
         )

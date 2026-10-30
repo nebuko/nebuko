@@ -90,8 +90,6 @@ def is_routable_agent_answer(body: str) -> bool:
         True if the body carries the agent-answer marker and none of the
         inertness tokens (continuation marker, ``AGENT_RUN_CONFIG``).
     """
-    # @stub-protected: signature defined by architect — do not modify
-    raise NotImplementedError
     return (
         AGENT_ANSWER_MARKER_PREFIX in body
         and ANSWER_CONTINUATION_MARKER not in body

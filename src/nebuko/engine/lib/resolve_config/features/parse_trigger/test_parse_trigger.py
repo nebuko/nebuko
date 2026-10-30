@@ -10,6 +10,7 @@ from resolve_config.features.parse_trigger.parse_trigger import (  # noqa: E402
     extract_machine_trigger,
     extract_mention_agent,
     is_bot_comment,
+    is_routable_agent_answer,
     is_machine_comment,
     is_plain_mention_trigger,
     normalize_resume_input,
