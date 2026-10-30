@@ -9,6 +9,7 @@ from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger impor
     extract_machine_trigger,
     extract_mention_agent,
     is_bot_comment,
+    is_routable_agent_answer,
     is_machine_comment,
     is_plain_mention_trigger,
     normalize_resume_input,
@@ -220,3 +221,38 @@ class TestIsMachineComment:
     def test_summarizer_token(self):
         assert is_machine_comment("<!-- bot-summarizer-trigger -->") is True
 
+
+
+class TestIsRoutableAgentAnswer:
+    """Routing-exemption truth table for bot-published agent answers."""
+
+    def test_agent_marker_only_is_routable(self):
+        assert is_routable_agent_answer("<!-- bot-agent-dev -->\nanswer") is True
+
+    def test_agent_marker_with_continuation_marker_is_not_routable(self):
+        body = "<!-- bot-agent-dev -->\nanswer\n<!-- bot-answer-continuation -->"
+        assert is_routable_agent_answer(body) is False
+
+    def test_agent_marker_with_agent_run_config_is_not_routable(self):
+        body = "<!-- bot-agent-dev -->\n{\"AGENT_RUN_CONFIG\": {}}"
+        assert is_routable_agent_answer(body) is False
+
+    def test_universal_terminal_marker_only_is_not_routable(self):
+        assert is_routable_agent_answer("<!-- bot-workflow-terminal -->\nnotice") is False
+
+    def test_plain_human_body_is_not_routable(self):
+        assert is_routable_agent_answer("/nebuko run workflow") is False
+
+
+class TestIsBotCommentUnchangedRegression:
+    """is_bot_comment must keep classifying all bot bodies as bot (issue #648)."""
+
+    def test_agent_answer_body_is_still_bot_comment(self):
+        assert is_bot_comment("<!-- bot-agent-dev -->\nanswer") is True
+
+    def test_universal_marker_body_is_still_bot_comment(self):
+        assert is_bot_comment("<!-- bot-workflow-terminal -->\nnotice") is True
+
+    def test_continuation_body_is_still_bot_comment(self):
+        body = "<!-- bot-workflow-terminal -->\n<!-- bot-answer-continuation -->\ntail"
+        assert is_bot_comment(body) is True

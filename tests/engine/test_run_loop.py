@@ -1783,9 +1783,15 @@ class TestGateNoopExit:
         assert outcome.state is None
 
     def test_a_bot_authored_trigger_gets_no_notice(self, tmp_path, monkeypatch):
-        """The engine's own comments must not re-enter the notice path."""
+        """The engine's own comments must not re-enter the notice path.
+
+        The body must stay bot-inert: a bare agent-answer marker is now the
+        one bot marker exempted in ``_is_bot_trigger`` (routing), so a
+        gate-noop reply to it posts on purpose.
+        """
         engine = _engine(
-            tmp_path, _trigger(body=f"{BOT_AGENT_MARKER}\n@@dev continue")
+            tmp_path,
+            _trigger(body=f"<!-- bot-workflow-terminal -->\n@@dev continue"),
         )
         _stub_resolved(
             monkeypatch,
