@@ -27,26 +27,26 @@ class WorkflowSpec:
 
     # @stub-protected: signature defined by architect — do not modify
     def __init__(self, text: str) -> None:
-        raise NotImplementedError("stub: yaml.safe_load the workflow text")
+        self.data = yaml.safe_load(text)
 
-    # @stub-protected: signature defined by architect — do not modify
     @classmethod
     def load(cls) -> "WorkflowSpec":
-        raise NotImplementedError("stub: read WORKFLOW_PATH, delegate to __init__")
+        return cls(cls.WORKFLOW_PATH.read_text())
 
     # @stub-protected: signature defined by architect — do not modify
     def job(self, name: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "stub: KeyError(\"workflow job '<name>' not found\") if absent"
-        )
+        jobs = self.data.get("jobs", {})
+        if name not in jobs:
+            raise KeyError(f"workflow job '{name}' not found")
+        return jobs[name]
 
     # @stub-protected: signature defined by architect — do not modify
     def run_bodies(self, job_name: str) -> list[str]:
-        raise NotImplementedError("stub: every step's run: script, in step order")
+        steps = self.job(job_name).get("steps", [])
+        return [step["run"] for step in steps if "run" in step]
 
-    # @stub-protected: signature defined by architect — do not modify
     def permissions_of(self, job_name: str) -> set[str]:
-        raise NotImplementedError("stub: keys of the job's permissions: block")
+        return set(self.job(job_name).get("permissions", {}))
 
 
 def test_run_task_grants_cache_write() -> None:
