@@ -843,6 +843,9 @@ def _ensure_pr_impl(
     # and opening the PR (issue #1180); a committed workflow patch is
     # published the same way, so a human can fetch the branch and apply it.
     no_push = not (_needs_push(split) or patch_commit_path)
+    # Initialised before the first fallible block so a no-push run never
+    # reads it unbound below (issue: engine cannot create PR).
+    pushed = False
 
     if not no_push:
         # @stub-protected: signature defined by architect — do not modify
