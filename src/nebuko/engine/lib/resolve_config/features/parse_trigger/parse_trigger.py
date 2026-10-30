@@ -34,6 +34,8 @@ __all__ = [
     "normalize_resume_input",
     "BARE_RESUME_INPUT",
     "MACHINE_TOKENS",
+    "AGENT_ANSWER_MARKER_PREFIX",
+    "is_routable_agent_answer",
     "is_machine_comment",
     "extract_debug_flag",
     "_parse_trigger_body",
@@ -67,6 +69,34 @@ UNIVERSAL_BOT_MARKER = "<!-- bot-workflow-terminal -->"
 #: ``prepare_comment.ANSWER_CONTINUATION_TOKEN``, which stays the single
 #: producer-side source of truth; a parity test pins the two literals.
 ANSWER_CONTINUATION_MARKER = "<!-- bot-answer-continuation -->"
+
+#: Opening of an agent-answer machine-token comment (``<!-- bot-agent-``).
+#: A bot-published agent answer part 1 carries this marker; it is the only
+#: bot marker whose presence may allow a comment to re-enter the engine
+#: routing (see :func:`is_routable_agent_answer`).
+AGENT_ANSWER_MARKER_PREFIX: str = "<!-- bot-agent-"
+
+
+def is_routable_agent_answer(body: str) -> bool:
+    """True when body is part 1 of a bot-published agent answer (routable).
+
+    Loopsafety: continuation parts and AGENT_RUN_CONFIG carriers are never
+    routable, even when they also carry the agent-answer marker.
+
+    Args:
+        body: Raw comment body text.
+
+    Returns:
+        True if the body carries the agent-answer marker and none of the
+        inertness tokens (continuation marker, ``AGENT_RUN_CONFIG``).
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+    return (
+        AGENT_ANSWER_MARKER_PREFIX in body
+        and ANSWER_CONTINUATION_MARKER not in body
+        and "AGENT_RUN_CONFIG" not in body
+    )
 
 
 def is_answer_continuation(trigger_body: str) -> bool:

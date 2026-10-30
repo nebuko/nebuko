@@ -120,3 +120,23 @@ class TestPreflight:
 
         with pytest.raises(ModuleNotFoundError):
             engine.preflight()
+
+
+class TestIsBotTriggerAgentAnswerExemption:
+    """Bot-published agent answers route; other bot comments stay inert."""
+
+    @staticmethod
+    def _trigger(body: str) -> Trigger:
+        return Trigger(author="nebuko-bot", body=body, type="issue_comment", number=1)
+
+    def test_agent_answer_marker_body_is_not_bot_trigger(self):
+        body = "<!-- bot-workflow-terminal -->\n<!-- bot-agent-context -->\nanswer"
+        assert run_loop._is_bot_trigger(self._trigger(body)) is False
+
+    def test_terminal_marker_only_body_is_bot_trigger(self):
+        body = "<!-- bot-workflow-terminal -->\nnotice"
+        assert run_loop._is_bot_trigger(self._trigger(body)) is True
+
+    def test_continuation_body_is_bot_trigger(self):
+        body = "<!-- bot-workflow-terminal -->\n<!-- bot-agent-context -->\n<!-- bot-answer-continuation -->"
+        assert run_loop._is_bot_trigger(self._trigger(body)) is True
