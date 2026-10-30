@@ -151,6 +151,7 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
       pull-requests: write
       issues: write
       id-token: write
+      actions: write
 
     jobs:
       agent:
