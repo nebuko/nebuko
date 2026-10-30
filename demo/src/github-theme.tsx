@@ -1,4 +1,5 @@
 import React, {createContext, useContext} from 'react';
+import {staticFile} from 'remotion';
 
 export type Theme = {
   name: 'dark' | 'light';
@@ -46,8 +47,22 @@ export type Theme = {
   mono: string;
 };
 
-const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif';
-const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+// 'Noto Color Emoji' comes FIRST: the only system font here (DejaVu) reports
+// coverage for emoji codepoints, so appended emoji fallbacks would never be reached.
+// The emoji font carries no Latin glyphs, so regular text still uses the system fonts.
+const FONT = '"Noto Color Emoji", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif';
+const MONO = '"Noto Color Emoji", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+
+/**
+ * The render sandbox has no color-emoji font, so every emoji (avatars,
+ * participants) renders as tofu rectangles. Bundle Noto Color Emoji instead.
+ */
+const EMOJI_FONT_FACE = `
+@font-face {
+  font-family: 'Noto Color Emoji';
+  src: url('${staticFile('NotoColorEmoji.ttf')}') format('truetype');
+  font-display: block;
+}`;
 
 export const DARK: Theme = {
   name: 'dark',
@@ -152,5 +167,8 @@ const ThemeCtx = createContext<Theme>(LIGHT);
 export const useGH = (): Theme => useContext(ThemeCtx);
 
 export const ThemeProvider: React.FC<{theme?: ThemeName; children: React.ReactNode}> = ({theme = 'light', children}) => (
-  <ThemeCtx.Provider value={THEMES[theme]}>{children}</ThemeCtx.Provider>
+  <>
+    <style dangerouslySetInnerHTML={{__html: EMOJI_FONT_FACE}} />
+    <ThemeCtx.Provider value={THEMES[theme]}>{children}</ThemeCtx.Provider>
+  </>
 );

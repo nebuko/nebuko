@@ -1,5 +1,5 @@
 import React from 'react';
-import {spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {Img, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {Theme, useGH} from './github-theme';
 import {
   IconBell,
@@ -143,11 +143,12 @@ export const Button: React.FC<{
 /* =====================================================================
  * Small primitives
  * ===================================================================== */
-export const Avatar: React.FC<{emoji: string; human: boolean; size?: number; ring?: boolean}> = ({
+export const Avatar: React.FC<{emoji: string; human: boolean; size?: number; ring?: boolean; img?: string}> = ({
   emoji,
   human,
   size = 40,
   ring = true,
+  img,
 }) => {
   const t = useGH();
   return (
@@ -170,7 +171,14 @@ export const Avatar: React.FC<{emoji: string; human: boolean; size?: number; rin
         boxShadow: ring ? `0 0 0 4px ${t.bg}` : 'none',
       }}
     >
-      {emoji}
+      {img ? (
+        <Img
+          src={staticFile(img)}
+          style={{width: '82%', height: '82%', objectFit: 'contain', display: 'block'}}
+        />
+      ) : (
+        emoji
+      )}
     </div>
   );
 };
@@ -686,9 +694,14 @@ export const TitleBlock: React.FC<{
 /* =====================================================================
  * Comment shell: avatar + caret + header + body + optional footer
  * ===================================================================== */
+/** Hero accent: amber = human, matching the logo glow (HeroVideo `C.amber`). */
+export const HUMAN_AMBER = '#F59E0B';
+
 export const CommentShell: React.FC<{
   avatar: string;
   human: boolean;
+  /** logo mark rendered inside the avatar instead of the emoji (bots) */
+  avatarImg?: string;
   name: string;
   verb: string;
   time: string;
@@ -700,12 +713,14 @@ export const CommentShell: React.FC<{
   ring?: number;
   footer?: React.ReactNode;
   children: React.ReactNode;
-}> = ({avatar, human, name, verb, time, role, isBot, headerExtra, opacity = 1, translateY = 0, ring = 0, footer, children}) => {
+}> = ({avatar, avatarImg, human, name, verb, time, role, isBot, headerExtra, opacity = 1, translateY = 0, ring = 0, footer, children}) => {
   const t = useGH();
   // Human comments get the blue "author" style, bots the neutral one:
   // easy to tell people from agents at a glance.
   const headBg = human ? t.accentMuted : t.surface;
-  const border = human ? t.accentBorder : t.border;
+  // Human actions carry a thin amber outline — the hero marks every human
+  // step in amber, and this ties the preview to it.
+  const border = human ? `${HUMAN_AMBER}b3` : t.border;
   return (
     <div
       style={{
@@ -717,7 +732,7 @@ export const CommentShell: React.FC<{
         transform: `translateY(${translateY}px)`,
       }}
     >
-      <Avatar emoji={avatar} human={human} />
+      <Avatar emoji={avatar} human={human} img={avatarImg} />
       <div style={{flex: 1, minWidth: 0, position: 'relative'}}>
         {/* caret pointing at the avatar */}
         <div
@@ -740,7 +755,12 @@ export const CommentShell: React.FC<{
             borderRadius: 6,
             overflow: 'hidden',
             background: t.bg,
-            boxShadow: ring > 0 ? `0 0 0 2px rgba(68,147,248,${0.55 * ring})` : 'none',
+            boxShadow:
+              ring > 0
+                ? human
+                  ? `0 0 0 2px rgba(245,158,11,${0.55 * ring})` // new human comment pulses amber
+                  : `0 0 0 2px rgba(68,147,248,${0.55 * ring})`
+                : 'none',
           }}
         >
           <div

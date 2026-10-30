@@ -4,10 +4,10 @@
     "version": "0.0.1",
     "scripts": {
         "studio": "remotion studio src/index.ts",
-        "still": "remotion still src/index.ts GithubPreview out/preview.png --frame=90 --scale=1.5",
+        "still": "remotion still src/index.ts GithubPreview out/preview.png --frame=90",
         "render": "npm run render:all",
         "render:all": "npm run render:preview && npm run render:hero && npm run render:hero:phone",
-        "render:preview": "remotion render src/index.ts GithubPreview out/preview.mp4 --scale=1.5",
+        "render:preview": "remotion render src/index.ts GithubPreview out/preview.mp4",
         "render:hero": "remotion render src/index.ts Hero out/hero.mp4",
         "render:hero:phone": "remotion render src/index.ts HeroPhone out/hero-phone.mp4",
         "hero:studio": "remotion studio src/index.ts",

@@ -165,7 +165,9 @@ export const GithubComment: React.FC<{
 
   return (
     <CommentShell
-      avatar={event.avatar || '⚙️'}
+      avatar={event.avatar || ''}
+      // agents without their own avatar carry the Nebuko mark, not the gear emoji
+      avatarImg={event.avatar ? undefined : t.name === 'dark' ? 'mark-light.svg' : 'mark-dark.svg'}
       human={isHuman}
       name={event.author.trim()}
       verb="commented"
@@ -299,6 +301,8 @@ export const IssueFrame: React.FC<{
   threadViewportRef?: React.Ref<HTMLDivElement>;
   /** false hides the right sidebar so the thread gets the full width */
   sidebar?: boolean;
+  /** collapse progress for the sidebar only (defaults to `collapse`); 1 = folded away */
+  sidebarCollapse?: number;
   showRepoChrome?: boolean;
 }> = ({
   children,
@@ -327,9 +331,16 @@ export const IssueFrame: React.FC<{
   threadOffset,
   threadViewportRef,
   sidebar = true,
+  sidebarCollapse,
   showRepoChrome = true,
 }) => {
+  const side = sidebarCollapse ?? collapse;
   const t = THEMES[theme];
+  // the composer only exists while a command is being typed — an empty "Write / Preview"
+  // box costs a quarter of the frame and nobody types in it
+  const typing = !!composerText;
+  // with the panel collapsed, the freed width goes into text size instead of line length
+  const zoom = 1;
   return (
     <ThemeProvider theme={theme}>
       <AbsoluteFill style={{background: t.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: t.font}}>
@@ -352,21 +363,55 @@ export const IssueFrame: React.FC<{
           />
         </div>
 
-        <div style={{flex: 1, minHeight: 0, display: 'flex', padding: '24px 32px', gap: 32, overflow: 'hidden'}}>
-          <ThreadColumn
-            anchor={anchor}
-            composer={<Composer text={composerText} pointerAt={composerPointerAt} />}
-            below={narration}
-            belowHeight={narrationHeight}
-            scroll={scroll}
-            offset={threadOffset}
-            viewportRef={threadViewportRef}
+        {/* the sidebar folds away with the title (collapse 0→1): the thread gets the full width */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            padding: `24px ${32 - 16 * side}px ${narrationHeight > 0 ? 0 : 24}px 32px`,
+            gap: 32 * (1 - side),
+            overflow: 'hidden',
+          }}
+        >
+          {/* zoom in on the comment column as the panel folds away — bigger text on the page,
+              not just longer lines. The column is laid out at 1/zoom and scaled back up from
+              its bottom-left corner, so all px measurements inside stay consistent. */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              height: `${100 / zoom}%`,
+              width: `${100 / zoom}%`,
+              transform: `scale(${zoom})`,
+              transformOrigin: 'bottom left',
+            }}
           >
-            {children}
-          </ThreadColumn>
+            <ThreadColumn
+              anchor={anchor}
+              composer={typing ? <Composer text={composerText} pointerAt={composerPointerAt} /> : null}
+              scroll={scroll}
+              offset={threadOffset}
+              viewportRef={threadViewportRef}
+            >
+              {children}
+            </ThreadColumn>
+          </div>
 
           {sidebar ? (
-            <div style={{width: 296, flexShrink: 0, fontSize: 12}}>
+            <div
+              style={{
+                width: 296 * (1 - side),
+                flexShrink: 0,
+                fontSize: 12,
+                opacity: 1 - side,
+                overflow: 'hidden',
+                pointerEvents: 'none',
+              }}
+            >
+              {/* fixed-width inner: content clips instead of reflowing while the column shrinks */}
+              <div style={{width: 296}}>
               <SideSection title="Assignees">
                 {assignees.length === 0 ? (
                   <span style={{color: t.muted}}>No one assigned</span>
@@ -438,9 +483,18 @@ export const IssueFrame: React.FC<{
                 )}
               </div>
             </SideSection>
-          </div>
+              </div>
+            </div>
           ) : null}
         </div>
+        {/* caption at the very bottom — where the composer used to live — so it never covers the comment */}
+        {narrationHeight > 0 ? (
+          <div style={{height: narrationHeight, flexShrink: 0, padding: '16px 32px 20px'}}>
+            {/* position:relative: the <Sequence>s inside are absolutely positioned and
+                would otherwise anchor to the frame root and float mid-screen */}
+            <div style={{position: 'relative', height: '100%'}}>{narration}</div>
+          </div>
+        ) : null}
       </AbsoluteFill>
     </ThemeProvider>
   );

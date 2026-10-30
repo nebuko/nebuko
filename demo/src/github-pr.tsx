@@ -8,6 +8,7 @@ import {
   Collapse,
   GithubHeader,
   GithubTimelineEvent,
+  HUMAN_AMBER,
   Initial,
   Label,
   Pill,
@@ -396,7 +397,8 @@ export const GithubReview: React.FC<{
             marginLeft: 56,
             position: 'relative',
             zIndex: 1,
-            border: '1px solid ' + t.border,
+            // an approval is a human action — thin amber outline, like the hero
+            border: `1px solid ${state === 'approved' ? HUMAN_AMBER + 'b3' : t.border}`,
             borderRadius: 6,
             background: t.bg,
             padding: 16,

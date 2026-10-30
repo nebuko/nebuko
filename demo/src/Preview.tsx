@@ -150,10 +150,19 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const shown = schedule.filter((s) => s.at <= frame).length;
+
   // a human comment being written: its command types into the composer, then "Comment" is clicked
   const typing = schedule.find((s) => s.typeFrom !== undefined && s.typeFrom <= frame && frame < s.at);
   // once the thread starts moving, fold GitHub's header away so the comments get the screen
   const collapse = spring({frame: frame - schedule[0].at, fps, config: {damping: 200}, durationInFrames: 25});
+  // the sidebar folds with it — except right before the cursor opens the linked PR,
+  // when it slides back in so the Development section is there to be clicked
+  const sidebarCollapse = interpolate(
+    frame,
+    [ISSUE_END - 45, ISSUE_END - 15],
+    [collapse, 0],
+    {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.cubic)},
+  );
   const typed = typing ? typing.event.title.slice(0, Math.floor((frame - typing.typeFrom!) * TYPE_SPEED)) : '';
 
   // A newest comment taller than the screen: push the thread down so its top shows, then glide to its end.
@@ -183,6 +192,7 @@ const IssueThread: React.FC<{theme: ThemeName}> = ({theme}) => {
       composerPointerAt={typing?.pointerAt ?? null}
       participants={participants}
       collapse={collapse}
+      sidebarCollapse={sidebarCollapse}
       narrationHeight={NARRATION_HEIGHT}
       narration={
         <>
