@@ -12,15 +12,31 @@ Measured baseline (run
 | Step | Before | After |
 |---|---|---|
 | Install OpenHands dependencies | ~8 s | removed |
-| Materialize extra secret slots | ~11 s | <1 s |
+| Install uv | ~2 s | ~1 s (pinned `version:`, no versions-ndjson fetch) |
+| Materialize extra secret slots | ~11 s | <1 s (stdlib-only module run as a direct script) |
 | Engine start (`uv run` resolution) | ~5 s | <1 s |
 | `uv sync` (locked, warm cache) | — | ~3–4 s |
-| **Total setup after checkout** | **~26 s** | **~8–10 s** |
+| **Total setup after checkout** | **~26 s** | **~5–6 s** |
 
-End to end, comment → first engine comment drops from ~40 s to ~20–25 s;
+End to end, comment → first engine comment drops from ~40 s to ~18–20 s;
 the remaining ~10 s is runner spin-up, which is the floor.
 
 ## How it works
+
+**Pinned uv version.** The setup-uv step declares an explicit `version:`
+(issue #1240). Without it, setup-uv fetches the astral.sh versions ndjson on
+every run before installing, which cost ~2 s. Bump the pin through the
+normal flow when the runner's uv needs updating.
+
+**Secret step without the SDK import.** `nebuko/engine/lib/secret_env.py`
+imports only the Python standard library, but `python -m
+nebuko.engine.lib.secret_env` first imports the `nebuko.engine` package,
+whose `__init__` transitively pulls in the OpenHands SDK (~5 s plus a
+banner). The workflow therefore runs the module file directly
+(`python "$NEBUKO_ROOT/src/nebuko/engine/lib/secret_env.py"`, still under
+`uv run --no-sync`); the module is self-contained, so output and the
+`$GITHUB_ENV` delivery mechanism are unchanged. `OPENHANDS_SUPPRESS_BANNER=1`
+is also set on the job env.
 
 **One locked sync instead of two installs.** The workflow previously installed
 the OpenHands SDK twice: once unpinned from `@main` ("Install OpenHands
@@ -69,4 +85,6 @@ both cache-save failures, not correctness problems:
   lacks the `actions: write` scope needed to write to the Actions cache.
 - `Failed to save: Unable to reserve cache with key setup-uv-2-…` — the
   consequence: the cache entry could not be created (or was being created by
-  a concurrent job), so the next run started cold again.
+  a concurrent job), so the next run started cold again. A benign
+  `another job may be creating this cache` warning from concurrent runs on
+  the same key can also appear; one of the concurrent runs still saves.
