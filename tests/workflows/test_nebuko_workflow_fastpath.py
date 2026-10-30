@@ -190,6 +190,7 @@ def test_secret_env_output_contract() -> None:
     prints the 'Materialized N secret env var(s)' line and appends heredoc
     blocks to $GITHUB_ENV, and values never appear in stdout."""
     import importlib
+    import os
 
     module = importlib.import_module("nebuko.engine.lib.secret_env")
     env = {f"EXTRA_SECRET_{i}_NAME": "" for i in range(1, 10)}
@@ -201,4 +202,18 @@ def test_secret_env_output_contract() -> None:
     assert "s3cret" in lines[1]
 
     # The stdout contract: names and counts only, never values.
-    assert "Materialized 1 secret env var(s): BRAVE_KEY" in module.main.__doc__ or True
+    import contextlib
+    import io
+
+    module_env_backup = dict(os.environ)
+    try:
+        os.environ.update(env)
+        os.environ.pop("GITHUB_ENV", None)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            module.main()
+    finally:
+        os.environ.clear()
+        os.environ.update(module_env_backup)
+    stdout = out.getvalue()
+    assert stdout.strip() == "Materialized 1 secret env var(s): BRAVE_KEY"
+    assert "s3cret" not in stdout
