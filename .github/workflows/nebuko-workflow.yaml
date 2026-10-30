@@ -204,15 +204,15 @@ jobs:
                   contains(github.event.comment.body, '@@ctx') ||
                   contains(github.event.comment.body, '/nebuko'))) ||
                 contains(github.event.comment.body, '"function_call"') ||
-                contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+                startsWith(github.event.comment.body, '<!-- bot-workflow-terminal --><!-- workflow-continue -->') ||
                 contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
               (github.event.comment.user.type == 'Bot' &&
                contains(fromJSON(inputs.TRUSTED_BOTS || '["nebuko[bot]"]'),
                         github.event.comment.user.login) &&
-               !startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
-               (contains(github.event.comment.body, '"function_call"') ||
-                contains(github.event.comment.body, '<!-- workflow-continue -->') ||
-                contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
+               (startsWith(github.event.comment.body, '<!-- bot-workflow-terminal --><!-- workflow-continue -->') ||
+                (!startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+                 (contains(github.event.comment.body, '"function_call"') ||
+                  contains(github.event.comment.body, '<!-- bot-trigger:'))))) ||
               (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.comment.author_association) &&
                !startsWith(github.event.comment.body, '<!-- bot-agent-') &&
