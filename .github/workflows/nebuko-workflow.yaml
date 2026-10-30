@@ -235,6 +235,7 @@ jobs:
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+            OPENHANDS_SUPPRESS_BANNER: "1"
 
             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
 
@@ -335,6 +336,7 @@ jobs:
             - name: Install uv
               uses: astral-sh/setup-uv@v7
               with:
+                  version: "0.13.6"
                   enable-cache: ${{ env.ENABLE_UV_CACHE != 'false' }}
                   # The broker's App token has no cache-write scope; save with
                   # the workflow's own token (actions: write above).
@@ -368,7 +370,7 @@ jobs:
                 EXTRA_SECRET_8_VALUE: ${{ secrets.EXTRA_SECRET_8_VALUE }}
                 EXTRA_SECRET_9_NAME: ${{ inputs.EXTRA_SECRET_9_NAME }}
                 EXTRA_SECRET_9_VALUE: ${{ secrets.EXTRA_SECRET_9_VALUE }}
-              run: uv run --no-sync --project "$NEBUKO_ROOT" python -m nebuko.engine.lib.secret_env
+              run: uv run --no-sync --project "$NEBUKO_ROOT" python "$NEBUKO_ROOT/src/nebuko/engine/lib/secret_env.py"
 
             - name: Run orchestration engine
               run: uv run --no-sync --project "$NEBUKO_ROOT" python -m nebuko.engine.run
