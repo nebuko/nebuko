@@ -243,9 +243,14 @@ def _is_bot_trigger(trigger: Trigger) -> bool:
     """
     try:
         ensure_import_path()
-        from resolve_config.features.parse_trigger.parse_trigger import is_bot_comment
+        from resolve_config.features.parse_trigger.parse_trigger import (
+            is_bot_comment,
+            is_routable_agent_answer,
+        )
 
-        return is_bot_comment(trigger.body or "")
+        return is_bot_comment(trigger.body or "") and not is_routable_agent_answer(
+            trigger.body or ""
+        )
     except Exception:  # noqa: BLE001 - never let detection crash the guard
         log.warning("[phase:guards] bot-marker check failed", exc_info=True)
         return False
