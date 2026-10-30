@@ -22,10 +22,8 @@ from nebuko.engine.context_selection import (
     resolve_selection,
     select_context,
 )
-from nebuko.engine.paths import ensure_import_path
 
-ensure_import_path()
-from workflow_state import build_state
+from nebuko.engine.lib.workflow_state import build_state
 
 BOT = {"login": "nebuko-bot", "type": "Bot"}
 HUMAN = {"login": "olivier", "type": "User"}

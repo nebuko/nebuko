@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from config import StepRef
+from nebuko.engine.lib.config import StepRef
 
 
 class GateDecision(BaseModel):

@@ -14,7 +14,7 @@ import pytest
 
 from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import Trigger
-from workflow_state.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 TRIGGER_FILE = "trigger.json"
 JOURNAL_FILE = "journal.md"
@@ -157,8 +157,8 @@ class TestLoadRawThread:
         assert [comment["user"]["type"] for comment in comments] == ["Bot", "Bot"]
 
     def test_an_agent_answer_classifies_as_agent_output(self, adapter):
-        from workflow_state.features.reconcile_thread import reconcile_thread
-        from workflow_state.sub_domains.thread_record import ThreadRecordKind
+        from nebuko.engine.lib.workflow_state.features.reconcile_thread import reconcile_thread
+        from nebuko.engine.lib.workflow_state.sub_domains.thread_record import ThreadRecordKind
 
         adapter.post(f"{TERMINAL_MARKER}\n<!-- bot-agent-dev -->\n*Dev answer*")
 

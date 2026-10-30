@@ -17,7 +17,7 @@ BASE = f"repos/{OWNER}/{REPO}/actions/variables"
 
 
 def _result(status: int, payload: str = ""):
-    from github_client import ApiCallResult, ApiErrorKind
+    from nebuko.engine.lib.github_client import ApiCallResult, ApiErrorKind
 
     return ApiCallResult(
         ok=200 <= status < 300,

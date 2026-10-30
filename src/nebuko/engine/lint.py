@@ -77,15 +77,13 @@ class _WorkflowGraph:
 
 def _ensure_runtime() -> None:
     """Make the legacy ``engine/lib`` package importable (idempotent)."""
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
 
 
 def _runtime() -> Any:
     """Return the resolver module whose traversal helpers the linter reuses."""
     _ensure_runtime()
-    import resolve_workflow
+    import nebuko.engine.lib.resolve_workflow as resolve_workflow
 
     return resolve_workflow
 
@@ -97,7 +95,7 @@ def _prompt_ref_pattern() -> Any:
     substitution cannot drift apart.
     """
     _ensure_runtime()
-    from workflow_state.features.resolve_step_output.resolve_step_output import (
+    from nebuko.engine.lib.workflow_state.features.resolve_step_output.resolve_step_output import (
         PROMPT_REF_PATTERN,
     )
 
@@ -221,7 +219,7 @@ class WorkflowLinter:
     def _load_graph(self, path: Path) -> _WorkflowGraph:
         """Load and validate ``path`` through the existing Pydantic loader."""
         _ensure_runtime()
-        from config import load_workflow
+        from nebuko.engine.lib.config import load_workflow
 
         definition = load_workflow(str(path))
         source_lines = tuple(path.read_text(encoding="utf-8").splitlines())
@@ -639,7 +637,7 @@ class WorkflowLinter:
         if not reference:
             return None
         _ensure_runtime()
-        from resolve_workflow import _load_workflow_by_reference
+        from nebuko.engine.lib.resolve_workflow import _load_workflow_by_reference
 
         return _load_workflow_by_reference(
             reference, workflows_dir, workflows_dir, None, {},

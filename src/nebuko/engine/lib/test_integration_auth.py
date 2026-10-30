@@ -21,15 +21,11 @@ These tests are expected to FAIL against the skeleton (RED evidence for the
 spec step).
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from github_client import (  # noqa: E402
+from nebuko.engine.lib.github_client import (
     ApiCallResult,
     ApiErrorKind,
     GitHubTransport,

@@ -3,9 +3,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import ScriptStepReport, brand
-from config.sub_domains.script_step_report.script_step_report import MAX_OUTPUT_CHARS
+from nebuko.engine.lib.config import ScriptStepReport, brand
+from nebuko.engine.lib.config.sub_domains.script_step_report.script_step_report import MAX_OUTPUT_CHARS
 
 
 class TestScriptStepReport:

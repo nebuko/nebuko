@@ -2,14 +2,14 @@
 
 import pytest
 
-from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
     HoldKind,
     IncompleteReason,
     TurnOutcome,
     TurnStatus,
 )
-from agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
 
 
 class TestValidators:

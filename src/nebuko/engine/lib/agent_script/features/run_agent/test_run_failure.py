@@ -4,7 +4,7 @@ import unittest
 
 from openhands.sdk.llm.exceptions import LLMError, LLMServiceUnavailableError
 
-from agent_script.features.run_agent.run_failure import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
     RESUME_COMMAND,
     RunFailure,
     RunFailureKind,

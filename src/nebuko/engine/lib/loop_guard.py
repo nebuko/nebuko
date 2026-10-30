@@ -27,8 +27,8 @@ import re
 import sys
 from typing import TYPE_CHECKING, Mapping, Optional, Sequence
 
-from config import load_agent_names
-from resolve_config.features.parse_trigger.parse_trigger import LEGACY_AGENT_NAMES
+from nebuko.engine.lib.config import load_agent_names
+from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import LEGACY_AGENT_NAMES
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.engine.models import CommentEntry

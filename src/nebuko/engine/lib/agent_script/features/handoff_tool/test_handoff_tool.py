@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from agent_script.features.handoff_tool import (
+from nebuko.engine.lib.agent_script.features.handoff_tool import (
     HANDOFF_DESCRIPTION,
     HANDOFF_BLOCK_HEADER,
     HANDOFF_RELATIVE_PATH,
@@ -218,12 +218,12 @@ class TestHandoffPushFailure(unittest.TestCase):
     """A handoff that never reached the remote must not look persisted (#1089)."""
 
     def _store(self):
-        from agent_script.features.handoff_tool.handoff_store import HandoffStore
+        from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_store import HandoffStore
 
         return HandoffStore(repo_root=Path("/tmp"))
 
     def test_a_rejected_push_raises(self):
-        from agent_script.features.handoff_tool import handoff_store
+        from nebuko.engine.lib.agent_script.features.handoff_tool import handoff_store
 
         store = self._store()
 
@@ -239,7 +239,7 @@ class TestHandoffPushFailure(unittest.TestCase):
                 store._push("feature/x")
 
     def test_a_missing_remote_is_a_skip_not_a_failure(self):
-        from agent_script.features.handoff_tool import handoff_store
+        from nebuko.engine.lib.agent_script.features.handoff_tool import handoff_store
 
         store = self._store()
 

@@ -2,15 +2,10 @@
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for _root in (os.path.dirname(__file__), REPO_ROOT):
-    if _root not in sys.path:
-        sys.path.insert(0, _root)
-from prepare_comment import (
+from nebuko.engine.lib.prepare_comment import (
     LATEST_ANSWER_FILE,
     WORKFLOW_STATE_FILE,
     _truncate_at_boundary,
@@ -612,11 +607,11 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
 
     @staticmethod
     def _state(appreciation=None, hold_kind=None, **overrides):
-        from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+        from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
             TurnOutcome,
             TurnStatus,
         )
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         turn_outcome = (
             None
@@ -659,7 +654,7 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
         self.assertEqual(body.split("\n", 1)[0], self.LIVE_HEADER_LINE)
 
     def test_embeds_the_collapsed_state_section(self):
-        from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
+        from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
 
         body = self._body()
 
@@ -694,11 +689,11 @@ class TestBuildCommentBodyHeader(unittest.TestCase):
         The failure contract is hold-for-human (``/nebuko resume``); a token
         would fire a fresh run on a rate-limit-exhausted provider.
         """
-        from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+        from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
             IncompleteReason,
             TurnOutcome,
         )
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         state = WorkflowState(
             version=7,
@@ -762,7 +757,7 @@ class TestSoftKillReproduction(unittest.TestCase):
 
     @staticmethod
     def _state():
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         with open(TestSoftKillReproduction.FIXTURE, encoding="utf-8") as handle:
             return WorkflowState.model_validate(json.load(handle))

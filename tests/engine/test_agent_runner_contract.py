@@ -27,7 +27,6 @@ from nebuko.engine.agent_runner import (
     run_engine_agent,
     run_legacy_agent,
 )
-from nebuko.engine.paths import ensure_import_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRY_POINT = (
@@ -100,8 +99,7 @@ def test_state_file_missing_is_reported_as_none(tmp_path: Path) -> None:
 
 def test_artifact_names_match_the_legacy_readers() -> None:
     """The seam's file names are the ones the legacy host and scripts already use."""
-    ensure_import_path()
-    import prepare_comment
+    import nebuko.engine.lib.prepare_comment as prepare_comment
 
     assert _LATEST_ANSWER_FILE == prepare_comment.LATEST_ANSWER_FILE
 
@@ -123,9 +121,8 @@ def test_child_env_pins_gfa_repo_root(tmp_path: Path) -> None:
     env = _child_env(script, {"GFA_REPO_ROOT": "ignored-by-caller"})
 
     assert env["GFA_REPO_ROOT"] == str(tmp_path / "checkout")
-    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(
-        tmp_path / "checkout" / "src" / "nebuko" / "engine" / "lib"
-    )
+    entries = [entry for entry in env.get("PYTHONPATH", "").split(os.pathsep) if entry]
+    assert str(tmp_path / "checkout" / "src" / "nebuko" / "engine" / "lib") not in entries
 
 
 def test_child_env_honours_an_explicit_repo_root(tmp_path: Path) -> None:

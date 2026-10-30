@@ -9,19 +9,19 @@ trigger needless recall turns. The ``AGENT_RUN_CONFIG`` prose channel is gone
 
 import unittest
 
-from agent_script.features.dispatch_check import (
+from nebuko.engine.lib.agent_script.features.dispatch_check import (
     agent_to_function_call,
     has_dispatch_decision,
 )
-from agent_script.features.dispatch_next_tool import (
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
     record_turn_outcome,
     reset_registry,
 )
-from agent_script.features.call_agent_tool import (
+from nebuko.engine.lib.agent_script.features.call_agent_tool import (
     record_function_call,
     reset_registry as reset_function_call_registry,
 )
-from workflow_state import FunctionCall, TurnOutcome
+from nebuko.engine.lib.workflow_state import FunctionCall, TurnOutcome
 
 
 # A stale echo of the deleted sentinel: prose, never a routing input (#964).

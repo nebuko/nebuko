@@ -3,17 +3,16 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
-from workflow_state.sub_domains.turn_outcome.turn_outcome import (
+from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
     TurnOutcome,
     TurnStatus,
 )
-from workflow_state import STATE_MARKER_START, STATE_MARKER_END
-from workflow_state.workflow_state import STATE_SCHEMA_VERSION
-from workflow_state.features.get_last_state.get_last_state import (
+from nebuko.engine.lib.workflow_state import STATE_MARKER_START, STATE_MARKER_END
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_SCHEMA_VERSION
+from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import (
     extract_latest_state_from_comments,
     _enrich_history_with_comment_ids,
     _enrich_pinned_comment_ids,

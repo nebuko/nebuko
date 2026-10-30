@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+from nebuko.engine.lib.agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     ScaffoldBranchResult,
     extract_scaffold_branch,
     extract_scaffold_branch_any,

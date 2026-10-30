@@ -3,15 +3,14 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from workflow_state import WorkflowState, HistoryEntry, StateMetrics
-from workflow_state.features.to_json.to_json import _format_json, state_to_json
+from nebuko.engine.lib.workflow_state import WorkflowState, HistoryEntry, StateMetrics
+from nebuko.engine.lib.workflow_state.features.to_json.to_json import _format_json, state_to_json
 
 
 def _outcome():
     """A completed/approved outcome — the mandatory routing fact (issue #964)."""
-    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+    from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
     return TurnOutcome(status=TurnStatus.COMPLETED, appreciation=Appreciation.APPROVED)
 

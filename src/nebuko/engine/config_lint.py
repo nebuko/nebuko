@@ -100,7 +100,7 @@ _LAYER_NOUNS = (("llms", "llm"), ("providers", "provider"), ("mcp_servers", "mcp
 _MCP_LAYER = "mcp_servers"
 
 # The config sub-domains the linter needs, imported lazily: the ``config``
-# package only becomes importable once ``ensure_import_path()`` has run.
+# package is imported lazily so the pure linter stays dependency-free.
 _APP_CONFIG: Any = None
 _REF_PATTERN: Any = None
 _SKILL_SPEC: Any = None
@@ -111,10 +111,8 @@ def _ensure_runtime() -> None:
     global _APP_CONFIG, _REF_PATTERN, _SKILL_SPEC
     if _REF_PATTERN is not None:
         return
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from config import AppConfig, REF_PATTERN, SkillSpec
+    from nebuko.engine.lib.config import AppConfig, REF_PATTERN, SkillSpec
 
     _APP_CONFIG = AppConfig
     _REF_PATTERN = REF_PATTERN

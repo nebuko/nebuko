@@ -26,7 +26,7 @@ from openhands.sdk.tool.registry import list_registered_tools, register_tool
 from openhands.sdk.tool.spec import Tool
 
 if TYPE_CHECKING:
-    from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
+    from nebuko.engine.lib.config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
 
 logger = get_logger(__name__)
 
@@ -86,14 +86,14 @@ def ensure_sdk_tools_registered() -> None:
     (issue #1118) have no SDK import side effect, so their registration lives
     entirely here.
     """
-    from agent_script.features.bounded_file_editor.bounded_file_editor import (
+    from nebuko.engine.lib.agent_script.features.bounded_file_editor.bounded_file_editor import (
         BoundedFileEditorTool,
     )
     from openhands.tools.file_editor import FileEditorTool
     from openhands.tools.task_tracker import TaskTrackerTool
     from openhands.tools.terminal import TerminalTool
 
-    from agent_script.sub_domains.tool_resolution.file_tools import (
+    from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.file_tools import (
         EditTool,
         ReadTool,
         WriteTool,
@@ -159,7 +159,7 @@ def _ensure_terminal_batch_tool_registered() -> None:
     global _terminal_batch_tool_registered
     if _terminal_batch_tool_registered:
         return
-    from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
+    from nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool import (
         TerminalBatchTool,
     )
 
@@ -180,7 +180,7 @@ def _ensure_finalize_tool_registered() -> None:
     global _finalize_tool_registered
     if _finalize_tool_registered:
         return
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeTool
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeTool
 
     register_tool(_FINALIZE_TOOL_NAME, FinalizeTool)
     _finalize_tool_registered = True
@@ -199,7 +199,7 @@ def _ensure_scaffold_branch_tool_registered() -> None:
     global _scaffold_branch_tool_registered
     if _scaffold_branch_tool_registered:
         return
-    from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+    from nebuko.engine.lib.agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
         ScaffoldBranchReportTool,
     )
 
@@ -220,7 +220,7 @@ def _ensure_complexity_review_tool_registered() -> None:
     global _complexity_review_tool_registered
     if _complexity_review_tool_registered:
         return
-    from agent_script.features.complexity_review_tool.complexity_review_tool import (
+    from nebuko.engine.lib.agent_script.features.complexity_review_tool.complexity_review_tool import (
         ComplexityReviewTool,
     )
 
@@ -241,7 +241,7 @@ def _ensure_handoff_tool_registered() -> None:
     global _handoff_tool_registered
     if _handoff_tool_registered:
         return
-    from agent_script.features.handoff_tool.handoff_tool import HandoffTool
+    from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_tool import HandoffTool
 
     register_tool(_HANDOFF_TOOL_NAME, HandoffTool)
     _handoff_tool_registered = True

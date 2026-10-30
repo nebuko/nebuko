@@ -28,12 +28,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
 
-import resolve_workflow  # noqa: E402
-from resolve_config import resolve_config  # noqa: E402
-from resolve_workflow import TASK_TO_PROMPT  # noqa: E402
-from workflow_state.workflow_state import (  # noqa: E402
+import nebuko.engine.lib.resolve_workflow as resolve_workflow
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.workflow_state.workflow_state import (
     STATE_MARKER_END,
     STATE_MARKER_START,
 )

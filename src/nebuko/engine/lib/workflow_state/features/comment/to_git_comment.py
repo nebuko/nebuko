@@ -27,7 +27,7 @@ def format_collapsed_section(state: WorkflowState) -> str:
     Returns:
         Markdown string ready to prepend to a comment body.
     """
-    from config import brand
+    from nebuko.engine.lib.config import brand
 
     json_str = state_to_json(state, compact=False)
     summary_label = f"{brand().logo_mark()} Workflow State (run {state.run_id})"
@@ -84,7 +84,7 @@ def wrap_script_comment(step: str, state: WorkflowState, body: str) -> str:
     """
     # Deferred: ``prepare_comment`` imports this module at import time, so a
     # module-level import here would be circular.
-    from prepare_comment import LIVE_HEADER_LINE
+    from nebuko.engine.lib.prepare_comment import LIVE_HEADER_LINE
 
     return (
         f"{LIVE_HEADER_LINE}\n"

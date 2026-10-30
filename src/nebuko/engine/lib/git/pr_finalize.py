@@ -70,11 +70,9 @@ class PrFinalizer:
             actionable detail when the PR could not be opened.
         """
         # Imported lazily: the frozen runtime modules are importable only once
-        # the lib directory is on ``sys.path`` (see ``ensure_import_path``).
-        from nebuko.engine.paths import ensure_import_path
+        # the lib modules are ordinary package members.
 
-        ensure_import_path()
-        from agent_script.features.ensure_pr.ensure_pr import ensure_pr
+        from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import ensure_pr
 
         try:
             result = ensure_pr(

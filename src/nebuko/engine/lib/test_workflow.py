@@ -14,7 +14,7 @@ import yaml
 
 def _real_workflows_dir() -> str:
     """The shipped workflow dir, not the per-machine ``.nebuko`` override."""
-    from default_paths import checkout_root
+    from nebuko.engine.lib.default_paths import checkout_root
     return os.path.join(checkout_root(), "defaults", "workflows")
 
 
@@ -26,10 +26,6 @@ class TestSkillsToString:
 
     def _import_helper(self):
         import importlib
-        import sys
-        # Ensure the scripts directory is on the path
-        if "." not in sys.path:
-            sys.path.insert(0, ".")
         resolve_workflow = importlib.import_module("resolve_workflow")
         return resolve_workflow._skills_to_string
 
@@ -57,10 +53,7 @@ class TestResolveWorkflowRouting:
     """Test the resolve_workflow_routing function from resolve_workflow.py."""
 
     def _import_resolver(self):
-        # Import at test time to handle path issues
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from resolve_workflow import resolve_workflow_routing
+        from nebuko.engine.lib.resolve_workflow import resolve_workflow_routing
         return resolve_workflow_routing
 
     def test_direct_task_routing_no_workflow(self):
@@ -294,9 +287,7 @@ class TestStepPromptFile:
         }
 
     def _resolve(self, request, tmpdir):
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from resolve_workflow import resolve_workflow_routing
+        from nebuko.engine.lib.resolve_workflow import resolve_workflow_routing
         return resolve_workflow_routing(request, tmpdir, ".agents/prompts")
 
     def _cleanup(self):
@@ -387,9 +378,7 @@ class TestSubWorkflowResolution:
     """Test sub-workflow entry, traversal, and return-to-parent."""
 
     def _import_resolver(self):
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from resolve_workflow import resolve_workflow_routing
+        from nebuko.engine.lib.resolve_workflow import resolve_workflow_routing
         return resolve_workflow_routing
 
     def test_sub_workflow_entry_to_first_step(self):
@@ -662,18 +651,12 @@ class TestSpecDrivenWorkflow:
 
     def _import_resolver(self):
         import importlib
-        import sys
-        if "." not in sys.path:
-            sys.path.insert(0, ".")
         resolve_workflow = importlib.import_module("resolve_workflow")
         return resolve_workflow.resolve_workflow_step
 
     def test_po_in_task_to_prompt(self):
         """Verify po agent is registered in TASK_TO_PROMPT."""
         import importlib
-        import sys
-        if "." not in sys.path:
-            sys.path.insert(0, ".")
         resolve_workflow = importlib.import_module("resolve_workflow")
         assert "po" in resolve_workflow.TASK_TO_PROMPT
         assert resolve_workflow.TASK_TO_PROMPT["po"] == "po.md"

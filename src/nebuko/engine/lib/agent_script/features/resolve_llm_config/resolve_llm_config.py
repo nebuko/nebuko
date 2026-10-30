@@ -7,7 +7,7 @@ import litellm
 from litellm.integrations.custom_logger import CustomLogger
 from openhands.sdk import get_logger
 
-from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+from nebuko.engine.lib.agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
     build_provider_runtime,
 )
 
@@ -247,7 +247,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         LLMConfigError: If the config file is missing/unloadable, the agent role
             has no entry, or the provider secret env var is unset.
     """
-    import default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     config_path = default_paths.agent_config_file()
     role_name = os.environ.get("ROLE_NAME", "unknown")
@@ -265,7 +265,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     if not os.path.isfile(config_path):
         raise LLMConfigError.config_file_missing(config_path, role_name)
 
-    from config import load_config
+    from nebuko.engine.lib.config import load_config
 
     try:
         cfg = load_config(config_path)
@@ -355,7 +355,7 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # ── Brand attribution (OpenRouter HTTP-Referer / X-Title) ────
     # The SDK defaults these to OpenHands; override them from the single
     # BrandIdentity source of truth so requests appear as Nebuko.
-    from config import brand
+    from nebuko.engine.lib.config import brand
 
     _brand = brand()
     llm_config["openrouter_app_name"] = _brand.app_name

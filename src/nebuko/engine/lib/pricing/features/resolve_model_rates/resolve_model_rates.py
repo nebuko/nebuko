@@ -8,7 +8,7 @@ rather than discarded.
 
 from typing import Optional
 
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 
 # @stub-protected: signature defined by architect — do not modify

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 from nebuko.engine.lib.git.pr_finalize import PrFinalizer, pr_number_from_url
 
 
@@ -32,7 +32,7 @@ def ensure_pr_result(monkeypatch):
         return outcome
 
     monkeypatch.setattr(
-        "agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake
+        "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake
     )
     return holder, calls
 

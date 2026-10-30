@@ -10,8 +10,8 @@ import unittest
 from datetime import datetime, timezone
 
 from build_output import resolve_post_decision_gate
-from config import StepRef
-from workflow_state import (
+from nebuko.engine.lib.config import StepRef
+from nebuko.engine.lib.workflow_state import (
     GateDecision,
     GateLock,
     GateStatus,

@@ -52,7 +52,6 @@ from nebuko.engine.finalize import (
     turn_outcome_from_action,
     step_output_contract,
 )
-from nebuko.engine.paths import ensure_import_path
 from nebuko.engine.report_text import (
     REPORT_OFFSET_ATTR as _REPORT_OFFSET_ATTR,
     closing_turn_report_text as _finalize_turn_text,
@@ -168,7 +167,6 @@ class InProcessAgentHost:
             EngineAgentUnavailable: Setup failed before the run began.
         """
         script = self._entry_point()
-        ensure_import_path()
         pipeline = self._load_pipeline()
 
         with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
@@ -432,8 +430,7 @@ def _recorded_turn_outcome_fields(conversation: Any) -> dict[str, Any] | None:
     conv_id = getattr(conversation, "id", None)
     if conv_id is None:
         return None
-    ensure_import_path()
-    from agent_script.features.dispatch_next_tool.dispatch_next_tool import (  # noqa: PLC0415
+    from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (  # noqa: PLC0415
         get_recorded_run_prefs,
         get_recorded_turn_outcome,
     )
@@ -451,7 +448,7 @@ def _recorded_turn_outcome_fields(conversation: Any) -> dict[str, Any] | None:
 
 def _recorded_agent_call_fields(conv_id: Any) -> dict[str, Any] | None:
     """The typed hand-off the finalize executor recorded, as payload fields."""
-    from agent_script.features.call_agent_tool.call_agent_tool import (  # noqa: PLC0415
+    from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (  # noqa: PLC0415
         get_recorded_function_call,
     )
 

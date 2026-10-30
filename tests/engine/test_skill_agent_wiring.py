@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from resolve_config.features.skill_context.skill_context import (
+from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     AGENT_SKILL_SPECS_ENV,
     SKILLS_DIR_ENV,
     STEP_SKILL_SPECS_ENV,
@@ -38,7 +38,7 @@ def _make_conversation(status_after: str = "finished") -> MagicMock:
 
 def _run_agent(monkeypatch, env: dict[str, str]):
     """Drive ``run_agent`` with a mocked SDK and return the Agent call kwargs."""
-    from config import SkillSpec
+    from nebuko.engine.lib.config import SkillSpec
 
     monkeypatch.setenv("AGENT_SKILL_SPECS", specs_to_env(SkillSpec.parse_all(env.get("agent"))))
     monkeypatch.setenv(
@@ -46,7 +46,7 @@ def _run_agent(monkeypatch, env: dict[str, str]):
     )
     monkeypatch.setenv(SKILLS_DIR_ENV, str(SKILLS_DIR))
 
-    from agent_script.features.run_agent import run_agent as module
+    from nebuko.engine.lib.agent_script.features.run_agent import run_agent as module
 
     with patch.object(module, "Conversation") as conversation_cls, patch.object(
         module, "Agent"
@@ -106,7 +106,7 @@ def test_no_skills_keeps_the_plain_team_context(monkeypatch):
 
 @pytest.mark.parametrize("env_var", [AGENT_SKILL_SPECS_ENV, STEP_SKILL_SPECS_ENV])
 def test_a_malformed_spec_payload_never_breaks_the_run(monkeypatch, env_var):
-    from agent_script.features.run_agent import run_agent as module
+    from nebuko.engine.lib.agent_script.features.run_agent import run_agent as module
 
     # The other channel must be empty too: an ambient value (e.g. under a live
     # agent run) would legitimately attach the invoke tool and mask the point.

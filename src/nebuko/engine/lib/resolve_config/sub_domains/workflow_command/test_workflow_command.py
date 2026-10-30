@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import BrandIdentity  # noqa: E402
-from resolve_config.sub_domains.workflow_command.workflow_command import (  # noqa: E402
+from nebuko.engine.lib.config import BrandIdentity
+from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
     ACTIONS,
     COMMAND_REGISTRY,
     FLAGS_BY_ACTION,

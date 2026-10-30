@@ -14,7 +14,7 @@ from nebuko.engine.finalize import (
     RunTerminator,
     SectionExtractionError,
 )
-from config import OutputField
+from nebuko.engine.lib.config import OutputField
 
 
 def _contract() -> OutputContract:

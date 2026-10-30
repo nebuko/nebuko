@@ -59,5 +59,10 @@ where = ["src"]
 "nebuko.engine.init" = ["templates/*.yaml", "templates/*.yaml.j2"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "src/nebuko/engine/lib"]
-testpaths = ["tests"]
+pythonpath = ["src"]
+testpaths = ["tests", "src/nebuko/engine/lib"]
+
+[tool.mypy]
+# The engine library is a real subpackage (issue #1165): type checkers resolve
+# ``nebuko.engine.lib.*`` from the packaged tree with no path configuration.
+files = ["src"]

@@ -5,15 +5,14 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))  # src/nebuko/engine/lib
 
-from config.sub_domains.complexity_policy.complexity_policy import (  # noqa: E402
+from nebuko.engine.lib.config.sub_domains.complexity_policy.complexity_policy import (
     BUILTIN_LAYER,
     ComplexityBand,
     ComplexityPolicy,
     ComplexityPolicyLayer,
 )
-from complexity_governor.evidence import (  # noqa: E402
+from nebuko.engine.lib.complexity_governor.evidence import (
     ContextSignals,
     EvidenceBundle,
     HumanSignals,

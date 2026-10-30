@@ -221,12 +221,9 @@ def _with_app_collaborators(
 
 def _github_transport() -> Any:
     """The ``gh``-backed transport, imported lazily like the GitHub adapter."""
-    from nebuko.engine.paths import ensure_import_path
+    from nebuko.engine.lib.github_client import GitHubTransport
 
-    ensure_import_path()
-    import github_client
-
-    return github_client.GitHubTransport()
+    return GitHubTransport()
 
 
 def _setup_app_mode(context: SetupContext, app_mode: bool, args: argparse.Namespace) -> None:

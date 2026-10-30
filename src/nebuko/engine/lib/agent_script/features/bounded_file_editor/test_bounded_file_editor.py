@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_script.features.bounded_file_editor.bounded_file_editor import (
+from nebuko.engine.lib.agent_script.features.bounded_file_editor.bounded_file_editor import (
     MAX_VIEW_LINES,
     BoundedFileEditorTool,
 )

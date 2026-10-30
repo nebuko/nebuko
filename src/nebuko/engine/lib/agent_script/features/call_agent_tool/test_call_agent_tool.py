@@ -9,7 +9,7 @@ indirectly via ``tests/engine/test_agent_host.py`` and
 
 import unittest
 
-from agent_script.features.call_agent_tool import (
+from nebuko.engine.lib.agent_script.features.call_agent_tool import (
     CALL_AGENT_DESCRIPTION,
     CallAgentAction,
     CallAgentTool,
@@ -19,7 +19,7 @@ from agent_script.features.call_agent_tool import (
     record_function_call,
     reset_registry,
 )
-from workflow_state import FunctionCall
+from nebuko.engine.lib.workflow_state import FunctionCall
 
 
 class TestActionToFunctionCall(unittest.TestCase):

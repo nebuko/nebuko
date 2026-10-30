@@ -16,16 +16,16 @@ from pydantic import ValidationError
 
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
 
-from config import (
+from nebuko.engine.lib.config import (
     CommentSizePolicy,
     is_self_function_call,
     load_workflow,
     parse_position_env,
     resolve_workflow_reference,
 )
-from github_client import get_issue_comments
-from metrics_schema import Metrics
-from workflow_state import (
+from nebuko.engine.lib.github_client import get_issue_comments
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     FunctionCall,
     GateDecision,
@@ -43,44 +43,44 @@ from workflow_state import (
     WorkflowState,
     workflow_ref_from_env,
 )
-from workflow_state import extract_function_call
-from workflow_state import extract_latest_state_from_comments
-from workflow_state.features.build_state.build_state import build_state
-from workflow_state.features.to_json.to_json import state_to_json
-from workflow_state.state_codec import WorkflowStateCodec
+from nebuko.engine.lib.workflow_state import extract_function_call
+from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
+from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
+from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
+from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
-from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+from nebuko.engine.lib.agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     extract_scaffold_branch_any,
     scaffold_branch_summary,
     strip_scaffold_branch,
 )
-from agent_script.sub_domains.message_splitter.message_splitter import split_message
-from agent_script.features.extract_recovery_trace.extract_recovery_trace import (
+from nebuko.engine.lib.agent_script.sub_domains.message_splitter.message_splitter import split_message
+from nebuko.engine.lib.agent_script.features.extract_recovery_trace.extract_recovery_trace import (
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
-from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
-from agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
-from agent_script.features.dispatch_next_tool import (
+from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_run_prefs,
     get_recorded_turn_outcome,
 )
-from agent_script.features.call_agent_tool import (
+from nebuko.engine.lib.agent_script.features.call_agent_tool import (
     clear_run as clear_call_agent_run,
     get_recorded_function_call,
 )
-from agent_script.features.complexity_review_tool import (
+from nebuko.engine.lib.agent_script.features.complexity_review_tool import (
     clear_complexity_review_run,
     get_recorded_review_request,
 )
-from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+from nebuko.engine.lib.agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
     clear_scaffold_branch_run,
     get_recorded_scaffold_branch,
 )
-from complexity_governor.complexity_governor import ComplexityAdjustment
-from complexity_governor.integration import ADJUSTMENT_ENV, POLICY_ENV
+from nebuko.engine.lib.complexity_governor.complexity_governor import ComplexityAdjustment
+from nebuko.engine.lib.complexity_governor.integration import ADJUSTMENT_ENV, POLICY_ENV
 
 logger = get_logger(__name__)
 
@@ -381,7 +381,7 @@ def _parse_complexity_policy_env():
     if not raw:
         return None
     try:
-        from config import ComplexityPolicy
+        from nebuko.engine.lib.config import ComplexityPolicy
 
         return ComplexityPolicy.model_validate_json(raw)
     except Exception:
@@ -430,8 +430,8 @@ def _load_gated_step_def(
     if not workflow_name or not workflow_step:
         return False
     try:
-        import default_paths
-        from resolve_workflow import WorkflowLoadContext
+        import nebuko.engine.lib.default_paths as default_paths
+        from nebuko.engine.lib.resolve_workflow import WorkflowLoadContext
 
         shipped_dir, local_dir = default_paths.workflow_dirs()
         ctx = WorkflowLoadContext(shipped_dir, local_dir)
@@ -566,7 +566,7 @@ def _load_prev_state_from_comments(fetch_comments=None) -> WorkflowState | None:
         else:
             # A bounded tail read (single page) is enough to recover the state
             # without re-paginating the whole thread (issue #805, Pillar C).
-            from thread_snapshot import state_tail_limit
+            from nebuko.engine.lib.thread_snapshot import state_tail_limit
 
             comments = get_issue_comments(
                 repo, int(issue_number), limit=state_tail_limit()

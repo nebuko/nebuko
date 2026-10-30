@@ -10,13 +10,13 @@ import re
 import unittest
 from unittest.mock import patch
 
-from agent_script.features.terminal_batch_tool.command_deny_list import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.command_deny_list import (
     DenyResult,
     DenyRule,
     CommandDenyList,
     push_deny_list,
 )
-from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool import (
     TerminalBatchAction,
     TerminalBatchExecutor,
     TerminalBatchTool,
@@ -148,7 +148,7 @@ class TestTerminalBatchDenyWiring(unittest.TestCase):
             raise AssertionError("the denied statement reached the executor")
 
         with patch(
-            "agent_script.features.terminal_batch_tool.terminal_batch_tool."
+            "nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool."
             "TerminalExecutor",
             side_effect=fail,
         ):

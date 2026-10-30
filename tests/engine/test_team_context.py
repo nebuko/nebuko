@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from config.sub_domains.agent_config.agent_config import AgentConfig
-from config.sub_domains.app_config.app_config import AppConfig
-from config.sub_domains.llm_config.llm_config import LLMConfig
-from config.sub_domains.provider_config.provider_config import ProviderConfig
-from resolve_config.features.team_context.team_context import (
+from nebuko.engine.lib.config.sub_domains.agent_config.agent_config import AgentConfig
+from nebuko.engine.lib.config.sub_domains.app_config.app_config import AppConfig
+from nebuko.engine.lib.config.sub_domains.llm_config.llm_config import LLMConfig
+from nebuko.engine.lib.config.sub_domains.provider_config.provider_config import ProviderConfig
+from nebuko.engine.lib.resolve_config.features.team_context.team_context import (
     SHARED_EXIT_RULES,
     UNDECLARED_ROLE,
     TeamContext,

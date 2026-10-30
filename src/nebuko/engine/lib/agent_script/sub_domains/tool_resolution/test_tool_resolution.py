@@ -19,7 +19,7 @@ import pytest
 from openhands.sdk.tool import Tool
 from openhands.sdk.tool.registry import list_registered_tools, resolve_tool
 
-from agent_script.sub_domains.tool_resolution.tool_resolution import (
+from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
     ResolvedToolset,
     ensure_sdk_tools_registered,
     resolve_toolset,
@@ -46,7 +46,7 @@ class TestCleanInterpreterRegression:
             """
             from openhands.sdk.tool.registry import list_registered_tools
 
-            from agent_script.sub_domains.tool_resolution.tool_resolution import (
+            from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
                 resolve_toolset,
             )
 
@@ -89,7 +89,7 @@ class TestEnsureSdkToolsRegistered:
         # Issue #851 S3: the role's token_budget knobs ride the Tool spec's
         # params into the engine-owned tools' create(); SDK tools take no
         # params and stay bare.
-        from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
+        from nebuko.engine.lib.config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
 
         policy = TokenBudgetPolicy(prompt_profile="lean", require_batched_recon=True)
         resolved = resolve_toolset(
@@ -113,7 +113,7 @@ class TestEnsureSdkToolsRegistered:
         assert all(tool.params == {} for tool in resolved.sdk_tools)
 
     def test_default_policy_is_full_profile(self):
-        from config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
+        from nebuko.engine.lib.config.sub_domains.token_budget.token_budget import TokenBudgetPolicy
 
         resolved = resolve_toolset(
             ["terminal", "terminal_batch", "file_editor"],
@@ -130,7 +130,7 @@ class TestEnsureSdkToolsRegistered:
     def test_file_editor_resolves_to_the_bounded_subclass(self):
         from openhands.sdk.tool.registry import _TOOL_CLASSES
 
-        from agent_script.features.bounded_file_editor.bounded_file_editor import (
+        from nebuko.engine.lib.agent_script.features.bounded_file_editor.bounded_file_editor import (
             BoundedFileEditorTool,
         )
 

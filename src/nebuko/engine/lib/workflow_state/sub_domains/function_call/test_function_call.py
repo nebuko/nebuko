@@ -2,7 +2,7 @@
 
 import pytest
 
-from workflow_state import FunctionCall, extract_function_call
+from nebuko.engine.lib.workflow_state import FunctionCall, extract_function_call
 
 
 class TestFunctionCallModel:

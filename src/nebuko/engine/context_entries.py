@@ -65,10 +65,8 @@ class ThreadEntryRepository:
 
 
 def _kind_of(body: str, *, author_is_bot: bool) -> str:
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.classify_comment.classify_comment import (
+    from nebuko.engine.lib.workflow_state.features.classify_comment.classify_comment import (
         classify_comment,
     )
 
@@ -82,11 +80,9 @@ def _kind_of(body: str, *, author_is_bot: bool) -> str:
 
 
 def _state_of(body: str) -> Any:
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state import extract_state_from_body
-    from workflow_state.features.comment.to_git_comment import (
+    from nebuko.engine.lib.workflow_state import extract_state_from_body
+    from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
         STATE_MARKER_END,
         STATE_MARKER_START,
     )
@@ -100,7 +96,7 @@ def _state_of(body: str) -> Any:
     )
     if match is not None:
         try:
-            from workflow_state.workflow_state import WorkflowState
+            from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
             # The block is collapsed in the rendered comment, so the JSON may be
             # cut short; history (with the answer's part ids, issue #504)
@@ -121,10 +117,8 @@ def _output_identity(body: str) -> tuple[str | None, int | None]:
     answering agent as the fallback. A re-run of a step is its later occurrence
     in ``history`` — ``round`` is not persisted, so it is derived from the path.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.step_output_record import StepOutputRecord
+    from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
     state = _state_of(body)
     history = list(getattr(state, "history", None) or []) if state is not None else []
@@ -173,10 +167,8 @@ def _answer_groups(
     of its answers. An engine-start notice (``RUN_META``) is never a fragment,
     and the marker only tells a fragment apart from an ordinary comment.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+    from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
     bot_options = {
         "engine_login": engine_login,
@@ -267,10 +259,8 @@ def _is_part_row(comment: Mapping[str, Any]) -> bool:
     the part header continues only when the ledger reads it as an agent answer
     (it carries the bot marker) — a start notice does not.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+    from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
     body = str(comment.get("body") or "")
     if _is_part_comment(comment) and not _is_first_part(body):
@@ -324,10 +314,8 @@ def author_is_bot(
     ``engine_login`` is shorthand for ``engine_actor_login`` (the account the
     engine posts as).
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.reconcile_thread.reconcile_thread import (
+    from nebuko.engine.lib.workflow_state.features.reconcile_thread.reconcile_thread import (
         _author_is_bot,
     )
 
@@ -350,10 +338,8 @@ def _author_is_trusted(
     quarantined to the unverified appendix and fails closed when the run's
     trigger identity is unknown.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.reconcile_thread.reconcile_thread import (
+    from nebuko.engine.lib.workflow_state.features.reconcile_thread.reconcile_thread import (
         DEFAULT_TRUST_ALLOWLIST,
         _is_trusted,
     )
@@ -515,10 +501,8 @@ def _unclaimed_answers(
     as ``RUN_META`` owns itself and never extends another answer, and
     bookkeeping kinds stay ungrouped (D2).
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.features.get_last_state.get_last_state import _is_part_comment
+    from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import _is_part_comment
 
     options = dict(bot_options or {"engine_login": engine_login})
     merged = {owner: list(parts) for owner, parts in groups.items()}

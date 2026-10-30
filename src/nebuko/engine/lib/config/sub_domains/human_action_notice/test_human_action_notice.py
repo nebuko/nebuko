@@ -8,9 +8,8 @@ human, so this value object is the single place the ping is decided and built.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import HumanActionNotice
-from workflow_state import Appreciation, HoldKind, IncompleteReason, TurnOutcome
+from nebuko.engine.lib.config import HumanActionNotice
+from nebuko.engine.lib.workflow_state import Appreciation, HoldKind, IncompleteReason, TurnOutcome
 
 
 def _outcome(appreciation=None, *, hold_kind=None, note="", incomplete=None):

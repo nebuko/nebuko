@@ -2,7 +2,7 @@
 
 import pytest
 
-from circuit_breaker import count_bot_markers, check_circuit_breaker, circuit_breaker_warning
+from nebuko.engine.lib.circuit_breaker import count_bot_markers, check_circuit_breaker, circuit_breaker_warning
 
 
 class TestCountBotMarkers:
@@ -83,7 +83,7 @@ class TestCheckCircuitBreakerDryRun:
     def test_dry_run_does_not_fail_without_token(self, mocker):
         """Dry run should not fail when no GitHub token is provided."""
         mocker.patch(
-            "circuit_breaker.get_issue_comments",
+            "nebuko.engine.lib.circuit_breaker.get_issue_comments",
             return_value=[],
         )
         result = check_circuit_breaker(

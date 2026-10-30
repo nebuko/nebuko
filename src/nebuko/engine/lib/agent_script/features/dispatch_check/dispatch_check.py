@@ -24,8 +24,8 @@ from typing import Optional
 
 from openhands.sdk import get_logger
 
-from agent_script.features.dispatch_next_tool import get_recorded_turn_outcome
-from agent_script.features.call_agent_tool import get_recorded_function_call
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool import get_recorded_turn_outcome
+from nebuko.engine.lib.agent_script.features.call_agent_tool import get_recorded_function_call
 
 logger = get_logger(__name__)
 
@@ -104,8 +104,8 @@ def _agent_roster_names() -> frozenset:
     if _config_names_cache is not None:
         return _config_names_cache
     try:
-        import default_paths
-        from config import load_config
+        import nebuko.engine.lib.default_paths as default_paths
+        from nebuko.engine.lib.config import load_config
 
         config = load_config(default_paths.agent_config_file())
         _config_names_cache = frozenset(config.agents.keys())

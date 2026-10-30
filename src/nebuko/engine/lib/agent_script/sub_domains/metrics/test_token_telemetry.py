@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
-from metrics_schema import Metrics
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.metrics_schema import Metrics
 
 
 class TestTokenTelemetryDerivation:

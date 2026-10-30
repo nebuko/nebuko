@@ -155,8 +155,8 @@ class TestLoadRawThread:
     """
 
     def test_agent_answer_is_agent_output_from_a_user_authored_comment(self, tmp_path):
-        from workflow_state.features.reconcile_thread import reconcile_thread
-        from workflow_state.sub_domains.thread_record import ThreadRecordKind
+        from nebuko.engine.lib.workflow_state.features.reconcile_thread import reconcile_thread
+        from nebuko.engine.lib.workflow_state.sub_domains.thread_record import ThreadRecordKind
 
         client = FakeGhClient(
             comments=[
@@ -204,8 +204,8 @@ class TestLoadRawThread:
         # Regression (issue #872 review round 5): the top-level marker is anchored
         # to the engine's own account (``GET /user``). A stranger's forged marker
         # must classify as human feedback, never agent output.
-        from workflow_state.features.reconcile_thread import reconcile_thread
-        from workflow_state.sub_domains.thread_record import ThreadRecordKind
+        from nebuko.engine.lib.workflow_state.features.reconcile_thread import reconcile_thread
+        from nebuko.engine.lib.workflow_state.sub_domains.thread_record import ThreadRecordKind
 
         client = FakeGhClient(
             comments=[
@@ -401,7 +401,7 @@ class TestThreadSnapshotReuse:
         ]
 
     def test_a_low_history_limit_still_reserves_a_state_safe_tail(self, tmp_path):
-        from thread_snapshot import STATE_TAIL_FLOOR
+        from nebuko.engine.lib.thread_snapshot import STATE_TAIL_FLOOR
 
         client = FakeGhClient(comments=[{"body": "hi", "user": {"login": "x"}}])
         adapter = _adapter(tmp_path, client)
@@ -412,7 +412,7 @@ class TestThreadSnapshotReuse:
         assert client.limits == [STATE_TAIL_FLOOR]
 
     def test_a_failed_fetch_is_not_read_as_an_empty_thread(self, tmp_path):
-        from github_client import ApiErrorKind, CommentsFetchResult
+        from nebuko.engine.lib.github_client import ApiErrorKind, CommentsFetchResult
 
         class FailingClient:
             def fetch_issue_comments(self, repo, number, token=None, limit=None):
@@ -448,16 +448,15 @@ class TestArtifacts:
 
 
 class TestImportBootstrap:
-    """The adapter bootstraps ``engine/lib`` itself (round-4, finding 1).
+    """The adapter imports its library by package name (issue #1165).
 
-    ``tests/conftest.py`` seeds ``sys.path`` for the whole suite, which masked a
-    real bug: under the production ``python -m nebuko.engine.run`` bootstrap only the
-    repository root is importable, so ``from event_normalizer import ...``
-    raised ``ModuleNotFoundError``. This exercises the adapter out-of-process
-    with only the repository root on ``PYTHONPATH``, i.e. no conftest seeding.
+    ``tests/conftest.py`` no longer seeds ``sys.path``: ``nebuko.engine.lib`` is
+    an ordinary subpackage, so these run the adapter out-of-process with only
+    ``src`` on ``PYTHONPATH`` — the production ``python -m nebuko.engine.run``
+    layout — and prove no bootstrap is needed.
     """
 
-    def test_read_trigger_bootstraps_the_legacy_path_without_conftest(self, tmp_path):
+    def test_read_trigger_imports_without_a_path_bootstrap(self, tmp_path):
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
@@ -483,8 +482,8 @@ class TestImportBootstrap:
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "590 issue_comment"
 
-    def test_state_methods_bootstrap_the_legacy_path_without_conftest(self, tmp_path):
-        """``load_state``/``save_state`` import legacy packages too (round-4, finding 1)."""
+    def test_state_methods_import_without_a_path_bootstrap(self, tmp_path):
+        """``load_state``/``save_state`` reach the library by package name."""
         repo_root = Path(__file__).resolve().parents[2]
         event_path = _event_file(tmp_path, ISSUE_COMMENT_PAYLOAD)
         program = (
@@ -493,9 +492,7 @@ class TestImportBootstrap:
             "    def get_issue_comments(self, repo, number, limit=None):\n"
             "        return []\n"
             f"adapter = GitHubAdapter(repo='x/y', event_path={str(event_path)!r}, client=Client())\n"
-            # Legacy imports only resolve after the adapter's bootstrap, exactly
-            # as in the production ``python -m nebuko.engine.run`` ordering.
-            "from workflow_state.workflow_state import WorkflowState\n"
+            "from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState\n"
             "adapter.read_trigger()\n"
             "print(adapter.load_state())\n"
             "adapter.save_state(WorkflowState(run_id=1, workflow='spec-driven-impl', "
@@ -527,7 +524,7 @@ class TestSaveState:
     """
 
     def test_writes_only_the_handoff_file_and_posts_nothing(self, tmp_path, monkeypatch):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         client = FakeGhClient()
@@ -543,9 +540,9 @@ class TestSaveState:
 
 def _state_comment(*, history_len: int = 2):
     """A posted bot comment carrying a state block with ``history_len`` entries."""
-    from config import StepRef
-    from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
-    from workflow_state.workflow_state import (
+    from nebuko.engine.lib.config import StepRef
+    from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+    from nebuko.engine.lib.workflow_state.workflow_state import (
         STATE_MARKER_END,
         STATE_MARKER_START,
         WorkflowState,
@@ -588,7 +585,7 @@ class TestStagePrevState:
     def test_stages_the_latest_posted_state_into_the_handoff(self, tmp_path, monkeypatch):
         from nebuko.engine.paths import repo_root
         from nebuko.engine.run_loop import Engine
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         previous, body = _state_comment(history_len=3)
@@ -615,7 +612,7 @@ class TestStagePrevState:
     def test_writes_no_handoff_without_a_previous_state(self, tmp_path, monkeypatch):
         from nebuko.engine.paths import repo_root
         from nebuko.engine.run_loop import Engine
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         adapter = _adapter(tmp_path, FakeGhClient())
@@ -633,7 +630,7 @@ class TestStagePrevState:
         """
         from nebuko.engine.paths import repo_root
         from nebuko.engine.run_loop import Engine
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         previous, _ = _state_comment(history_len=2)
@@ -658,8 +655,8 @@ class TestHistoryIncrementRegression:
     def test_the_recovered_state_advances_the_childs_history(self, tmp_path, monkeypatch):
         from nebuko.engine.paths import repo_root
         from nebuko.engine.run_loop import Engine
-        from workflow_state.features.build_state.build_state import build_state
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         previous, body = _state_comment(history_len=3)
@@ -687,7 +684,7 @@ class TestHistoryIncrementRegression:
 
     def test_without_a_handoff_the_child_resets_the_history(self):
         """The pre-fix shape from #739: ``build_state(prev_state=None)``."""
-        from workflow_state.features.build_state.build_state import build_state
+        from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
 
         state = build_state(None, workflow="", step="", agent="architect", summary="s")
 

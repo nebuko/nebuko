@@ -22,7 +22,7 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from config.sub_domains.comment_size.comment_size import DEFAULT_MAX_COMMENT_CHARS
+from nebuko.engine.lib.config.sub_domains.comment_size.comment_size import DEFAULT_MAX_COMMENT_CHARS
 
 #: Everything under this repo-relative prefix is patch-only, never pushed.
 WORKFLOW_DIR = ".github/workflows/"

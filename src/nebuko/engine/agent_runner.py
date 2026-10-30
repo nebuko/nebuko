@@ -31,7 +31,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
@@ -158,7 +157,7 @@ def run_engine_agent(
 def _load_pipeline() -> SimpleNamespace:
     """Import the legacy agent assembly once, or declare the seam unavailable."""
     try:
-        from agent_script import (  # type: ignore[import-not-found]
+        from nebuko.engine.lib.agent_script import (  # type: ignore[import-not-found]
             build_output,
             collect_and_save_metrics,
             load_prev_state_or_recover,
@@ -195,14 +194,12 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
     return staged
 
 
+# @stub-protected
 def _child_env(
     script: Path, env: Mapping[str, str] | None, *, repo_root: Path | None = None
 ) -> dict[str, str]:
     """Environment for the child, importing ``engine/lib`` like the host."""
     child_env = {**os.environ, **(env or {})}
-    scripts_dir = str(script.parent.parent)
-    existing = child_env.get("PYTHONPATH")
-    child_env["PYTHONPATH"] = f"{scripts_dir}{os.pathsep}{existing}" if existing else scripts_dir
     # The agent run may execute under a temporary cwd (the in-process host, issue
     # #740/#766); ``GFA_REPO_ROOT`` pins git/gh to the real checkout so the
     # wind-down's ``ensure_pr`` can still commit and push.
@@ -213,8 +210,7 @@ def _child_env(
 def _load_state(path: Path) -> Any:
     if not path.is_file():
         return None
-    ensure_import_path()
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
     try:
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))

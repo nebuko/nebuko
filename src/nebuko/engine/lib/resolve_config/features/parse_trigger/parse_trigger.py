@@ -10,8 +10,8 @@ import re
 import sys
 from typing import Optional, Tuple
 
-from config import load_agent_names
-from workflow_state import extract_state_from_body
+from nebuko.engine.lib.config import load_agent_names
+from nebuko.engine.lib.workflow_state import extract_state_from_body
 
 from ...sub_domains.trigger_commands.trigger_commands import TriggerCommands
 from ...sub_domains.workflow_command.workflow_command import (
