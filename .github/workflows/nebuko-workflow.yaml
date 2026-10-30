@@ -53,6 +53,11 @@ on:
         required: false
         type: string
         default: 'on'
+      TRUSTED_BOTS:
+        description: 'JSON array of GitHub App bot logins whose continuation comments (function_call / workflow-continue / bot-trigger markers) may trigger the workflow without an OWNER/MEMBER/COLLABORATOR association. Gate commands stay human-only. Self-hosters put their own App''s bot login here.'
+        required: false
+        type: string
+        default: '["nebuko[bot]"]'
       EXTRA_SECRET_1_NAME:
         description: 'Env var name materialized from the EXTRA_SECRET_1_VALUE secret (issue #834)'
         required: false
@@ -164,6 +169,14 @@ concurrency:
 jobs:
     run-task:
         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        # actions: write lets setup-uv's post step save the uv cache; the
+        # top-level token may be a broker App token without that scope.
+        permissions:
+            contents: write
+            pull-requests: write
+            issues: write
+            id-token: write
+            actions: write
         if: |
           github.event.action != 'closed' &&
           (
@@ -199,8 +212,15 @@ jobs:
                   contains(github.event.comment.body, '@@ctx') ||
                   contains(github.event.comment.body, '/nebuko'))) ||
                 contains(github.event.comment.body, '"function_call"') ||
-                contains(github.event.comment.body, '<!-- workflow-continue -->') ||
+                startsWith(github.event.comment.body, '<!-- bot-workflow-terminal --><!-- workflow-continue -->') ||
                 contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
+              (github.event.comment.user.type == 'Bot' &&
+               contains(fromJSON(inputs.TRUSTED_BOTS || '["nebuko[bot]"]'),
+                        github.event.comment.user.login) &&
+               (startsWith(github.event.comment.body, '<!-- bot-workflow-terminal --><!-- workflow-continue -->') ||
+                (!startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
+                 (contains(github.event.comment.body, '"function_call"') ||
+                  contains(github.event.comment.body, '<!-- bot-trigger:'))))) ||
               (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.comment.author_association) &&
                !startsWith(github.event.comment.body, '<!-- bot-agent-') &&
@@ -215,6 +235,7 @@ jobs:
             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
             AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+            OPENHANDS_SUPPRESS_BANNER: "1"
 
             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
 
@@ -269,11 +290,19 @@ jobs:
                 if [ -z "$TOKEN" ]; then
                   TOKEN="$FALLBACK_GITHUB_TOKEN"
                   SOURCE="github-token"
+                  echo "::warning::Falling back to GITHUB_TOKEN: comments posted with it do not trigger follow-up workflow runs, so step chaining by comment will stall"
                 fi
                 echo "::add-mask::$TOKEN"
                 echo "GH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
                 echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
                 echo "::notice::GitHub token resolved via $SOURCE"
+                # Broker tokens are nebuko[bot] installation tokens: commit as the
+                # bot so GitHub links the commits to the App's profile. The email
+                # carries the bot's numeric user id (GET /users/nebuko[bot]).
+                if [ "$SOURCE" = "broker" ]; then
+                  echo "NEBUKO_GIT_AUTHOR_NAME=${NEBUKO_GIT_AUTHOR_NAME:-nebuko[bot]}" >> "$GITHUB_ENV"
+                  echo "NEBUKO_GIT_AUTHOR_EMAIL=${NEBUKO_GIT_AUTHOR_EMAIL:-331982189+nebuko[bot]@users.noreply.github.com}" >> "$GITHUB_ENV"
+                fi
 
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -307,14 +336,19 @@ jobs:
             - name: Install uv
               uses: astral-sh/setup-uv@v7
               with:
+                  version: "0.13.6"
                   enable-cache: ${{ env.ENABLE_UV_CACHE != 'false' }}
+                  # The broker's App token has no cache-write scope; save with
+                  # the workflow's own token (actions: write above).
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Install OpenHands dependencies
+            # Single locked sync installs the SDK exactly once, from the SHA
+            # pinned in pyproject.toml and recorded in uv.lock (issue #982).
+            - name: Sync locked dependencies
               run: |
                   ENCODED=$(echo -n "x-access-token:${GH_TOKEN}" | base64 -w 0)
                   git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $ENCODED"
-                  uv pip install --system "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-sdk"
-                  uv pip install --system "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@main#subdirectory=openhands-tools"
+                  uv sync --project "$NEBUKO_ROOT" --extra runtime --locked --no-dev
 
             - name: "Materialize extra secret slots as env vars"
               env:
@@ -336,10 +370,10 @@ jobs:
                 EXTRA_SECRET_8_VALUE: ${{ secrets.EXTRA_SECRET_8_VALUE }}
                 EXTRA_SECRET_9_NAME: ${{ inputs.EXTRA_SECRET_9_NAME }}
                 EXTRA_SECRET_9_VALUE: ${{ secrets.EXTRA_SECRET_9_VALUE }}
-              run: uv run --project "$NEBUKO_ROOT" --extra runtime python -m nebuko.engine.lib.secret_env
+              run: uv run --no-sync --project "$NEBUKO_ROOT" python "$NEBUKO_ROOT/src/nebuko/engine/lib/secret_env.py"
 
             - name: Run orchestration engine
-              run: uv run --project "$NEBUKO_ROOT" --extra runtime python -m nebuko.engine.run
+              run: uv run --no-sync --project "$NEBUKO_ROOT" python -m nebuko.engine.run
               env:
                 ENGINE_ADAPTER: github
                 GFA_SOURCE: github
@@ -439,11 +473,19 @@ jobs:
                 if [ -z "$TOKEN" ]; then
                   TOKEN="$FALLBACK_GITHUB_TOKEN"
                   SOURCE="github-token"
+                  echo "::warning::Falling back to GITHUB_TOKEN: comments posted with it do not trigger follow-up workflow runs, so step chaining by comment will stall"
                 fi
                 echo "::add-mask::$TOKEN"
                 echo "GH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
                 echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
                 echo "::notice::GitHub token resolved via $SOURCE"
+                # Broker tokens are nebuko[bot] installation tokens: commit as the
+                # bot so GitHub links the commits to the App's profile. The email
+                # carries the bot's numeric user id (GET /users/nebuko[bot]).
+                if [ "$SOURCE" = "broker" ]; then
+                  echo "NEBUKO_GIT_AUTHOR_NAME=${NEBUKO_GIT_AUTHOR_NAME:-nebuko[bot]}" >> "$GITHUB_ENV"
+                  echo "NEBUKO_GIT_AUTHOR_EMAIL=${NEBUKO_GIT_AUTHOR_EMAIL:-331982189+nebuko[bot]@users.noreply.github.com}" >> "$GITHUB_ENV"
+                fi
 
             - name: Checkout repository
               uses: actions/checkout@v5
