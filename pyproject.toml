@@ -21,7 +21,9 @@ dependencies = [
 # library (engine + adapters) can be imported without pulling the SDK.
 # Pinned to a commit SHA, not `main` (issue #982): upstream moves several
 # commits a day, and an unpinned install makes any run's behavior
-# unreproducible. Bump the SHA in one place — here, the CI install step in
+# unreproducible. Bump the SHA in one place — here, and in the mirror in
+# `.nebuko-engine/pyproject.toml` — then re-resolve `uv lock`. The CI workflow
+# syncs whatever `uv.lock` records; it has no separate install pin.
 # `.github/workflows/nebuko-workflow.yaml`, and `uv.lock` (re-resolve with
 # `uv lock`).
 runtime = [

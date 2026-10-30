@@ -130,7 +130,7 @@ class TestRender:
     def test_input_body_asks_for_feedback(self):
         body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_INPUT, note="await something"), step="context").render()
         assert "paused at step `context`" in body
-        assert "/nebuko resume <your feedback>" in body
+        assert "/nebuko resume --feedback \"<your feedback>\"" in body
 
     def test_complete_body_announces_the_finish(self):
         body = _classify(_outcome(Appreciation.APPROVED), terminal=True, step="review").render()

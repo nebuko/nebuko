@@ -45,7 +45,7 @@ _LINES = {
     ),
     AWAITING_INPUT: (
         "{ping} workflow **{workflow}** is paused at step `{step}` and needs "
-        "your input. Run `/nebuko resume <your feedback>` to continue."
+        'your input. Run `/nebuko resume --feedback "<your feedback>"` to continue.'
     ),
     WORKFLOW_COMPLETE: (
         "{ping} workflow **{workflow}** has finished at step `{step}`. "
