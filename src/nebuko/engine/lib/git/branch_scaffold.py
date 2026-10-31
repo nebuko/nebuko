@@ -332,15 +332,20 @@ class BranchScaffold:
                 self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
         except RuntimeError as exc:
             return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
-        # @stub-protected body replaced per issue #1242 (conflict-only merge)
-        raise NotImplementedError
-        try:  # pragma: no cover — dead until the stub body is implemented
+        conflicted = self._idempotency.has_base_conflict(branch, base)
+        if not conflicted:
+            detail = f"{branch} vs origin/{base}: no conflicts — left as-is"
+            logger.info("branch scaffold: %s", detail)
+            return ScaffoldResult(
+                ok=True, already_up_to_date=True, detail=detail, branch=branch
+            )
+        try:
             # The identity is passed inline: the preflight that writes the
             # repo-local identity may not have run yet, and a runner without a
             # global one cannot create the merge commit.
             self._git(*self._identity_args(), "merge", "--no-edit", f"origin/{base}")
         except RuntimeError as exc:
-            conflicted = self._conflicted_files()
+            paths = self._conflicted_files()
             if not conflicted:
                 # Not a conflict (unrelated histories, a dirty tree, …): the
                 # agent cannot fix it, so the run must fail instead.

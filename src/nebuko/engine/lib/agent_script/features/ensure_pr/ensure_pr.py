@@ -452,29 +452,35 @@ def _base_conflict_paths(branch: str, base: str) -> list[str]:
     cross-boundary import of ``engine.lib.git`` from the agent-script runtime
     is unconfirmed. Never mutates the worktree.
     """
-    raise NotImplementedError
+    # ``origin/<base>`` may not exist in a probe checkout: fall back to the
+    # local ``<base>`` ref when the tracking ref is unresolvable.
+    base_ref = f"origin/{base}"
+    try:
+        _run_git(["rev-parse", "--verify", base_ref])
+    except RuntimeError:
+        try:
+            _run_git(["rev-parse", "--verify", base])
+            base_ref = base
+        except RuntimeError:
+            return []
+    result = subprocess.run(
+        ["git", "-C", _repo_root(), "merge-tree", "--write-tree", "--name-only",
+         "--no-messages", base_ref, branch],
+        capture_output=True,
+        text=True,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    # git exits 0 on a clean merge (stdout: tree oid only) and 1 on a
+    # conflict (stdout: tree oid, then the conflicted paths). Anything else
+    # is an infrastructure failure the caller cannot act on.
+    if result.returncode not in (0, 1):
+        return []
+    lines = [line for line in result.stdout.splitlines() if line]
+    return lines[1:]
 
 
 # Removed per issue #1242: the publish-time base sync (#1219) is gone —
 # the publish flow pushes plainly and never merges the base.
-def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
-    raise NotImplementedError
-    """Publish-time base sync (issue #1219): fetch ``origin/<base>`` (no
-    tags, explicit refspec, same shape as ``BranchScaffold._fetch_base``),
-    skip when ``_base_already_in_branch``, else ``git merge --no-edit
-    origin/<base>`` into ``branch``. On a conflict, abort the merge and
-    report it. Returns ``""`` on success or benign skip, or an actionable
-    error detail (fetch failed / dirty tree / merge failed / conflict
-    aborted, with the abort outcome) that the caller MUST treat as a refusal
-    to push.
-    """
-    raise NotImplementedError
-
-
-# Removed per issue #1242: the publish-time base sync (#1219) is gone —
-# the publish flow pushes plainly and never merges the base.
-def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
-    raise NotImplementedError
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
@@ -831,13 +837,28 @@ def _ensure_pr_impl(
     pushed = False
 
     if not no_push:
-        # @stub-protected: signature defined by architect — do not modify
-        sync_detail = _sync_base_before_push(branch, base)
-        if sync_detail:
-            return EnsurePrResult(error=True, message=f"error: {sync_detail}")
+        # Conflict-only base sync (issue #1242): the base is never merged at
+        # publish time. On a conflicting advance the push still happens (the
+        # agent's work is never blocked by main moving) and a comment asks a
+        # human to re-call the agent on the conflict.
+        conflict_paths = _base_conflict_paths(branch, base)
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")
+        if conflict_paths:
+            listed = "\n".join(f"- `{path}`" for path in conflict_paths)
+            body = (
+                "**Base conflict (main moved).** Merging `origin/%s` into this "
+                "branch conflicts in:\n\n%s\n\n"
+                "The branch was pushed as-is — main was **not** merged into it. "
+                "Please re-call the agent on this issue so it can resolve the "
+                "conflict (issue #1242 policy: conflict-only base sync)."
+                % (base, listed)
+            )
+            try:
+                _post_patch_comment(body, pr_url="", transport=transport)
+            except (RuntimeError, TimeoutExpired) as exc:
+                logger.warning(f"ensure_pr: base-conflict comment failed: {exc}")
 
     commit_hash = commit_hash or _run_git(["rev-parse", "HEAD"])
 

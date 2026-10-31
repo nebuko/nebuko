@@ -39,7 +39,55 @@ class GitIdempotency:
         return the list of conflicted paths (empty list = clean merge). Never
         mutates the worktree.
         """
-        raise NotImplementedError
+        # ``origin/<base>`` needs a remote-tracking ref, which a probe
+        # checkout may not have: fall back to the local ``<base>`` ref when
+        # the tracking ref is unresolvable.
+        base_ref = f"origin/{base}"
+        try:
+            self._run_git(["rev-parse", "--verify", base_ref])
+        except RuntimeError:
+            try:
+                self._run_git(["rev-parse", "--verify", base, "--"])
+                base_ref = base
+            except RuntimeError:
+                pass
+        try:
+            out = self._run_git(
+                [
+                    "merge-tree",
+                    "--write-tree",
+                    "--name-only",
+                    "--no-messages",
+                    base_ref,
+                    branch,
+                ]
+            )
+        except RuntimeError as exc:
+            # A merge-level failure (git exit 1, a conflict) writes the tree
+            # oid and the conflicted paths to stdout, which ``run_git`` drops
+            # when it raises: re-read them directly below. Anything else is an
+            # infrastructure "no".
+            if " failed (1)" not in str(exc) and "merge-tree" not in str(exc):
+                return []
+            out = self._merge_tree_stdout(base_ref, branch)
+        lines = [line for line in out.splitlines() if line]
+        # Line 1 is the written tree oid (present even on conflict); the rest
+        # are the conflicted paths.
+        return lines[1:] if lines else []
+
+    def _merge_tree_stdout(self, base_ref: str, branch: str) -> str:
+        """Raw stdout of the probe, keeping a conflict's rc-1 output readable
+        even though ``run_git`` raises instead of returning stdout."""
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "-C", self._repo_root,
+             "merge-tree", "--write-tree", "--name-only", "--no-messages",
+             base_ref, branch],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
 
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected
         """Whether ``branch`` already contains ``origin/<base>``.
