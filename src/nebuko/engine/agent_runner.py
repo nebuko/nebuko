@@ -31,7 +31,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
-from nebuko.engine.paths import ensure_import_path
 
 __all__ = ["EngineAgentUnavailable", "run_engine_agent", "run_legacy_agent"]
 
@@ -49,14 +48,27 @@ _STAGED_ENTRY_FILE = "agent_script_entry.py"
 
 
 def run_legacy_agent(
-    prompt: str, *, repo_root: Path, env: Mapping[str, str] | None = None
+    prompt: str,
+    *,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+    caller_root: Path | None = None,
 ) -> dict[str, Any]:
+    # @stub-protected: signature defined by architect — do not modify
     """Run the legacy agent entry point for ``prompt`` and read back its artefacts.
+
+    Two roots, two meanings (issue #1208): the agent's *code* always comes from
+    the engine checkout, while the agent's *git operations* anchor at the
+    caller's workspace.
 
     Args:
         prompt: The assembled agent prompt (written to a temp file).
-        repo_root: Checkout holding ``engine/lib/agent_script``.
+        repo_root: The engine checkout holding ``engine/lib/agent_script``; the
+            entry point is ``repo_root / _AGENT_SCRIPT``.
         env: Extra environment for the child (LLM config, role, ...).
+        caller_root: The caller's workspace, exported to the child as
+            ``GFA_REPO_ROOT`` so the wind-down's commit/push/PR lands there.
+            ``None`` means the caller *is* the engine checkout (same-repo run).
 
     Returns:
         Dict with ``answer`` (``latest_answer.md``), ``final_message``,
@@ -66,7 +78,9 @@ def run_legacy_agent(
     if not script.is_file():
         raise FileNotFoundError(f"legacy agent entry point not found: {script}")
 
-    child_env = _child_env(script, env, repo_root=Path(repo_root))
+    # The agent's git operations anchor at the caller's workspace, while its
+    # code always comes from the engine checkout (issue #1208).
+    child_env = _child_env(script, env, repo_root=Path(caller_root or repo_root))
     with tempfile.TemporaryDirectory(prefix="gfa-agent-") as workdir:
         work = Path(workdir)
         prompt_file = work / _PROMPT_FILE
@@ -104,8 +118,13 @@ class EngineAgentUnavailable(RuntimeError):
 
 
 def run_engine_agent(
-    prompt: str, *, repo_root: Path, env: Mapping[str, str] | None = None
+    prompt: str,
+    *,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+    caller_root: Path | None = None,
 ) -> dict[str, Any]:
+    # @stub-protected: signature defined by architect — do not modify
     """Run the agent assembly in-process and capture the real deliverable.
 
     The in-process hosting lives in
@@ -116,8 +135,11 @@ def run_engine_agent(
 
     Args:
         prompt: The assembled agent prompt.
-        repo_root: Checkout holding ``engine/lib/agent_script``.
+        repo_root: The engine checkout holding ``engine/lib/agent_script``.
         env: Extra environment for the run (LLM config, role, ...).
+        caller_root: The caller's workspace — the git anchor for the agent's
+            commit/push/PR wind-down (issue #1205); ``None`` falls back to
+            ``repo_root`` for a same-repo run (issue #1208).
 
     Raises:
         EngineAgentUnavailable: Setup failed before the run began.
@@ -125,14 +147,17 @@ def run_engine_agent(
     from nebuko.engine.agent_host import InProcessAgentHost
 
     return InProcessAgentHost(
-        repo_root=repo_root, load_pipeline=_load_pipeline, env=env
+        repo_root=repo_root,
+        load_pipeline=_load_pipeline,
+        env=env,
+        caller_root=caller_root,
     ).run(prompt)
 
 
 def _load_pipeline() -> SimpleNamespace:
     """Import the legacy agent assembly once, or declare the seam unavailable."""
     try:
-        from agent_script import (  # type: ignore[import-not-found]
+        from nebuko.engine.lib.agent_script import (  # type: ignore[import-not-found]
             build_output,
             collect_and_save_metrics,
             load_prev_state_or_recover,
@@ -169,14 +194,12 @@ def _stage_entry_point(script: Path, work: Path) -> Path:
     return staged
 
 
+# @stub-protected
 def _child_env(
     script: Path, env: Mapping[str, str] | None, *, repo_root: Path | None = None
 ) -> dict[str, str]:
     """Environment for the child, importing ``engine/lib`` like the host."""
     child_env = {**os.environ, **(env or {})}
-    scripts_dir = str(script.parent.parent)
-    existing = child_env.get("PYTHONPATH")
-    child_env["PYTHONPATH"] = f"{scripts_dir}{os.pathsep}{existing}" if existing else scripts_dir
     # The agent run may execute under a temporary cwd (the in-process host, issue
     # #740/#766); ``GFA_REPO_ROOT`` pins git/gh to the real checkout so the
     # wind-down's ``ensure_pr`` can still commit and push.
@@ -187,8 +210,7 @@ def _child_env(
 def _load_state(path: Path) -> Any:
     if not path.is_file():
         return None
-    ensure_import_path()
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
     try:
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from secret_env import EXTRA_SECRET_SLOTS, RESERVED_ENV_NAMES, SecretEnvironment
+from nebuko.engine.lib.secret_env import EXTRA_SECRET_SLOTS, RESERVED_ENV_NAMES, SecretEnvironment
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WORKFLOW_YAML = REPO_ROOT / ".github" / "workflows" / "nebuko-workflow.yaml"

@@ -23,8 +23,7 @@ import re
 import sys
 from typing import TYPE_CHECKING, Mapping, Sequence
 
-sys.path.insert(0, os.path.dirname(__file__))
-from github_client import get_issue_comments, post_comment
+from nebuko.engine.lib.github_client import get_issue_comments, post_comment
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.engine.models import CommentEntry

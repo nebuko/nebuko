@@ -3,9 +3,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import TokenBudgetPolicy
-from config.sub_domains.token_budget.token_budget import (
+from nebuko.engine.lib.config import TokenBudgetPolicy
+from nebuko.engine.lib.config.sub_domains.token_budget.token_budget import (
     COMPACTION_TOKEN_FRACTION,
     DEFAULT_COMPACTION_MAX_SIZE,
     MIN_COMPACTION_MAX_TOKENS,

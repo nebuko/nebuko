@@ -98,12 +98,16 @@ want to try is a YAML diff, not a new stack:
 > 🚀 The full walkthrough is in [**How to adopt Nebuko**](docs/adoption.md)
 > (entrypoint, authentication, providers, runners).
 
-**One command (recommended).** Install the `nebuko` binary from the release and
-let it do steps 1–3 for you: it asks for the repository, the provider and the
-runner labels, opens a pull request with the config and the workflow, then stores
-the secrets with your own `gh` authentication. Secrets that already exist at the
-chosen level (repository or organization) are left untouched unless you pass
-`--force`, so a second repository can reuse organization-level secrets.
+**One command (recommended).** Install the Nebuko App first —
+<https://github.com/apps/nebuko/installations/new> — and grant it only the
+repositories Nebuko should work on. Then install the `nebuko` binary from the
+release and let it do steps 1–3 for you: it asks for the repository, the
+provider and the runner labels, opens a pull request with the config and the
+workflow, then stores the secrets with your own `gh` authentication. No GitHub
+token is needed: the generated workflow mints a short-lived installation token
+from the OIDC broker. Secrets that already exist at the chosen level (repository
+or organization) are left untouched unless you pass `--force`, so a second
+repository can reuse organization-level secrets.
 
 ```bash
 gh release download -R nebuko/nebuko -p 'nebuko-linux-amd64' -O ~/.local/bin/nebuko
@@ -147,6 +151,7 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
       pull-requests: write
       issues: write
       id-token: write
+      actions: write
 
     jobs:
       agent:
@@ -155,18 +160,18 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
           agent_config_path: ".nebuko/agents/agent-config.yaml"
         secrets:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # = api_token_env in your config
-          GH_PAT: ${{ secrets.GH_PAT }}
    ```
 
 3. **Add secrets** under *Settings → Secrets and variables → Actions*:
    - the provider key named by your config's `api_token_env`:
      `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY`,
      `MISTRAL_API_KEY` or `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
-   - optionally `GH_PAT`: a fallback fine-grained PAT with **Contents**,
-     **Pull requests** and **Issues** read/write. With the GitHub App installed
-     the token is minted by the OIDC broker and `GH_PAT` is not needed;
    - optional MCP tokens (e.g. `BRAVE_API_KEY`) through the generic
      `EXTRA_SECRET_n_*` slots — see [adoption.md §3.1](docs/adoption.md#31-wiring-extra-secrets-mcp-tokens).
+
+   No GitHub token is needed with the App installed — the workflow mints a
+   short-lived installation token from the OIDC broker
+   ([trust note](docs/adoption.md#8-trust-and-security-the-github-app)).
 
 4. **Comment on an issue:**
    - `/nebuko run workflow --name default` — the standard plan → context →
@@ -257,8 +262,12 @@ agent executes:
 - **rejection bound** — 2 loops per step, then a human is pinged;
 - **`human_gate`** — design decisions stay human-owned.
 
-In PAT mode, narrow `GH_PAT` to the repositories you use and give it an
-expiration ([details](docs/adoption.md#4-authentication--pat-mode-alpha-default)).
+In App mode no credential is stored in your repository: the workflow exchanges a
+GitHub OIDC token for a short-lived installation token that expires with the job,
+and the App's private key never leaves the App owner / broker
+([trust note](docs/adoption.md#8-trust-and-security-the-github-app)). If you run
+in PAT fallback mode, narrow `GH_PAT` to the repositories you use and give it an
+expiration ([PAT fallback](docs/adoption.md#pat-fallback)).
 Mechanisms: [features.md](docs/features.md#safety-mechanisms). Machine contracts:
 [reference.md](docs/reference.md).
 
@@ -273,7 +282,8 @@ Full inventory: [features.md](docs/features.md).
 **Know before you adopt.**
 - The config schema and `WORKFLOW_STATE` format still move (legacy state loads
   unchanged).
-- GitHub only; PAT mode only (no bot identity yet).
+- GitHub only; GitHub App install is the default path (PAT fallback available;
+  `nebuko[bot]` actor identity still pending).
 - Budget real tokens: roughly **1–5M input tokens for a small fix, 5–15M for a
   medium one, 15–100M for a large one**, with 95%+ cache hits across calls in a
   run. Cheap on subscription providers — but plan for it.

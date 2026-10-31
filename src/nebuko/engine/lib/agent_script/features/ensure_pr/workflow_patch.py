@@ -19,12 +19,10 @@ never carry a workflow path, so no reject-text parsing is needed.
 """
 
 import os
-import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from config.sub_domains.comment_size.comment_size import DEFAULT_MAX_COMMENT_CHARS
-from nebuko.engine.lib.git.idempotency import GitIdempotency
+from nebuko.engine.lib.config.sub_domains.comment_size.comment_size import DEFAULT_MAX_COMMENT_CHARS
 
 #: Everything under this repo-relative prefix is patch-only, never pushed.
 WORKFLOW_DIR = ".github/workflows/"
@@ -38,17 +36,6 @@ PATCH_ARTIFACT_DIR = "nebuko-task-logs"
 
 #: The one-line command a human runs after saving the patch.
 APPLY_COMMAND = f"git apply {PATCH_FILENAME}"
-
-
-# @stub-protected
-def patch_is_already_applied(patch_text: str, repo_root: str) -> bool:
-    """Whether the patch content is already present in the checkout (issue #1194).
-
-    Wraps :class:`GitIdempotency.patch_already_applied` (a reverse-apply
-    probe) so the delivery can say "already applied" instead of re-issuing
-    the apply command for a change a human already applied.
-    """
-    raise NotImplementedError
 
 
 # @stub-protected
@@ -140,15 +127,13 @@ def render_patch_comment(
     workflow_paths: Sequence[str],
     base_name: str,
     max_chars: int = DEFAULT_MAX_COMMENT_CHARS,
-    already_applied: bool = False,
 ) -> PatchComment:
     """Render the patch comment body, or an artifact link when it is too big.
 
     Over ``max_chars`` an inline fence would be rejected by GitHub (65,536
     hard cap), so the diff stays out of the comment and the staged artifact is
-    linked instead. With ``already_applied`` the diff is informational
-    only: the change is already in the tree, so no apply command is
-    offered (issue #1194).
+    linked instead. A change the base already carries never gets here: its
+    diff against the base is empty and the delivery is skipped.
     """
     inline_lines = [
         "```diff",

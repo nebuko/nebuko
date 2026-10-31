@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_script.sub_domains.metrics import token_telemetry_collector as seam
-from agent_script.sub_domains.metrics.metrics_collector import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics import token_telemetry_collector as seam
+from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import (
     _cache_token_counts,
     _CapturedTelemetry,
     _drain_captured_telemetry,
     collect_llm_metrics,
 )
-from agent_script.sub_domains.metrics.token_telemetry_collector import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collector import (
     TokenTelemetryCollector,
     install,
 )
@@ -320,7 +320,7 @@ class TestCollectLlmMetricsCacheWriteFromCapture:
     def _table_and_ref(self):
         from types import SimpleNamespace
 
-        from pricing.sub_domains.price_table.price_table import PriceTable
+        from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import PriceTable
 
         table = PriceTable.from_openrouter(
             {
@@ -530,12 +530,12 @@ class TestToolExecutionTime:
         assert metrics.wall_clock_ms >= 0.0
 
     def test_negative_delta_clamps_to_zero(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _duration_ms
 
         assert _duration_ms("2026-01-01T00:00:05", "2026-01-01T00:00:00") == 0.0
 
     def test_mixed_naive_and_aware_timestamps_subtract(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _duration_ms
 
         naive = "2026-01-01T00:00:00"
         aware = "2026-01-01T00:00:01+00:00"
@@ -543,7 +543,7 @@ class TestToolExecutionTime:
         assert _duration_ms(naive, aware) >= 0.0
 
     def test_unparseable_timestamps_yield_zero(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _duration_ms
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _duration_ms
 
         assert _duration_ms("not-a-date", "2026-01-01T00:00:00") == 0.0
         assert _duration_ms(None, None) == 0.0

@@ -55,6 +55,24 @@ Nebuko's shipped `defaults/agents/`. This is what makes a cross-repo
 `uses: nebuko/nebuko/...` caller's `.nebuko/agents/agent-config.yaml` resolve
 against the caller's own workspace rather than the imported engine checkout.
 
+### How a cross-repo caller's changes are published
+
+The caller workspace anchors more than config lookup: the branch scaffold, the
+git session guards and the agent's commit/push/PR wind-down all run there too
+(issue #1205). So a cross-repo caller needs its repository checked out at
+`$GITHUB_WORKSPACE` — the shipped workflow's checkout step does this — with an
+`origin` remote configured and a git token present (`NEBUKO_GIT_TOKEN`,
+`GH_TOKEN` or `GITHUB_TOKEN` with contents write access). The feature branch,
+the commits and the pull request then land in the caller's repository, not in
+the `.nebuko-engine` checkout that holds the engine's source.
+
+Only the *git operations* anchor at the caller workspace. The agent's **code**
+— the `agent_script` entry point and the assembly it imports — always resolves
+from the imported `.nebuko-engine` checkout, never from the caller workspace
+(issue #1208). That is why a caller repository needs no `src/nebuko/` tree of
+its own: the run borrows the engine's code and writes its results into the
+caller's checkout.
+
 ---
 
 ## The Default Workflow

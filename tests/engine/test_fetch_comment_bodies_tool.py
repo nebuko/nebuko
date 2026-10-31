@@ -70,7 +70,7 @@ class TestResolutionWiring:
     """The config → resolve_toolset path (round-2 review finding)."""
 
     def test_fetch_comment_bodies_resolves_through_tool_resolution(self):
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+        from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
             resolve_toolset,
         )
 
@@ -81,7 +81,7 @@ class TestResolutionWiring:
         assert resolved.has("fetch_comment_bodies")
 
     def test_resolved_tool_is_registered_and_bound_to_context_bodies(self):
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+        from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
             resolve_toolset,
         )
         from nebuko.engine.fetch_comment_bodies_tool import FetchCommentBodiesTool

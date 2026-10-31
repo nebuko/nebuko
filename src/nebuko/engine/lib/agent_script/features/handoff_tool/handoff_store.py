@@ -20,10 +20,10 @@ from pathlib import Path
 
 from openhands.sdk import get_logger
 
-from nebuko.engine.lib.git.git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
+from nebuko.engine.lib.git.git_session import git_identity_args
 
-from agent_script.features.handoff_tool.handoff_document import HandoffDocument
-from agent_script.features.ensure_pr.ensure_pr import _run_git
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_document import HandoffDocument
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import _run_git
 
 logger = get_logger(__name__)
 
@@ -35,15 +35,6 @@ HANDOFF_COMMIT_MESSAGE = "chore: update session handoff"
 
 #: Branch created for a handoff written before any dev branch exists.
 HANDOFF_BRANCH_PREFIX = "feature/nebuko-handoff-"
-
-#: Git identity for engine-authored commits (see ``git_session``).
-_GIT_IDENTITY = [
-    "-c",
-    f"user.name={GIT_IDENTITY_NAME}",
-    "-c",
-    f"user.email={GIT_IDENTITY_EMAIL}",
-]
-
 
 def _timestamp() -> str:
     """UTC timestamp with second resolution (ISO-8601, ``Z`` suffix)."""
@@ -162,7 +153,7 @@ class HandoffStore:
             # already tracked here).
             return _run_git(["rev-parse", "HEAD"], cwd=self._repo_root)
         _run_git(
-            [*_GIT_IDENTITY, "commit", "-m", HANDOFF_COMMIT_MESSAGE, "--", HANDOFF_RELATIVE_PATH],
+            [*git_identity_args(), "commit", "-m", HANDOFF_COMMIT_MESSAGE, "--", HANDOFF_RELATIVE_PATH],
             cwd=self._repo_root,
         )
         commit = _run_git(["rev-parse", "HEAD"], cwd=self._repo_root)

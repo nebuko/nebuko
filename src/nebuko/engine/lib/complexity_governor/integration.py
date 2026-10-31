@@ -21,7 +21,7 @@ import logging
 import os
 from typing import Optional
 
-from config.sub_domains.complexity_policy.complexity_policy import (
+from nebuko.engine.lib.config.sub_domains.complexity_policy.complexity_policy import (
     BUILTIN_LAYER,
     ComplexityPolicy,
     ComplexityPolicyLayer,
@@ -56,7 +56,7 @@ def load_repo_policy_layer() -> Optional[ComplexityPolicyLayer]:
     """
     path = os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml"
     try:
-        from config import load_config
+        from nebuko.engine.lib.config import load_config
 
         app = load_config(path)
     except FileNotFoundError:

@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
-    from workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 __all__ = [
     "Trigger",
@@ -303,14 +303,12 @@ class DeterministicStep:
         and posts it wrapped around a human confirmation — the guard of the
         next run reads it back via ``extract_state``.
         """
-        from nebuko.engine.paths import ensure_import_path
 
-        ensure_import_path()
-        from circuit_breaker import count_bot_markers
-        from workflow_state.features.comment.to_git_comment import (
+        from nebuko.engine.lib.circuit_breaker import count_bot_markers
+        from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
             wrap_comment_with_state,
         )
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         prev = adapter.load_state() or WorkflowState()
         new_state = prev.model_copy(

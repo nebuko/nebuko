@@ -22,20 +22,15 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agent_script.features.ensure_pr.workflow_patch import (
-    APPLY_COMMAND,
-    PATCH_FILENAME,
-)
-from validate_output import strip_agent_run_config
-from workflow_state.features.comment.to_git_comment import (
+from nebuko.engine.lib.validate_output import strip_agent_run_config
+from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
     format_collapsed_section,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
     from nebuko.adapters.base import Poster
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 # ── Regex patterns (all DOTALL for multi-line safety) ─────────────
 
@@ -144,61 +139,6 @@ def _posted_recall_count(state: WorkflowState | None) -> int:
         return 0
     metrics = state.history[-1].metrics
     return metrics.dispatch_recall_count if metrics is not None else 0
-
-
-#: Guard results that mean the engine had to intervene for a step to be
-#: published; ``clean`` is the normal path and never renders.
-_RESCUE_LINES = {
-    "recalled_ok": "the agent published it after an engine recall",
-    "fallback_pr": "the engine opened a checkpoint PR via `ensure_pr`",
-    # A .github/workflows/* delta can never be pushed with the agent token, so
-    # the engine delivers it as a patch a human applies — a delivery path, not
-    # a failure (issue #1080).
-    "fallback_patch": (
-        "the engine delivered the `.github/workflows/*` change as a patch — "
-        "a human must apply it"
-    ),
-    "fallback_failed": "**the automatic PR fallback failed**",
-}
-
-
-def _publication_guard_note(state: WorkflowState | None) -> str:
-    """One-line notice when the publication guard had to rescue a step.
-
-    The machine-readable result lives in the state's ``current_context`` and in
-    the run metrics; this surfaces it next to the answer so a step that needed
-    rescuing is visible instead of buried in the collapsed JSON — in particular
-    a ``fallback_failed`` (work may be lost) must never be swallowed.
-    """
-    context = (state.current_context or {}) if state is not None else {}
-    result = (context.get("publication_guard") or "").strip()
-    if result not in _RESCUE_LINES:
-        return ""
-    line = (
-        "> ⚠️ **Publication guard:** the step finished approved with unpublished "
-        f"work — {_RESCUE_LINES[result]}."
-    )
-    detail = (context.get("publication_guard_detail") or "").strip()
-    if result == "fallback_pr":
-        if detail:
-            line += f" PR: {detail}"
-        patch = (context.get("publication_patch") or "").strip()
-        if patch:
-            line += (
-                f"\n> Workflow patch: {patch} — a human must apply it. Save it as "
-                f"`{PATCH_FILENAME}` and run `{APPLY_COMMAND}`."
-            )
-    elif result == "fallback_patch":
-        if detail:
-            line += f" Patch: {detail}"
-        line += (
-            f"\n> Apply it on a clean checkout: save the patch as "
-            f"`{PATCH_FILENAME}` and run `{APPLY_COMMAND}`."
-        )
-    elif result == "fallback_failed":
-        if detail:
-            line += f" Error: {detail}"
-    return line + "\n\n"
 
 
 # ── Core cleaning functions ───────────────────────────────────────
@@ -524,7 +464,6 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
         f"{header_line}\n"
         f"<!-- bot-agent-{role} -->\n"
         f"{section}"
-        f"{_publication_guard_note(state)}"
         f"\n*{_display_name_for(role)} answer*\n\n"
     )
 
@@ -749,7 +688,7 @@ def _read_workflow_state() -> WorkflowState | None:
     if not _artifact_has_content(WORKFLOW_STATE_FILE):
         return None
     try:
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState.model_validate(json.loads(_read_artifact(WORKFLOW_STATE_FILE)))
     except Exception as exc:  # noqa: BLE001 - a bad artifact must not block posting

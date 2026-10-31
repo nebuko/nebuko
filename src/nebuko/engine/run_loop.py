@@ -72,17 +72,10 @@ from nebuko.engine.paths import (
     ConfigPathAnchor,
     LIB_DIR,
     NebukoPaths,
-    ensure_import_path,
     repo_root,
 )
 
-# ``workflow_state`` lives in the frozen runtime (``LIB_DIR``) and is only
-# importable once the lib directory is on ``sys.path``; the run phases call
-# :func:`ensure_import_path` for that, so bootstrap it here for the module-level
-# entity imports below.
-ensure_import_path()
-
-from workflow_state import (  # noqa: E402  (needs the sys.path bootstrap above)
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
     IncompleteReason,
@@ -94,11 +87,11 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
-    from agent_script.features.run_agent.run_outcome import OutcomeStatus
-    from config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
+    from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+    from nebuko.engine.lib.config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
     from nebuko.engine.models import CommentEntry
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 __all__ = ["PHASES", "Engine", "PhaseResult", "main"]
 
@@ -216,20 +209,6 @@ def _resolver_skip_verdict(resolved: Any) -> dict[str, str] | None:
     return None
 
 
-def _publication_guard_failure(state: WorkflowState | None) -> Optional[str]:
-    """The detail of a failed publication fallback, or ``None`` (issue #1089).
-
-    ``run_agent`` records ``publication_guard="fallback_failed"`` when a
-    credentials-less session left approved work unpublished and ``ensure_pr``
-    could not rescue it. That used to reach only the state comment, so the run
-    still exited 0; the caller maps this to ``ExitCode.ERROR``.
-    """
-    context = (state.current_context or {}) if state is not None else {}
-    if (context.get("publication_guard") or "").strip() != "fallback_failed":
-        return None
-    return (context.get("publication_guard_detail") or "").strip() or "unknown error"
-
-
 def _exit_code_for(
     exit_code: ExitCode, turn_outcome: TurnOutcome | None
 ) -> ExitCode:
@@ -256,10 +235,14 @@ def _is_bot_trigger(trigger: Trigger) -> bool:
     default there; the terminal outcome is unaffected).
     """
     try:
-        ensure_import_path()
-        from resolve_config.features.parse_trigger.parse_trigger import is_bot_comment
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
+            is_bot_comment,
+            is_routable_agent_answer,
+        )
 
-        return is_bot_comment(trigger.body or "")
+        return is_bot_comment(trigger.body or "") and not is_routable_agent_answer(
+            trigger.body or ""
+        )
     except Exception:  # noqa: BLE001 - never let detection crash the guard
         log.warning("[phase:guards] bot-marker check failed", exc_info=True)
         return False
@@ -303,7 +286,6 @@ def _load_bridge_module(name: str) -> ModuleType:
     cached = _BRIDGE_CACHE.get(name)
     if cached is not None:
         return cached
-    ensure_import_path()
     path = LIB_DIR / f"{name}.py"
     if not path.is_file():
         raise ModuleNotFoundError(
@@ -510,8 +492,7 @@ def _backfill_workflow_identity(
     if not env.get("WORKFLOW_STEP") and state.step:
         env["WORKFLOW_STEP"] = state.step
     if not env.get("WORKFLOW_POSITION") and state.position:
-        ensure_import_path()
-        from config import WorkflowPosition
+        from nebuko.engine.lib.config import WorkflowPosition
 
         position = WorkflowPosition(refs=list(state.position))
         env["WORKFLOW_POSITION"] = json.dumps(position.to_state_dict())
@@ -585,8 +566,7 @@ def _clear_prev_state_handoff() -> None:
     ``RUNNER_TEMP``, but a self-hosted or reused runner keeps the file, so the
     engine must delete it explicitly (issue #739).
     """
-    ensure_import_path()
-    from workflow_state.state_codec import HANDOFF_FILENAME
+    from nebuko.engine.lib.workflow_state.state_codec import HANDOFF_FILENAME
 
     path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), HANDOFF_FILENAME)
     try:
@@ -752,9 +732,8 @@ class Engine:
         trigger: Trigger,
     ) -> RunOutcome:
         """Run a script step and post its start + completion comments (#885)."""
-        ensure_import_path()
-        from config import ScriptStepReport
-        from workflow_state.features.comment.to_git_comment import wrap_script_comment
+        from nebuko.engine.lib.config import ScriptStepReport
+        from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import wrap_script_comment
 
         self.notify_script_started(self._script_start_notice(step, trigger))
         result = step.execute(self.adapter)
@@ -798,8 +777,7 @@ class Engine:
         so ``conditions: on_result`` and the declared ``next`` route exactly as
         after an agent step (issue #964).
         """
-        ensure_import_path()
-        from workflow_state.features.build_state.build_state import build_state
+        from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
 
         return build_state(
             self._previous_state(),
@@ -833,8 +811,7 @@ class Engine:
         self, step: DeterministicStep, trigger: Trigger
     ) -> ScriptStartNotice:
         """Build the start acknowledgment for this script step (issue #885)."""
-        ensure_import_path()
-        from config import ScriptStartNotice
+        from nebuko.engine.lib.config import ScriptStartNotice
 
         return ScriptStartNotice(
             step=step.step_name,
@@ -1021,17 +998,32 @@ class Engine:
 
             self._enter(phases, "prompt")
             failure_reason: str | None = None
+            # Git session preflight (issue #1089): prove the checkout can
+            # authenticate before a single token is spent. A credentials-less
+            # session used to run to the end and only fail on push — while
+            # ``gh`` kept succeeding — and the run still exited 0. It runs
+            # before the scaffold, whose fetch and merge need the auth and the
+            # commit identity it installs.
+            preflight = self._git_session_preflight()
+            if not preflight.ok:
+                failure_reason = f"git session preflight failed: {preflight.detail}"
             # Branch scaffold (issue #1138): the engine prepares the feature
-            # branch before the prompt is built, so a rebase-conflict note
+            # branch before the prompt is built, so a merge-conflict note
             # reaches the prompt and the agent never spends turns on branch
             # mechanics. Fail-closed: a failed scaffold skips the agent.
-            scaffold = self._branch_scaffold()
-            if not scaffold.ok:
-                failure_reason = f"branch scaffold failed: {scaffold.detail}"
-            prompt = self.build_prompt(resolved, history, input_results, step_scope)
+            if failure_reason is None:
+                scaffold = self._branch_scaffold()
+                if not scaffold.ok:
+                    failure_reason = f"branch scaffold failed: {scaffold.detail}"
+                else:
+                    self._scaffold_state["head_before"] = git_session.GitSessionGuard(
+                        self._caller_root(), self._session_env()
+                    ).head_sha()
+            prompt =self.build_prompt(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
             if conflict_note:
-                prompt = f"{prompt}\n\n{conflict_note}"
+                # First, not last: resolving the merge comes before the task.
+                prompt = f"{conflict_note}\n\n{prompt}"
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1050,17 +1042,6 @@ class Engine:
             # a ``post_hook`` runs after the agent attempt and is fail-open.
             hooks = hooks_from_resolved(resolved)
             agent_result: dict[str, Any] = {}
-
-            # Git session preflight (issue #1089): prove the checkout can
-            # authenticate before a single token is spent. A credentials-less
-            # session used to run to the end and only fail on push — while
-            # ``gh`` kept succeeding — and the run still exited 0.
-            preflight = self._git_session_preflight()
-            if not preflight.ok:
-                note = f"git session preflight failed: {preflight.detail}"
-                failure_reason = (
-                    f"{failure_reason}; {note}" if failure_reason else note
-                )
 
             pre_hook = hooks.get("pre")
             if failure_reason is None and pre_hook is not None:
@@ -1144,7 +1125,7 @@ class Engine:
             # state. Fail-closed: a session whose PR could not be opened must
             # not look green.
             if "agent" in phases:
-                pr_result = self._pr_finalize()
+                pr_result = self._pr_finalize(agent_result)
                 state = self._record_pull_request(state, pr_result)
                 if not pr_result.ok:
                     note = f"PR finalizer failed: {pr_result.detail}"
@@ -1234,23 +1215,6 @@ class Engine:
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
                     IncompleteReason.FAILURE, note=reason
-                ),
-                prompt=prompt,
-                posted_body=posted_body,
-                state=state,
-                phases=tuple(phases),
-            )
-
-        # A publication fallback that could not rescue approved work is a run
-        # error too (issue #1089): the work may be lost, so the run must not
-        # look green just because the state comment explains it.
-        guard_failure = _publication_guard_failure(state)
-        if guard_failure is not None:
-            return RunOutcome(
-                exit_code=ExitCode.ERROR,
-                turn_outcome=TurnOutcome.for_incomplete(
-                    IncompleteReason.FAILURE,
-                    note="publication guard fallback failed: " + guard_failure,
                 ),
                 prompt=prompt,
                 posted_body=posted_body,
@@ -1424,8 +1388,7 @@ class Engine:
         if cached is not None:
             return cached
 
-        ensure_import_path()
-        from resolve_config.resolve_config import resolve_config
+        from nebuko.engine.lib.resolve_config.resolve_config import resolve_config
 
         # Anchored at the caller's workspace, not the engine checkout (issue
         # #1108): a cross-repo caller's ``.nebuko/`` overrides live under
@@ -1470,8 +1433,7 @@ class Engine:
         own ``SKIP_AGENT`` decision stands, even if the body names an agent
         (issue #458).
         """
-        ensure_import_path()
-        from circuit_breaker import check_circuit_breaker, circuit_breaker_warning
+        from nebuko.engine.lib.circuit_breaker import check_circuit_breaker, circuit_breaker_warning
 
         body = trigger.body or ""
         caller = _caller_agent(body)
@@ -1542,8 +1504,7 @@ class Engine:
 
         The circuit-breaker half (``596-632``) lives in :meth:`guard`.
         """
-        ensure_import_path()
-        from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
+        from nebuko.engine.lib.loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
 
         caller = _caller_agent(body)
         if caller and task:
@@ -1627,10 +1588,10 @@ class Engine:
         version is revived into the worktree first, so the block survives the
         cleanup and the agent sees the document it is resuming from.
         """
-        from agent_script.features.handoff_tool.handoff_document import (
+        from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_document import (
             render_handoff_block,
         )
-        from agent_script.features.handoff_tool.handoff_store import HandoffStore
+        from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_store import HandoffStore
 
         store = HandoffStore(self.repo_root)
         body = store.load_text()
@@ -1640,7 +1601,7 @@ class Engine:
 
     def _render_injected_skills(self, resolved: Any) -> str:
         """The full bodies of this step's inject-mode skills (issue #955)."""
-        from resolve_config.features.skill_context.skill_context import (
+        from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
             skill_context_from_env,
         )
 
@@ -1778,8 +1739,7 @@ class Engine:
         cached = self._declared_step_cache.get(name)
         if cached is None:
             cached = {}
-            ensure_import_path()
-            from config import load_workflow, load_workflow_with_dirs
+            from nebuko.engine.lib.config import load_workflow, load_workflow_with_dirs
 
             workflows_dir, local_workflows_dir = self._workflow_dirs()
             try:
@@ -1916,14 +1876,13 @@ class Engine:
         """
         if not history:
             return {}
-        ensure_import_path()
-        from thread_snapshot import build_comment_index
-        from workflow_state import extract_state_from_body
-        from workflow_state.features.comment.to_git_comment import strip_state_section
-        from workflow_state.features.resolve_step_output.resolve_step_output import (
+        from nebuko.engine.lib.thread_snapshot import build_comment_index
+        from nebuko.engine.lib.workflow_state import extract_state_from_body
+        from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
+        from nebuko.engine.lib.workflow_state.features.resolve_step_output.resolve_step_output import (
             resolve_step_output,
         )
-        from workflow_state.step_output_record import StepOutputRecord
+        from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
         comment_index = build_comment_index(
             [
@@ -1993,8 +1952,7 @@ class Engine:
         name = str(getattr(previous, "workflow", "") or "") if previous else ""
         if not name:
             return {}
-        ensure_import_path()
-        from config import load_workflow, load_workflow_with_dirs
+        from nebuko.engine.lib.config import load_workflow, load_workflow_with_dirs
 
         workflows_dir, local_workflows_dir = self._workflow_dirs()
         try:
@@ -2017,8 +1975,7 @@ class Engine:
         """Substitute ``{{ <step> }}`` refs in ``step_prompt`` (issue #756)."""
         if not step_prompt or not step_scope:
             return step_prompt
-        ensure_import_path()
-        from workflow_state.features.resolve_step_output.resolve_step_output import (
+        from nebuko.engine.lib.workflow_state.features.resolve_step_output.resolve_step_output import (
             PROMPT_REF_PATTERN,
             ResolvedOutput,
             render_prompt_refs,
@@ -2145,8 +2102,7 @@ class Engine:
         """
         if not agent_ran:
             return None
-        ensure_import_path()
-        from config import HumanActionNotice
+        from nebuko.engine.lib.config import HumanActionNotice
 
         held = (
             turn_outcome is not None
@@ -2204,8 +2160,7 @@ class Engine:
         """
         if not (isinstance(resolved, Mapping) and _is_true(resolved.get("SKIP_AGENT"))):
             return None
-        ensure_import_path()
-        from resolve_workflow import RouteKind
+        from nebuko.engine.lib.resolve_workflow import RouteKind
 
         kind = self._terminal_kind(resolved, route_key)
         if kind is RouteKind.DECLARED_FINISH:
@@ -2225,8 +2180,7 @@ class Engine:
         step = str(self._get(resolved, "WORKFLOW_STEP") or "")
         if not (workflow and step):
             return False
-        ensure_import_path()
-        from resolve_workflow import RouteKind
+        from nebuko.engine.lib.resolve_workflow import RouteKind
 
         return self._terminal_kind(resolved, route_key) is RouteKind.DECLARED_FINISH
 
@@ -2245,8 +2199,7 @@ class Engine:
         step = str(self._get(resolved, "WORKFLOW_STEP") or "")
         if not (workflow and step):
             return None
-        ensure_import_path()
-        from resolve_workflow import _classify_terminal_kind
+        from nebuko.engine.lib.resolve_workflow import _classify_terminal_kind
 
         workflows_dir, local_workflows_dir = self._workflow_dirs()
         return _classify_terminal_kind(
@@ -2282,6 +2235,10 @@ class Engine:
         assembly cannot start. Both receive the resolver's per-run hand-off
         (``ROLE_NAME``, ``CONFIG_*``, ...) on top of the ambient environment,
         mirroring the legacy ``$GITHUB_ENV`` export (issue #717).
+
+        Two roots reach the seams (issue #1208): ``repo_root`` is the engine
+        checkout that holds the agent's *code*, while ``caller_root`` is the
+        caller's workspace the agent's git operations anchor at (issue #1205).
         """
         from nebuko.engine.agent_runner import (
             EngineAgentUnavailable,
@@ -2290,15 +2247,28 @@ class Engine:
         )
 
         env = self._agent_env()
+        # The agent commits and pushes in the caller's workspace, not in the
+        # imported engine checkout (issue #1205).
+        caller_root = self._caller_root()
         try:
-            return run_engine_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_engine_agent(
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
+            )
         except EngineAgentUnavailable as exc:
             log.warning(
                 "[phase:agent] in-process agent seam unavailable (%s); "
                 "falling back to the legacy subprocess",
                 exc,
             )
-            return run_legacy_agent(prompt, repo_root=self.repo_root, env=env)
+            return run_legacy_agent(
+                prompt,
+                repo_root=self.repo_root,
+                env=env,
+                caller_root=caller_root,
+            )
 
     def _agent_env(self) -> dict[str, str]:
         """``self.env`` overlaid with the resolver's ``$GITHUB_ENV`` hand-off.
@@ -2417,7 +2387,7 @@ class Engine:
         pushed. A benign skip (no remote, detached HEAD) leaves the caller's
         environment untouched.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
         result = guard.preflight()
         if result.ok:
             log.info("[phase:agent] git preflight ok: %s", result.detail)
@@ -2434,8 +2404,17 @@ class Engine:
         once, then the tree and the remote SHA are verified. A failure is a run
         error — an unpublished session must not look green.
         """
-        guard = git_session.GitSessionGuard(self.repo_root, self._session_env())
-        result = guard.finalize()
+        guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
+        scaffold = self._scaffold_state.get("result")
+        expected = (
+            scaffold.branch
+            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+            else ""
+        )
+        result = guard.finalize(
+            expected_branch=expected,
+            head_before=self._scaffold_state.get("head_before", ""),
+        )
         if result.ok:
             log.info("[phase:agent] git finalize ok: %s", result.detail)
         else:
@@ -2459,13 +2438,18 @@ class Engine:
             )
             self._scaffold_state["result"] = result
             return result
+        issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        if not issue_title:
+            # An issue-comment trigger carries no payload title: the request
+            # body, minus the markers and the @@mention that routed it, is the
+            # only title the branch can be named after.
+            body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
+            issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
         scaffold = branch_scaffold.BranchScaffold(
-            self.repo_root,
+            self._caller_root(),
             self._session_env(),
-            issue_number=trigger.number if trigger is not None else 0,
-            issue_title=branch_scaffold.issue_title_from_payload(trigger.payload)
-            if trigger is not None
-            else "",
+            issue_number=trigger.number,
+            issue_title=issue_title,
         )
         result = scaffold.scaffold()
         self._scaffold_state["result"] = result
@@ -2489,14 +2473,29 @@ class Engine:
         return f"## Branch conflict — fix first\n\n{result.note}"
 
     # @stub-protected
-    def _pr_finalize(self) -> pr_finalize.PrFinalizeResult:
+    def _pr_finalize(self, agent_result: Any = None) -> pr_finalize.PrFinalizeResult:
         """Open the session's PR and export its metadata (issue #1138).
 
         Runs after ``persist``, gated on the agent phase: a deterministic step
-        publishes nothing to finalize. Never raises: a failure is returned as
-        data and the caller turns it into a run error.
+        publishes nothing to finalize. This is the session's only publisher:
+        it commits what the agent left, pushes, and opens the PR — also for a
+        gracefully timed-out run, which it marks as interrupted. Never raises:
+        a failure is returned as data and the caller turns it into a run error.
         """
-        result = pr_finalize.PrFinalizer().finalize()
+        from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+
+        trigger = self._active_trigger()
+        issue_title = (
+            branch_scaffold.issue_title_from_payload(trigger.payload)
+            if trigger is not None
+            else ""
+        )
+        interrupted = (
+            self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        result = pr_finalize.PrFinalizer(
+            issue_title=issue_title, interrupted=interrupted
+        ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
         else:
@@ -2548,8 +2547,7 @@ class Engine:
         """
         if state is None or not pr_result.ok or not pr_result.pr_url:
             return state
-        ensure_import_path()
-        from workflow_state import PullRequestInfo
+        from nebuko.engine.lib.workflow_state import PullRequestInfo
 
         from nebuko.engine.lib.git.pr_finalize import pr_number_from_url
 
@@ -2641,10 +2639,9 @@ class Engine:
         prepare_comment = _load_bridge_module("prepare_comment")
         # ``message_splitter`` is a sub-domain (nested under ``agent_script``),
         # not a top-level ``lib`` module, so it is imported through the same
-        # ``ensure_import_path`` bootstrap build_output uses rather than
+        # package import build_output uses rather than
         # ``_load_bridge_module`` (which resolves only ``LIB_DIR/<name>.py``).
-        ensure_import_path()
-        from agent_script.sub_domains.message_splitter.message_splitter import (
+        from nebuko.engine.lib.agent_script.sub_domains.message_splitter.message_splitter import (
             split_comment_body,
         )
 
@@ -2743,8 +2740,7 @@ class Engine:
     @staticmethod
     def _comment_size_policy() -> Any:
         """The tunable comment-size contract governing the publish split (#913)."""
-        ensure_import_path()
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         return CommentSizePolicy()
 
@@ -2778,8 +2774,7 @@ class Engine:
         raw = agent_result.get("state")
         if raw is None:
             return
-        ensure_import_path()
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         if isinstance(raw, WorkflowState):
             context = dict(raw.current_context)
@@ -2820,8 +2815,7 @@ class Engine:
         comment_id = self._publish_state.get("comment_id")
         if not comment_id or not state.step:
             return state
-        ensure_import_path()
-        from workflow_state.step_output_record import StepOutputRecord
+        from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
         context = dict(state.current_context)
         StepOutputRecord(step=state.step, comment_id=comment_id).upsert_into(context)
@@ -2835,8 +2829,7 @@ class Engine:
         or absent status is a completed turn — the same tolerance
         :func:`classify_run` applies.
         """
-        ensure_import_path()
-        from agent_script.features.run_agent.run_outcome import (
+        from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
             OutcomeStatus,
             classify_run,
         )
@@ -2878,8 +2871,7 @@ class Engine:
                 reason, note=str(payload.get("note") or "")
             )
         if observed is None:
-            ensure_import_path()
-            from agent_script.features.run_agent.run_outcome import OutcomeStatus
+            from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
 
             observed = OutcomeStatus.SUCCESS
         # The payload may be the engine's own recorded outcome (agent_host
@@ -2905,8 +2897,7 @@ class Engine:
         The role comes from the resolver hand-off already stored by the
         ``resolve_config`` phase, so it matches the role the child will run as.
         """
-        ensure_import_path()
-        from config import AgentStartNotice
+        from nebuko.engine.lib.config import AgentStartNotice
 
         role = self._role_of({})
         return AgentStartNotice(
@@ -2944,8 +2935,7 @@ class Engine:
         if not history:
             return None
         try:
-            ensure_import_path()
-            from resolve_config.features.fetch_state.fetch_state import extract_state
+            from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import extract_state
 
             return extract_state(history)
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
@@ -3130,8 +3120,7 @@ class Engine:
             log.warning("[thread-ledger] could not load the full thread: %s", exc)
             return None
 
-        ensure_import_path()
-        from workflow_state.features.reconcile_thread.reconcile_thread import (
+        from nebuko.engine.lib.workflow_state.features.reconcile_thread.reconcile_thread import (
             reconcile_thread,
         )
 
@@ -3265,8 +3254,7 @@ class Engine:
         raw = agent_result.get("state")
         if raw is None:
             return None
-        ensure_import_path()
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         if isinstance(raw, WorkflowState):
             return raw
@@ -3360,7 +3348,7 @@ def _agent_facing_body(body: str) -> str:
     engine's persistence/routing mechanism, so they stay in the stored thread;
     only the agent-facing rendering drops them (issue #844).
     """
-    from workflow_state.features.comment.to_git_comment import strip_state_section
+    from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
 
     return strip_state_section(body)
 
@@ -3644,7 +3632,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         kwargs["repo"] = args.repo
 
     adapter = build_adapter(args.adapter, **kwargs)
-    from config import HistoryWindowConfig
+    from nebuko.engine.lib.config import HistoryWindowConfig
 
     window = HistoryWindowConfig.from_env(os.environ)
     outcome = Engine(

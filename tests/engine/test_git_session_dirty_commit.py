@@ -56,3 +56,36 @@ class TestDirtyTreeAutoCommit:
 
     def test_a_clean_tree_returns_an_empty_string(self, checkout):
         assert GitSessionGuard(checkout, {})._commit_all_pending() == ""
+
+    def test_workflow_files_are_never_committed(self, checkout):
+        workflows = checkout / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yaml").write_text("on: [push]\n", encoding="utf-8")
+        (checkout / "left.txt").write_text("left\n", encoding="utf-8")
+
+        sha = GitSessionGuard(checkout, {})._commit_all_pending()
+
+        assert sha
+        assert _git(checkout, "show", "--name-only", "--format=") == "left.txt"
+        # The workflow file stays in the tree for the patch delivery.
+        assert (workflows / "ci.yaml").exists()
+
+    def test_workflow_only_leftovers_make_no_commit(self, checkout):
+        workflows = checkout / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yaml").write_text("on: [push]\n", encoding="utf-8")
+
+        assert GitSessionGuard(checkout, {})._commit_all_pending() == ""
+        assert _git(checkout, "rev-list", "--count", "HEAD") == "1"
+
+    def test_unresolved_conflicts_are_never_committed(self, checkout):
+        _git(checkout, "checkout", "-q", "-b", "side")
+        (checkout / "a.txt").write_text("side\n", encoding="utf-8")
+        _git(checkout, "commit", "-qam", "side")
+        _git(checkout, "checkout", "-q", "main")
+        (checkout / "a.txt").write_text("main\n", encoding="utf-8")
+        _git(checkout, "commit", "-qam", "main")
+        subprocess.run(["git", "-C", str(checkout), "merge", "side"], capture_output=True)
+
+        with pytest.raises(RuntimeError, match="unresolved merge conflicts.*a.txt"):
+            GitSessionGuard(checkout, {})._commit_all_pending()

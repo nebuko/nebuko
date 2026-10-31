@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from agent_script.sub_domains.metrics.cost import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics.cost import (
     TOKENS_PER_PRICE_UNIT,
     CostRates,
     SessionCost,
@@ -160,12 +160,12 @@ class TestSessionCostHelper:
     """metrics_collector._session_cost: SDK-first with resolved-rate fallback."""
 
     def _price(self, **kwargs):
-        from pricing.sub_domains.price_table.price_table import ModelPrice
+        from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice
 
         return ModelPrice(**kwargs)
 
     def test_uses_sdk_cost_when_present(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _session_cost
 
         cost = _session_cost(
             _FakeCombinedMetrics(0.25),
@@ -178,7 +178,7 @@ class TestSessionCostHelper:
         assert cost == pytest.approx(0.25)
 
     def test_falls_back_to_resolved_rates_for_unpriced_model(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _session_cost
 
         cost = _session_cost(
             _FakeCombinedMetrics(0.0),
@@ -191,7 +191,7 @@ class TestSessionCostHelper:
         assert cost == pytest.approx(6.0)
 
     def test_cache_tokens_priced_in_the_fallback(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _session_cost
 
         cost = _session_cost(
             _FakeCombinedMetrics(0.0),
@@ -206,7 +206,7 @@ class TestSessionCostHelper:
         assert cost == pytest.approx(1.4)
 
     def test_zero_without_sdk_cost_or_price(self):
-        from agent_script.sub_domains.metrics.metrics_collector import _session_cost
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import _session_cost
 
         cost = _session_cost(
             _FakeCombinedMetrics(0.0),

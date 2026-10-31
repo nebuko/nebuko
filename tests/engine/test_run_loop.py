@@ -22,10 +22,10 @@ from nebuko.engine.context_selection import (
     InjectionMode,
 )
 from nebuko.adapters.local import LocalAdapter
-from config import AgentStartNotice, HumanActionNotice, brand
+from nebuko.engine.lib.config import AgentStartNotice, HumanActionNotice, brand
 from nebuko.engine.models import CommentEntry, ExitCode, RunOutcome, Trigger
 from nebuko.engine.paths import repo_root
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
     IncompleteReason,
@@ -35,7 +35,7 @@ from workflow_state import (
     TurnStatus,
     build_state,
 )
-from workflow_state.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.input_wiring import Materialization
 from nebuko.engine.run_loop import (
     CONTEXT_BODIES_ENV,
@@ -47,7 +47,6 @@ from nebuko.engine.run_loop import (
     _exit_code_for,
     _is_renderable,
     _one_line_preview,
-    _publication_guard_failure,
     _render_history,
     _render_thread_records,
     _render_unverified_records,
@@ -61,9 +60,9 @@ from nebuko.engine.run_loop import (
 from nebuko.engine.lib.git import branch_scaffold
 from nebuko.engine.lib.git import git_session
 from nebuko.engine.lib.git import pr_finalize
-from agent_script.features.run_agent.run_outcome import OutcomeStatus
-from workflow_state import extract_state_from_body
-from workflow_state.step_output_record import StepOutputRecord
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.workflow_state import extract_state_from_body
+from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
 CONTINUE_TOKEN = "<!-- workflow-continue -->"
@@ -81,6 +80,47 @@ RUN_ENV = {
 }
 ACK_LINE = f"{brand().logo_mark()} **dev agent started** — [View workflow run logs]({RUN_URL})"
 
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_checkout(monkeypatch, tmp_path_factory):
+    """Keep the git-mutating phases off the checkout the tests run from.
+
+    ``_engine`` points the Engine at ``repo_root()`` (it needs ``defaults/``),
+    which is also the git workspace: the session guard and branch scaffold
+    would otherwise commit, push and switch branches in the developer's (or the
+    agent's) own tree. Against any other root the real methods still run —
+    unless the caller workspace is not a git checkout, where the real seams
+    have nothing to act on and the spec stubs (issue #1205) would only raise.
+
+    The PR finalizer is stubbed everywhere: ``ensure_pr`` runs git/gh in the
+    process cwd (or ``GFA_REPO_ROOT``), never in the Engine's ``repo_root``, so
+    it used to hit the real tree whatever root the test chose. The tests of the
+    flow itself live in ``tests/engine/git/test_pr_finalize.py``.
+    """
+    real = repo_root()
+    monkeypatch.delenv("GFA_REPO_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+
+    def isolate(name, benign):
+        original = getattr(Engine, name)
+
+        def wrapper(self, *args, **kwargs):
+            if Path(self.repo_root).resolve() == real:
+                return benign
+            if not (self._caller_root() / ".git").exists():
+                return benign
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Engine, name, wrapper)
+
+    isolate("_git_session_preflight", git_session.GuardResult(ok=True, skipped=True))
+    isolate("_git_session_finalize", git_session.GuardResult(ok=True, skipped=True))
+    isolate("_branch_scaffold", branch_scaffold.ScaffoldResult(ok=True, skipped=True))
+    monkeypatch.setattr(
+        pr_finalize.PrFinalizer,
+        "finalize",
+        lambda self: pr_finalize.PrFinalizeResult(ok=True, skipped=True),
+    )
 
 def _trigger(body: str = "@@dev fix it", number: int = 590, issue_body: str = "") -> Trigger:
     return Trigger(
@@ -121,7 +161,7 @@ def _agent_result(answer: str, dispatch: dict | None = None) -> dict:
 
 def _outcome(appreciation: str = "approved", **overrides) -> "TurnOutcome":
     """The engine-side view of the ``dispatch_next`` payload above."""
-    from workflow_state import Appreciation, TurnOutcome, TurnStatus
+    from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
 
     return TurnOutcome(
         status=TurnStatus.COMPLETED,
@@ -143,8 +183,8 @@ def _arm_gate_lock(engine: Engine, step: str = "plan") -> None:
     own verdict stays free (``approved`` here), and the gate alone is what owes
     the human an approval ping and blocks the advance.
     """
-    from workflow_state.workflow_state import WorkflowState
-    from workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
 
     state = engine.adapter.load_state()
     if state is None:
@@ -173,10 +213,12 @@ def _patch_resolver(monkeypatch, resolver) -> None:
     """
     import sys
 
-    import resolve_config  # noqa: F401 - ensures the submodule is imported
+    import nebuko.engine.lib.resolve_config  # noqa: F401 - ensures the submodule is imported
 
     monkeypatch.setattr(
-        sys.modules["resolve_config.resolve_config"], "resolve_config", resolver
+        sys.modules["nebuko.engine.lib.resolve_config.resolve_config"],
+        "resolve_config",
+        resolver,
     )
 
 
@@ -325,7 +367,7 @@ def _bot_marker_comments(count: int) -> list:
 
 def _circuit_breaker_state_comment(limit: int):
     from nebuko.engine.models import CommentEntry
-    from workflow_state import CircuitBreakerState, to_git_comment
+    from nebuko.engine.lib.workflow_state import CircuitBreakerState, to_git_comment
 
     state = WorkflowState(circuit_breaker=CircuitBreakerState(limit=limit))
     return CommentEntry(
@@ -624,6 +666,192 @@ class TestCallerAnchoredConfigLookup:
         assert resolved.get("SKILLS_DIR") == str(skills)
 
 
+class TestGitSeamsAnchorAtCallerWorkspace:
+    """Every engine-owned git operation runs in the caller's checkout (#1205).
+
+    A cross-repo caller runs the engine from an imported ``.nebuko-engine``
+    checkout (``Engine.repo_root``) while its own repository is checked out at
+    ``$GITHUB_WORKSPACE``. The scaffold, the session guards and the agent's
+    commit/push/PR wind-down must all target the caller's checkout, or the
+    feature branch is created in the engine's repository.
+    """
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def _caller_checkout(self, tmp_path) -> Path:
+        """The caller's repository: a work checkout on ``main`` with a remote."""
+        remote = tmp_path / "caller-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)],
+            check=True,
+        )
+        seed = tmp_path / "caller-seed"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+        self._git(seed, "config", "user.name", "t")
+        self._git(seed, "config", "user.email", "t@example.com")
+        self._git(seed, "remote", "add", "origin", remote.as_uri())
+        (seed / "base.txt").write_text("base\n", encoding="utf-8")
+        self._git(seed, "add", "base.txt")
+        self._git(seed, "commit", "-q", "-m", "base")
+        self._git(seed, "push", "-q", "origin", "main")
+
+        caller = tmp_path / "caller"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+        self._git(caller, "config", "user.name", "t")
+        self._git(caller, "config", "user.email", "t@example.com")
+        self._git(caller, "remote", "add", "origin", remote.as_uri())
+        self._git(caller, "fetch", "-q", "origin", "main")
+        self._git(caller, "checkout", "-q", "-B", "main", "origin/main")
+        return caller
+
+    def _engine_checkout(self, tmp_path) -> Path:
+        """The imported engine checkout: a git checkout with its own remote."""
+        engine_root = tmp_path / ".nebuko-engine"
+        remote = tmp_path / "engine-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(engine_root)], check=True
+        )
+        self._git(engine_root, "config", "user.name", "t")
+        self._git(engine_root, "config", "user.email", "t@example.com")
+        self._git(engine_root, "remote", "add", "origin", remote.as_uri())
+        (engine_root / "engine.txt").write_text("engine\n", encoding="utf-8")
+        self._git(engine_root, "add", "engine.txt")
+        self._git(engine_root, "commit", "-q", "-m", "engine")
+        self._git(engine_root, "push", "-q", "origin", "main")
+        return engine_root
+
+    def _caller_anchored_engine(self, tmp_path, monkeypatch, caller: Path) -> Engine:
+        """An Engine whose checkout is the engine tree, anchored at ``caller``."""
+        engine_root = self._engine_checkout(tmp_path)
+        adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger(number=1205))
+        engine = Engine(
+            adapter=adapter,
+            repo_root=engine_root,
+            env={
+                "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+                "GITHUB_WORKSPACE": str(caller),
+            },
+        )
+        monkeypatch.setattr(Engine, "_active_trigger", lambda self: _trigger(number=1205))
+        return engine
+
+    def test_the_scaffold_creates_the_branch_in_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+
+        result = engine._branch_scaffold()
+
+        branch = "feature/issue-1205-fix-it"
+        assert result.ok, result.detail
+        assert result.branch == branch
+        # Created in the caller's repository, not in the engine checkout.
+        assert self._git(caller, "rev-parse", "--abbrev-ref", "HEAD") == branch
+        assert self._git(engine.repo_root, "branch", "--list", branch) == ""
+
+    def test_the_scaffold_does_not_touch_the_engine_checkout(self, tmp_path, monkeypatch):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        engine_head = self._git(engine.repo_root, "rev-parse", "HEAD")
+
+        engine._branch_scaffold()
+
+        assert self._git(engine.repo_root, "rev-parse", "HEAD") == engine_head
+        assert self._git(engine.repo_root, "status", "--porcelain") == ""
+
+    def test_the_preflight_guard_targets_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        """The guard probes the caller's remote, not the engine checkout's."""
+        caller = self._caller_checkout(tmp_path)
+        missing = tmp_path / "missing-origin.git"
+        self._git(caller, "remote", "set-url", "origin", missing.as_uri())
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+
+        result = engine._git_session_preflight()
+
+        assert not result.ok
+        assert str(missing) in result.detail
+
+    def test_the_finalize_guard_commits_and_pushes_the_caller_checkout(
+        self, tmp_path, monkeypatch
+    ):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        (caller / "work.txt").write_text("work\n", encoding="utf-8")
+
+        result = engine._git_session_finalize()
+
+        assert result.ok, result.detail
+        assert self._git(caller, "status", "--porcelain") == ""
+        pushed = self._git(
+            caller,
+            "--git-dir",
+            str(tmp_path / "caller-origin.git"),
+            "log",
+            "--oneline",
+            "main",
+        )
+        assert "work" in pushed or "nebuko" in pushed
+
+    def test_the_agent_host_receives_the_caller_checkout(self, tmp_path, monkeypatch):
+        from nebuko.engine import agent_runner
+
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        seen: list[tuple[Path, Path]] = []
+        monkeypatch.setattr(Engine, "_agent_env", lambda self: {})
+        monkeypatch.setattr(
+            agent_runner,
+            "run_engine_agent",
+            lambda prompt, *, repo_root, env, caller_root=None: seen.append(
+                (Path(repo_root), Path(caller_root))
+            )
+            or {},
+        )
+
+        engine.invoke_agent("prompt")
+
+        # The agent *code* comes from the engine checkout (#1208); the git
+        # anchor is the caller workspace (#1205).
+        assert seen == [(engine.repo_root.resolve(), caller.resolve())]
+
+    def test_the_seams_fall_back_to_the_start_directory_without_a_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        """No ``$GITHUB_WORKSPACE``: the cwd the engine started in is the root."""
+        caller = self._caller_checkout(tmp_path)
+        engine_root = self._engine_checkout(tmp_path)
+        adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger(number=1205))
+        engine = Engine(
+            adapter=adapter,
+            repo_root=engine_root,
+            env={"GITHUB_REPOSITORY": "olivier-norture/git-flow-ai"},
+        )
+        monkeypatch.setattr(Engine, "_active_trigger", lambda self: _trigger(number=1205))
+        monkeypatch.chdir(caller)
+
+        assert engine._caller_root() == caller.resolve()
+        result = engine._branch_scaffold()
+
+        assert result.ok, result.detail
+        assert self._git(caller, "rev-parse", "--abbrev-ref", "HEAD") == (
+            "feature/issue-1205-fix-it"
+        )
+
+
 class TestDeterministicActionPhase:
     """``action`` executes the resolver's agent-free step (issue #724)."""
 
@@ -815,7 +1043,7 @@ class TestScriptStepComments:
         assert "import sys" not in outcome.posted_body
 
     def test_script_comments_do_not_count_as_agent_calls(self, tmp_path, monkeypatch):
-        from circuit_breaker import count_bot_markers
+        from nebuko.engine.lib.circuit_breaker import count_bot_markers
 
         engine = _engine(tmp_path)
         self._stub_script(monkeypatch)
@@ -1555,9 +1783,15 @@ class TestGateNoopExit:
         assert outcome.state is None
 
     def test_a_bot_authored_trigger_gets_no_notice(self, tmp_path, monkeypatch):
-        """The engine's own comments must not re-enter the notice path."""
+        """The engine's own comments must not re-enter the notice path.
+
+        The body must stay bot-inert: a bare agent-answer marker is now the
+        one bot marker exempted in ``_is_bot_trigger`` (routing), so a
+        gate-noop reply to it posts on purpose.
+        """
         engine = _engine(
-            tmp_path, _trigger(body=f"{BOT_AGENT_MARKER}\n@@dev continue")
+            tmp_path,
+            _trigger(body=f"<!-- bot-workflow-terminal -->\n@@dev continue"),
         )
         _stub_resolved(
             monkeypatch,
@@ -1937,7 +2171,7 @@ class TestRunLoop:
         self, tmp_path, monkeypatch
     ):
         """A long answer posts as several comments, not one truncated body (#913)."""
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(
@@ -1983,7 +2217,7 @@ class TestRunLoop:
         enlarged RELEVANT SNIPPETS never reach the agent. Every part carrying the
         bot marker keeps them agent output, rendered verbatim.
         """
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2009,8 +2243,8 @@ class TestRunLoop:
         self, tmp_path, monkeypatch
     ):
         """The state-bearing header rides on part 1, not the last part (#913)."""
-        from config import CommentSizePolicy
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import CommentSizePolicy
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2047,8 +2281,8 @@ class TestRunLoop:
         issue_comment workflow, so every part must keep the bot marker in its
         opening lines and carry no unescaped trigger token.
         """
-        from config import CommentSizePolicy
-        from resolve_config.features.parse_trigger.parse_trigger import (
+        from nebuko.engine.lib.config import CommentSizePolicy
+        from nebuko.engine.lib.resolve_config.features.parse_trigger.parse_trigger import (
             extract_mention_agent,
             is_bot_comment,
             is_machine_comment,
@@ -2091,7 +2325,7 @@ class TestRunLoop:
         Exactly one part may therefore carry the payload; the others must be
         stamped as answer continuations, a token the gate rejects on.
         """
-        from config import CommentSizePolicy
+        from nebuko.engine.lib.config import CommentSizePolicy
 
         engine = _engine(tmp_path)
         long_answer = "\n\n".join(f"Section {i} " + "x" * 80 for i in range(30))
@@ -2256,7 +2490,7 @@ class TestRunLoop:
 
 class TestStatePhase:
     def _state(self):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=3, workflow="spec-driven-impl", step="implement", agent="dev"
@@ -2334,9 +2568,9 @@ class TestPreviousStateHandoff:
     @staticmethod
     def _previous_state(*, history_len: int = 2):
         """A previous state carrying ``history_len`` history entries."""
-        from config import StepRef
-        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         entries = [
             HistoryEntry(
@@ -2492,8 +2726,8 @@ class TestWorkflowIdentityBackfill:
 
     @staticmethod
     def _state():
-        from config import StepRef
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=3,
@@ -2761,7 +2995,7 @@ class TestHonestPublish:
 
     def _run_with_failed_publish(self, tmp_path, monkeypatch, *, answer="*Dev answer*"):
         from nebuko.adapters.github import PublishError
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
@@ -2805,7 +3039,7 @@ class TestHonestPublish:
         assert saved["publish_failed"] is True
 
     def test_a_successful_publish_leaves_the_flag_unset(self, tmp_path, monkeypatch):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         engine = _engine(tmp_path)
         state = WorkflowState(version=3, workflow="default", step="implement", agent="dev")
@@ -2958,7 +3192,7 @@ class TestWorkflowStateAnswerComment:
 
     @staticmethod
     def _agent_state(history=None):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(
             run_id=6,
@@ -3020,7 +3254,7 @@ class TestWorkflowStateAnswerComment:
         summaries are LLM-authored prose. ``publish`` therefore runs the framed
         body through ``escape_agent_triggers`` before ``adapter.post``.
         """
-        from workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
+        from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import HistoryEntry
 
         state = self._agent_state(
             history=[HistoryEntry(step="implement", agent="dev", summary="ping @@dev then continue", turn_outcome=_entry_outcome())]
@@ -3427,9 +3661,9 @@ class TestStepInputSeam:
         """
         import tempfile
 
-        from config import StepRef, WorkflowPosition
-        from resolve_config.features.build_result.build_result import _build_result
-        from resolve_workflow import TASK_TO_PROMPT
+        from nebuko.engine.lib.config import StepRef, WorkflowPosition
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
         prompt_base = tempfile.mkdtemp()
         for name in set(TASK_TO_PROMPT.values()):
@@ -3560,7 +3794,7 @@ class TestStepOutputScope:
     @staticmethod
     def _comment(step, text, comment_id):
         from nebuko.engine.models import CommentEntry
-        from workflow_state import WorkflowState, to_git_comment
+        from nebuko.engine.lib.workflow_state import WorkflowState, to_git_comment
 
         state = WorkflowState(workflow="w", step=step, agent="dev")
         body = f"{text}\n\n{to_git_comment(state)}"
@@ -3600,7 +3834,7 @@ class TestStepOutputScope:
 
     def test_declared_output_sections_are_addressable(self, tmp_path, monkeypatch):
         """A step declaring ``output:`` exposes ``<step>.<field>`` refs (#973)."""
-        from config import StepOutput
+        from nebuko.engine.lib.config import StepOutput
 
         engine = _engine(tmp_path)
         output = StepOutput.model_validate(
@@ -4219,8 +4453,7 @@ class TestGitSessionGuardWiring:
     """The engine runs the git session guard around every agent phase (#1089).
 
     Preflight is fail-closed before the agent runs; finalize makes an unpublished
-    session an ``ExitCode.ERROR``; and a failed publication fallback is a run
-    error rather than only a line in the state comment.
+    session an ``ExitCode.ERROR``.
     """
 
     def _run(self, monkeypatch, root, *, preflight=None, finalize=None):
@@ -4329,72 +4562,6 @@ class TestGitSessionGuardWiring:
 
         assert outcome.exit_code == ExitCode.ADVANCE
 
-    def test_a_failed_publication_fallback_is_a_run_error(self, tmp_path, monkeypatch):
-        root = tmp_path / "repo"
-        root.mkdir()
-        engine = _engine_at_root(tmp_path, root)
-        _stub_resolved(monkeypatch, _resolved_with_hooks())
-        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("done"))
-
-        state = build_state(None, workflow="wf", step="implement", agent="dev")
-        state = state.model_copy(
-            update={
-                "current_context": {
-                    "publication_guard": "fallback_failed",
-                    "publication_guard_detail": "push rejected",
-                }
-            }
-        )
-
-        def persist(self, agent_result):
-            self.adapter.save_state(state)
-            return state
-
-        monkeypatch.setattr(Engine, "persist", persist)
-
-        outcome = engine.run()
-
-        assert outcome.exit_code == ExitCode.ERROR
-        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
-        assert outcome.turn_outcome.note == (
-            "publication guard fallback failed: push rejected"
-        )
-
-
-def _publication_guard_state(**context):
-    return WorkflowState.model_construct(step=None, current_context=context)
-
-
-class TestPublicationGuardFailure:
-    """``fallback_failed`` in the state is the signal the driver maps to ERROR."""
-
-    def test_a_failed_fallback_reports_its_detail(self):
-        state = _publication_guard_state(
-            publication_guard="fallback_failed",
-            publication_guard_detail="remote rejected the push",
-        )
-
-        assert _publication_guard_failure(state) == "remote rejected the push"
-
-    def test_a_failed_fallback_without_a_detail_still_reports(self):
-        state = _publication_guard_state(publication_guard="fallback_failed")
-
-        assert _publication_guard_failure(state) == "unknown error"
-
-    @pytest.mark.parametrize(
-        "context",
-        [
-            {},
-            {"publication_guard": "clean"},
-            {"publication_guard": "fallback_pr", "publication_guard_detail": "url"},
-        ],
-    )
-    def test_other_publication_results_are_not_failures(self, context):
-        assert _publication_guard_failure(_publication_guard_state(**context)) is None
-
-    def test_no_state_is_not_a_failure(self):
-        assert _publication_guard_failure(None) is None
-
 
 class TestBuildPromptPreviousSessionHandoff:
     """The previous run's handoff lands in the prompt as claims to re-check (#965).
@@ -4452,7 +4619,7 @@ class TestBuildPromptPreviousSessionHandoff:
 
 def _state_block(state) -> str:
     """One posted answer's inline workflow-state block."""
-    from workflow_state import STATE_MARKER_START
+    from nebuko.engine.lib.workflow_state import STATE_MARKER_START
 
     return f"{STATE_MARKER_START}\n{state.model_dump_json()}\n<!-- WORKFLOW_STATE_END -->"
 
@@ -4545,7 +4712,7 @@ class TestTwoStepWorkflowPrompt:
     @staticmethod
     def _with_outcome(state):
         """A completed step, as its agent child records it."""
-        from workflow_state import TurnStatus
+        from nebuko.engine.lib.workflow_state import TurnStatus
 
         history = list(state.history)
         for index, node in enumerate(history):
@@ -4730,7 +4897,7 @@ class TestBranchScaffoldWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: calls.append("pr")
+            lambda self, agent_result=None: calls.append("pr")
             or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote"),
         )
         monkeypatch.setattr(
@@ -4752,7 +4919,7 @@ class TestBranchScaffoldWiring:
 
         outcome, calls, _ = self._run(monkeypatch, root)
 
-        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert calls == ["pre", "scaffold", "agent", "pr", "post"]
         assert outcome.exit_code == ExitCode.ADVANCE
 
     def test_a_failed_scaffold_fails_the_run_before_the_agent(
@@ -4771,7 +4938,7 @@ class TestBranchScaffoldWiring:
 
         # The preflight still proves the checkout (cheap, no tokens); only the
         # agent is skipped.
-        assert calls == ["scaffold", "pre", "pr", "post"]
+        assert calls == ["pre", "scaffold", "pr", "post"]
         assert outcome.exit_code == ExitCode.ERROR
         assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
         assert outcome.turn_outcome.note.startswith("branch scaffold failed: ")
@@ -4802,6 +4969,8 @@ class TestBranchScaffoldWiring:
         assert len(prompts) == 1
         assert "Branch conflict" in prompts[0]
         assert "FIRST" in prompts[0]
+        # The fix-first note leads the prompt, ahead of the task itself.
+        assert prompts[0].startswith("## Branch conflict")
 
     def test_the_prepared_branch_is_recorded_in_the_state(
         self, tmp_path, monkeypatch
@@ -4823,6 +4992,37 @@ class TestPrFinalizerWiring:
     failed finalizer is a run error, and the opened PR lands in the persisted
     state's ``pull_request``.
     """
+
+    @pytest.mark.parametrize(
+        ("agent_result", "interrupted"),
+        [
+            ({"status": "running", "soft_timeout": True}, True),
+            ({"status": "finished"}, False),
+            ({}, False),
+        ],
+    )
+    def test_the_finalizer_is_told_when_the_run_was_interrupted(
+        self, tmp_path, monkeypatch, agent_result, interrupted
+    ):
+        """The engine's own observed status, not the agent, marks the
+        checkpoint as interrupted (the only publisher after a timeout)."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        engine = _engine_at_root(tmp_path, root)
+        seen: dict[str, object] = {}
+
+        class _Finalizer:
+            def __init__(self, issue_title="", *, interrupted=False):
+                seen["interrupted"] = interrupted
+
+            def finalize(self):
+                return pr_finalize.PrFinalizeResult(ok=True, skipped=True)
+
+        monkeypatch.setattr(pr_finalize, "PrFinalizer", _Finalizer)
+
+        engine._pr_finalize(agent_result)
+
+        assert seen["interrupted"] is interrupted
 
     def _run(self, monkeypatch, root, *, pr=None, invoke=None):
         engine = _engine_at_root(root.parent, root)
@@ -4849,7 +5049,7 @@ class TestPrFinalizerWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: calls.append("pr")
+            lambda self, agent_result=None: calls.append("pr")
             or (pr or pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="no git remote")),
         )
         monkeypatch.setattr(
@@ -4869,7 +5069,7 @@ class TestPrFinalizerWiring:
 
         outcome, calls, _ = self._run(monkeypatch, root)
 
-        assert calls == ["scaffold", "pre", "agent", "pr", "post"]
+        assert calls == ["pre", "scaffold", "agent", "pr", "post"]
         assert outcome.exit_code == ExitCode.ADVANCE
 
     def test_a_failed_finalizer_fails_the_run(self, tmp_path, monkeypatch):
@@ -4912,7 +5112,7 @@ class TestPrFinalizerWiring:
         monkeypatch.setattr(
             Engine,
             "_pr_finalize",
-            lambda self: pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
+            lambda self, agent_result=None: pr_finalize.PrFinalizeResult(ok=False, detail="push rejected"),
         )
         monkeypatch.setattr(
             Engine,

@@ -14,8 +14,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from config import CONFIG_DEFAULT_PATH, load_config
-from config.sub_domains.app_config.app_config import AppConfig
+from nebuko.engine.lib.config import CONFIG_DEFAULT_PATH, load_config
+from nebuko.engine.lib.config.sub_domains.app_config.app_config import AppConfig
 
 #: Generic exit discipline, injected once into every built system prompt.
 #: Role- and mode-specific hand-off contracts stay with the role/skill.

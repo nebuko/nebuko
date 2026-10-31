@@ -22,8 +22,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import (  # noqa: E402
+from nebuko.engine.lib.config import (
     POSITION_STATE_VERSION,
     StepRef,
     WorkflowDefinition,
@@ -180,13 +179,13 @@ class TestWorkflowPositionModel:
 
 class TestIsSelfFunctionCall:
     def test_matches_only_the_running_agent(self):
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.workflow_state import FunctionCall
         fc = FunctionCall.model_validate({"agent_name": "dev", "complexity": "medium"})
         assert is_self_function_call(fc, "dev") is True
         assert is_self_function_call(fc, "review") is False
 
     def test_none_or_empty_running_agent_is_not_self(self):
-        from workflow_state import FunctionCall
+        from nebuko.engine.lib.workflow_state import FunctionCall
         fc = FunctionCall.model_validate({"agent_name": "dev"})
         assert is_self_function_call(fc, "") is False
         assert is_self_function_call(None, "dev") is False
@@ -196,7 +195,7 @@ class TestWorkflowStatePositionField:
     """v3 state: position is a flat refs list; v1 states still parse."""
 
     def test_state_serializes_position_refs(self):
-        from workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state import WorkflowState
         state = WorkflowState(
             workflow="dev-review-loop",  # flat fields keep leaf (v1) semantics
             step="implement",
@@ -209,18 +208,18 @@ class TestWorkflowStatePositionField:
         assert dumped["step"] == "implement"
 
     def test_v1_state_without_position_still_validates(self):
-        from workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state import WorkflowState
         state = WorkflowState.model_validate(
             {"workflow": "plan-orchestration", "step": "scaffold", "agent": "dev"}
         )
         assert state.position == []
 
     def test_position_field_defaults_to_empty_list(self):
-        from workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state import WorkflowState
         assert WorkflowState().position == []
 
     def test_legacy_v2_nested_block_is_migrated_on_load(self):
-        from workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state import WorkflowState
         v2_block = {
             "version": 2,
             "workflow_name": "plan-orchestration",
@@ -241,7 +240,7 @@ class TestWorkflowStatePositionField:
         ]
 
     def test_history_entry_carries_position(self):
-        from workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
+        from nebuko.engine.lib.workflow_state import Appreciation, HistoryEntry, TurnOutcome, TurnStatus
 
         def _outcome():
             return TurnOutcome(
@@ -267,7 +266,7 @@ class TestResolvePositionBuilder:
     full mount chain through ``resolve_position``."""
 
     def _resolve(self, wf_def: WorkflowDefinition, step_name: str) -> WorkflowPosition:
-        from resolve_config.features.resolve_route.resolve_route import resolve_position
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import resolve_position
         table = {
             "plan-orchestration": PLAN_ORCHESTRATION,
             "tmp_impl/workflow.yaml": TMP_IMPL,

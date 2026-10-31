@@ -14,17 +14,23 @@ read [architecture.md](./architecture.md) and
    To run on your own infrastructure instead, pass `runs_on: "self-hosted"`
    to the reusable workflow and [set up a self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
 2. **Python 3.13** and the **`uv`** package manager on the runner.
-3. **GitHub secrets** configured at repo or organization level (at least one
+3. **The Nebuko App installed** — install it from
+   <https://github.com/apps/nebuko/installations/new> and grant it only the
+   repositories Nebuko should work on. With the App installed, no GitHub token
+   is needed: the workflow mints a short-lived installation token from the OIDC
+   broker (`GH_PAT` is the optional PAT-mode fallback, see
+   [adoption.md §4](./adoption.md#pat-fallback)). Permissions, key custody and
+   how to suspend or uninstall: [adoption.md §8](./adoption.md#8-trust-and-security-the-github-app).
+4. **GitHub secrets** configured at repo or organization level (at least one
    provider key is required):
 
    | Secret | Required | Purpose |
    |--------|----------|---------|
-   | `GH_PAT` | no | Fallback fine-grained GitHub PAT (Contents, Pull requests, Issues: read and write). Not needed when the App is installed: the workflow mints its token from the OIDC broker. |
    | `OPENROUTER_API_KEY` | one of | LLM provider token (OpenRouter). |
    | `LOCAL_VLLM_API_TOKEN` | one of | Local vLLM provider token. |
    | `COMMANDCODE_API_KEY` | one of | CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |
 
-4. **A configuration file** — `agent-config.yaml` (see step 2 below) and,
+5. **A configuration file** — `agent-config.yaml` (see step 2 below) and,
    optionally, prompt overrides (step 3), committed to your repository.
 
 ---

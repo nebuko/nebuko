@@ -6,7 +6,7 @@ git repository, locate a workflow YAML file within it, and manage a
 local cache of previously fetched repos.
 
 Usage:
-    from remote_workflow import fetch_remote_workflow
+    from nebuko.engine.lib.remote_workflow import fetch_remote_workflow
 
     path = fetch_remote_workflow(
         repo="https://github.com/org/shared-workflows.git",

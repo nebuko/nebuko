@@ -19,8 +19,8 @@ from nebuko.engine.models import (
     StepResult,
     Trigger,
 )
-from workflow_state.workflow_state import WorkflowState
-from workflow_state import from_body
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+from nebuko.engine.lib.workflow_state import from_body
 
 from _facts import approved_outcome as _approved_outcome
 

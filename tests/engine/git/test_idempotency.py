@@ -1,9 +1,7 @@
-"""The git idempotency guards (issue #1194).
+"""The git idempotency guard (issue #1194).
 
 Real git against a scratch checkout: the ancestor check must skip an
-already-merged base, the reverse-apply probe must recognise a patch that is
-already in the tree, and the forward probe must report clean/dirty
-applicability.
+already-merged base.
 """
 
 from __future__ import annotations
@@ -74,66 +72,3 @@ class TestBaseAlreadyMerged:
         _git(repo, "checkout", "-q", "feature/x")
 
         assert _guard(repo).base_already_merged("feature/x", "main") is False
-
-
-class TestPatchAlreadyApplied:
-    def _diff(self, repo: Path) -> str:
-        return _git(repo, "diff", "HEAD")
-
-    def test_true_when_the_patch_reverse_applies(self, repo):
-        _commit(repo, "f.txt", "a\n", "one")
-        diff = _git(repo, "diff", "HEAD")  # unstaged? none — stage one edit
-        (repo / "f.txt").write_text("b\n", encoding="utf-8")
-        diff = _git(repo, "diff")
-
-        assert diff
-        assert _guard(repo).patch_already_applied(diff) is True
-
-    def test_false_when_the_change_is_absent(self, repo):
-        _commit(repo, "f.txt", "a\n", "one")
-        diff = (
-            "diff --git a/f.txt b/f.txt\n"
-            "--- a/f.txt\n"
-            "+++ b/f.txt\n"
-            "@@ -1 +1,2 @@\n"
-            " a\n"
-            "+b\n"
-        )
-
-        assert _guard(repo).patch_already_applied(diff) is False
-
-    def test_false_for_an_empty_patch(self, repo):
-        assert _guard(repo).patch_already_applied("") is False
-
-
-class TestPatchAppliesCleanly:
-    def test_true_for_a_fresh_change(self, repo):
-        # Build the new-file diff with git itself so the header format is
-        # exactly what a real delivery carries (hand-written /dev/null
-        # headers are rejected by git apply).
-        (repo / "new.txt").write_text("new\n", encoding="utf-8")
-        # --no-index exits 1 when the files differ; capture without check.
-        result = subprocess.run(
-            ["git", "-C", str(repo), "diff", "--no-index", "--",
-             "/dev/null", "new.txt"],
-            capture_output=True, text=True,
-        )
-        diff = result.stdout.replace(f"{repo}/new.txt", "new.txt")
-        (repo / "new.txt").unlink()
-
-        assert diff
-        assert _guard(repo).patch_applies_cleanly(diff) is True
-
-    def test_false_when_it_conflicts(self, repo):
-        _commit(repo, "f.txt", "a\n", "one")
-        diff = (
-            "diff --git a/f.txt b/f.txt\n"
-            "--- a/f.txt\n"
-            "+++ b/f.txt\n"
-            "@@ -1 +1,2 @@\n"
-            " a\n"
-            "+b\n"
-        )
-        (repo / "f.txt").write_text("different\n", encoding="utf-8")
-
-        assert _guard(repo).patch_applies_cleanly(diff) is False

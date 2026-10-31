@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_script.sub_domains.metrics import report_cost_resolver as mod
-from agent_script.sub_domains.metrics.report_cost_resolver import (
+from nebuko.engine.lib.agent_script.sub_domains.metrics import report_cost_resolver as mod
+from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import (
     PLACEHOLDER_MODEL,
     ReportCostResolver,
 )
-from metrics_schema import Metrics
-from pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import ModelPrice, PriceTable
 
 # tests live at <lib>/agent_script/sub_domains/metrics/, so the importable lib
 # root is parents[3] (parents[4] would be.../engine, which cannot satisfy
@@ -284,26 +284,23 @@ class TestBuild:
 def _import_guard_script(lib: Path) -> str:
     """Import the base-deps-safe chain with ``openhands``/``litellm`` blocked.
 
-    stdlib and base site-packages stay on ``sys.path``; any entry that could
-    shadow ``agent_script`` is dropped, so the package can only resolve from
-    ``lib``. A foreign checkout (or a stale editable install) can therefore
-    never mask a real import regression.
+    The library is an installed subpackage of ``nebuko``, so the probe needs no
+    ``sys.path`` setup; the guard only proves the chain resolves without the
+    runtime-only extras.
     """
     lib = str(lib)
     return (
-        "import builtins, os, sys;"
-        "sys.path[:] = [p for p in sys.path if not p or not os.path.exists("
-        "os.path.join(p, 'agent_script'))];"
-        f"sys.path.insert(0, {lib!r});"
+        "import builtins;"
         "real = builtins.__import__;"
         "guard = lambda name, *a, **k: (_ for _ in ()).throw("
         "ImportError(name)) if name.split('.')[0] in "
         "('openhands', 'litellm') else real(name, *a, **k);"
         "builtins.__import__ = guard;"
-        "import agent_script, pricing;"
-        "from agent_script.sub_domains.metrics.report_cost_resolver import"
+        "import nebuko.engine.lib.agent_script as agent_script;"
+        "import nebuko.engine.lib.pricing as pricing;"
+        "from nebuko.engine.lib.agent_script.sub_domains.metrics.report_cost_resolver import"
         " ReportCostResolver;"
-        "from pricing.features.load_price_table.load_price_table import"
+        "from nebuko.engine.lib.pricing.features.load_price_table.load_price_table import"
         " load_price_table;"
         f"assert agent_script.__file__.startswith({lib!r}), "
         "agent_script.__file__;"

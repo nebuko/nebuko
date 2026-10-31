@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
-    from config import HookSpec
+    from nebuko.engine.lib.config import HookSpec
 
 log = logging.getLogger("nebuko.engine.hook_runner")
 
@@ -142,10 +142,8 @@ def hooks_from_resolved(
     if not isinstance(raw, Mapping):
         raise HookPayloadError(f"{STEP_HOOKS_KEY} must decode to an object")
 
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from config import HookSpec
+    from nebuko.engine.lib.config import HookSpec
 
     specs: dict[HookPhase, HookSpec] = {}
     for phase in ("pre", "post"):

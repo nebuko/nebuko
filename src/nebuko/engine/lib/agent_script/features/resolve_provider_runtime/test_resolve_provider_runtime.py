@@ -3,11 +3,10 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from config import ProviderConfig
+from nebuko.engine.lib.config import ProviderConfig
 
-from agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
+from nebuko.engine.lib.agent_script.features.resolve_provider_runtime.resolve_provider_runtime import (
     SESSION_ID_ENV,
     IssueCacheKeyRuntime,
     IssueSessionRuntime,

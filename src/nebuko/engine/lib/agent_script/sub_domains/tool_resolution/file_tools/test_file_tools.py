@@ -8,7 +8,7 @@ import pytest
 from openhands.sdk.conversation.secret_registry import SecretRegistry
 from openhands.tools.file_editor.exceptions import ToolError
 
-from agent_script.sub_domains.tool_resolution.file_tools import (
+from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.file_tools import (
     MAX_READ_BYTES,
     MAX_READ_LINES,
     EditAction,
@@ -319,7 +319,7 @@ class TestRegistration:
     def test_tools_resolve_from_the_sdk_registry(self):
         from openhands.sdk.tool.registry import list_registered_tools
 
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+        from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
             ensure_sdk_tools_registered,
         )
 
@@ -329,7 +329,7 @@ class TestRegistration:
             assert name in registered, name
 
     def test_resolve_toolset_emits_the_new_specs(self):
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+        from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
             resolve_toolset,
         )
 
@@ -340,7 +340,7 @@ class TestRegistration:
         assert not resolved.has("file_editor")
 
     def test_file_editor_still_resolves_for_opt_in_configs(self):
-        from agent_script.sub_domains.tool_resolution.tool_resolution import (
+        from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
             resolve_toolset,
         )
 

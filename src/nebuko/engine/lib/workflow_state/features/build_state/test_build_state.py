@@ -4,8 +4,7 @@ import unittest
 
 from pydantic import ValidationError
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from workflow_state import (
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
     IncompleteReason,
@@ -16,7 +15,7 @@ from workflow_state import (
     build_state,
     go_next,
 )
-from workflow_state.workflow_state import STATE_SCHEMA_VERSION
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_SCHEMA_VERSION
 
 class TestBuildState(unittest.TestCase):
     """Test build_state() pure state-transition function."""
@@ -153,7 +152,7 @@ class TestBuildState(unittest.TestCase):
         self.assertEqual(state.history[-1].metrics.input_tokens, 5000)
 
     def test_resolution_included(self):
-        from workflow_state import StepResolution
+        from nebuko.engine.lib.workflow_state import StepResolution
         resolution = StepResolution(
             role_name="dev",
             selected_workflow="spec-driven-design",

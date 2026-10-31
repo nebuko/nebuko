@@ -294,7 +294,7 @@ class TestToRecords:
         assert records[0]["detail"] == "exit 7"
 
     def test_oversized_value_is_truncated_and_flagged(self):
-        from workflow_state.sub_domains.step_input_record.step_input_record import (
+        from nebuko.engine.lib.workflow_state.sub_domains.step_input_record.step_input_record import (
             MAX_VALUE_CHARS,
         )
 
@@ -309,7 +309,7 @@ class TestToRecords:
         assert records[0]["truncated"] is True
 
     def test_records_validate_as_step_input_records(self):
-        from workflow_state.sub_domains.step_input_record import StepInputRecord
+        from nebuko.engine.lib.workflow_state.sub_domains.step_input_record import StepInputRecord
 
         records = self._records(
             [Materialization(name="diff", ok=True, body="patch", binding="str")]

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from openhands.tools.terminal import TerminalExecutor
 
-from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.terminal_batch_tool import (
     TERMINAL_BATCH_DESCRIPTION,
     TerminalBatchAction,
     TerminalBatchExecutor,
@@ -29,7 +29,7 @@ from agent_script.features.terminal_batch_tool.terminal_batch_tool import (
     TerminalBatchTool,
     build_terminal_batch_description,
 )
-from agent_script.sub_domains.tool_resolution.tool_resolution import (
+from nebuko.engine.lib.agent_script.sub_domains.tool_resolution.tool_resolution import (
     resolve_toolset,
 )
 

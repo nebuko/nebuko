@@ -16,16 +16,16 @@ from pydantic import ValidationError
 
 from nebuko.engine.engine_tools import DEFAULT_ENGINE_TOOLS
 
-from config import (
+from nebuko.engine.lib.config import (
     CommentSizePolicy,
     is_self_function_call,
     load_workflow,
     parse_position_env,
     resolve_workflow_reference,
 )
-from github_client import get_issue_comments
-from metrics_schema import Metrics
-from workflow_state import (
+from nebuko.engine.lib.github_client import get_issue_comments
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.workflow_state import (
     Appreciation,
     FunctionCall,
     GateDecision,
@@ -43,48 +43,44 @@ from workflow_state import (
     WorkflowState,
     workflow_ref_from_env,
 )
-from workflow_state import extract_function_call
-from workflow_state import extract_latest_state_from_comments
-from workflow_state.features.build_state.build_state import build_state
-from workflow_state.features.to_json.to_json import state_to_json
-from workflow_state.state_codec import WorkflowStateCodec
+from nebuko.engine.lib.workflow_state import extract_function_call
+from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
+from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
+from nebuko.engine.lib.workflow_state.features.to_json.to_json import state_to_json
+from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
-from agent_script.sub_domains.scaffold_branch.scaffold_branch import (
+from nebuko.engine.lib.agent_script.sub_domains.scaffold_branch.scaffold_branch import (
     extract_scaffold_branch_any,
     scaffold_branch_summary,
     strip_scaffold_branch,
 )
-from agent_script.sub_domains.message_splitter.message_splitter import split_message
-from agent_script.features.extract_recovery_trace.extract_recovery_trace import (
+from nebuko.engine.lib.agent_script.sub_domains.message_splitter.message_splitter import split_message
+from nebuko.engine.lib.agent_script.features.extract_recovery_trace.extract_recovery_trace import (
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
-from agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
-from agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
-from agent_script.features.ensure_pr.ensure_pr import (
-    EnsurePrResult,
-    ensure_pr,
-)
-from agent_script.features.dispatch_next_tool import (
+from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
     clear_run,
     get_recorded_run_prefs,
     get_recorded_turn_outcome,
 )
-from agent_script.features.call_agent_tool import (
+from nebuko.engine.lib.agent_script.features.call_agent_tool import (
     clear_run as clear_call_agent_run,
     get_recorded_function_call,
 )
-from agent_script.features.complexity_review_tool import (
+from nebuko.engine.lib.agent_script.features.complexity_review_tool import (
     clear_complexity_review_run,
     get_recorded_review_request,
 )
-from agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
+from nebuko.engine.lib.agent_script.features.scaffold_branch_tool.scaffold_branch_tool import (
     clear_scaffold_branch_run,
     get_recorded_scaffold_branch,
 )
-from complexity_governor.complexity_governor import ComplexityAdjustment
-from complexity_governor.integration import ADJUSTMENT_ENV, POLICY_ENV
+from nebuko.engine.lib.complexity_governor.complexity_governor import ComplexityAdjustment
+from nebuko.engine.lib.complexity_governor.integration import ADJUSTMENT_ENV, POLICY_ENV
 
 logger = get_logger(__name__)
 
@@ -137,25 +133,19 @@ def _get_run_outcome(conversation):
     return getattr(conversation, "run_outcome", None)
 
 
-def _build_timeout_summary(pr_result: EnsurePrResult | None) -> str:
+def _build_timeout_summary() -> str:
     """Synthesize a final message for a graceful timeout that produced none."""
-    lines = [
-        "_⏱ The agent reached its soft time budget and execution was "
-        "gracefully interrupted (issue #489). It was asked to conclude its "
-        "work but did not produce a closing summary._",
-        "",
-        "**Checkpoint:** pending changes were committed and pushed, and a PR "
-        "was opened or updated with the current content. The next run will "
-        "resume from the recovery log instead of starting over.",
-    ]
-    if pr_result is not None:
-        if pr_result.pr_url:
-            lines.append(f"- Checkpoint PR: {pr_result.pr_url}")
-        if pr_result.error:
-            lines.append(f"- PR fallback issue: {pr_result.message}")
-        elif pr_result.skipped:
-            lines.append(f"- PR fallback skipped: {pr_result.message}")
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "_⏱ The agent reached its soft time budget and execution was "
+            "gracefully interrupted (issue #489). It was asked to conclude its "
+            "work but did not produce a closing summary._",
+            "",
+            "**Checkpoint:** after this run the engine commits and pushes the "
+            "pending changes and opens or updates the PR. The next run will "
+            "resume from the recovery log instead of starting over.",
+        ]
+    )
 
 
 _UNREACHABLE_RESUME_HINT = (
@@ -391,7 +381,7 @@ def _parse_complexity_policy_env():
     if not raw:
         return None
     try:
-        from config import ComplexityPolicy
+        from nebuko.engine.lib.config import ComplexityPolicy
 
         return ComplexityPolicy.model_validate_json(raw)
     except Exception:
@@ -440,8 +430,8 @@ def _load_gated_step_def(
     if not workflow_name or not workflow_step:
         return False
     try:
-        import default_paths
-        from resolve_workflow import WorkflowLoadContext
+        import nebuko.engine.lib.default_paths as default_paths
+        from nebuko.engine.lib.resolve_workflow import WorkflowLoadContext
 
         shipped_dir, local_dir = default_paths.workflow_dirs()
         ctx = WorkflowLoadContext(shipped_dir, local_dir)
@@ -576,7 +566,7 @@ def _load_prev_state_from_comments(fetch_comments=None) -> WorkflowState | None:
         else:
             # A bounded tail read (single page) is enough to recover the state
             # without re-paginating the whole thread (issue #805, Pillar C).
-            from thread_snapshot import state_tail_limit
+            from nebuko.engine.lib.thread_snapshot import state_tail_limit
 
             comments = get_issue_comments(
                 repo, int(issue_number), limit=state_tail_limit()
@@ -959,23 +949,13 @@ def _work_loop_events(events: list, conversation) -> list:
 
 
 def _first_recall_offset(run_outcome) -> int | None:
-    """Earliest engine-injected recall boundary on the run outcome (#558).
+    """Engine-injected recall boundary on the run outcome (#558).
 
-    Both bounded recalls (dispatch and publication) inject turns whose text is
-    an engine prompt, never an agent answer, so the earliest recorded offset is
-    the boundary every answer must sit before.
+    A dispatch recall injects turns whose text is an engine prompt, never an
+    agent answer, so its offset is the boundary every answer must sit before.
     """
-    if run_outcome is None:
-        return None
-    offsets = [
-        getattr(run_outcome, name, None)
-        for name in (
-            "dispatch_recall_event_offset",
-            "publication_recall_event_offset",
-        )
-    ]
-    present = [o for o in offsets if isinstance(o, int)]
-    return min(present) if present else None
+    offset = getattr(run_outcome, "dispatch_recall_event_offset", None)
+    return offset if isinstance(offset, int) else None
 
 
 def _write_latest_answer_file(text: str) -> None:
@@ -1238,29 +1218,16 @@ def build_output(
         run_outcome is not None
         and run_outcome.status is OutcomeStatus.GRACEFULLY_TIMED_OUT
     )
-    pr_result: EnsurePrResult | None = None
     context_updates: dict[str, str] = {}
     if run_outcome is not None:
         context_updates["last_run_status"] = run_outcome.status.value
-        publication_guard = getattr(run_outcome, "publication_guard", "")
-        if publication_guard:
-            context_updates["publication_guard"] = publication_guard
-            context_updates["publication_guard_detail"] = getattr(
-                run_outcome, "publication_detail", ""
-            )
-            # Where a delivered .github/workflows patch lives (comment URL or
-            # artifact name) — the answer points the reviewer at it (#1080).
-            publication_patch = getattr(run_outcome, "publication_patch", "")
-            if publication_patch:
-                context_updates["publication_patch"] = publication_patch
 
-    if is_graceful_timeout:
-        logger.info("Graceful timeout detected — running deterministic PR fallback")
-        pr_result = ensure_pr()
-        if not final_message:
-            # The wind-down did not finish its work — synthesize a clear
-            # summary so downstream doesn't treat this as a crashed run.
-            final_message = _build_timeout_summary(pr_result)
+    # The checkpoint itself (commit, push, PR) is the engine's publisher's
+    # job after the run (``PrFinalizer``); only the summary is built here.
+    if is_graceful_timeout and not final_message:
+        # The wind-down did not finish its work — synthesize a clear
+        # summary so downstream doesn't treat this as a crashed run.
+        final_message = _build_timeout_summary()
 
     # ── Failure handling (issue #668, #978) ───────────────────────
     # A run that crashed with no output would otherwise reach the opaque

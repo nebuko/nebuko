@@ -136,10 +136,7 @@ def _decode_frames(raw: Any) -> tuple[WorkflowCallFrame, ...]:
 
 
 def _decode_bindings(raw: Any) -> dict[str, Any]:
-    from .paths import ensure_import_path
-
-    ensure_import_path()
-    from config import InputBinding
+    from nebuko.engine.lib.config import InputBinding
 
     bindings: dict[str, Any] = {}
     for name, spec in raw.items():
@@ -155,10 +152,7 @@ def _resolve_binding(binding: Any, scope: Mapping[str, Any]) -> Any:
     if source == "ref":
         ref = str(binding.ref)
         if ref not in scope:
-            from .paths import ensure_import_path
-
-            ensure_import_path()
-            from config import InputMaterializationError
+            from nebuko.engine.lib.config import InputMaterializationError
 
             raise InputMaterializationError(f"unresolved reference '{ref}'")
         return scope[ref]
@@ -248,10 +242,8 @@ def to_records(results: Sequence[Materialization]) -> list[dict[str, Any]]:
     value is truncated to the entity's cap (a large provider output must not
     balloon the state snapshot); the entity owns the cap so the two never drift.
     """
-    from nebuko.engine.paths import ensure_import_path
 
-    ensure_import_path()
-    from workflow_state.sub_domains.step_input_record.step_input_record import (
+    from nebuko.engine.lib.workflow_state.sub_domains.step_input_record.step_input_record import (
         MAX_VALUE_CHARS,
     )
 

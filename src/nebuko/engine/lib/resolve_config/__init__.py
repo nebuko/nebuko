@@ -37,9 +37,9 @@ from .features.resolve_route.resolve_route import (
     MAX_LOOP_COUNT,
 )
 
-# Exposed at package level so patch("resolve_config.get_issue_comments") in
+# Exposed at package level so patch("nebuko.engine.lib.resolve_config.get_issue_comments") in
 # the test suite resolves here, exactly like the old flat module did.
-from github_client import get_issue_comments
+from nebuko.engine.lib.github_client import get_issue_comments
 from .features.fetch_state.fetch_state import (
     _fetch_workflow_state_from_history,
 )

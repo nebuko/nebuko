@@ -2,7 +2,7 @@
 
 import pytest
 
-from pricing.sub_domains.price_table.price_table import (
+from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import (
     TOKENS_PER_PRICE_UNIT,
     ModelPrice,
     PriceTable,

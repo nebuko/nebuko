@@ -14,22 +14,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-    ),
-)
 
 from build_output import _agent_checkpoint_outcome, build_output
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from workflow_state import Appreciation, TurnOutcome, TurnStatus
-from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
-from metrics_schema import Metrics
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.workflow_state import Appreciation, TurnOutcome, TurnStatus
+from nebuko.engine.lib.metrics_schema import Metrics
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
 
 def _make_conversation(events=None, run_outcome=None):
@@ -88,14 +79,10 @@ class TestBuildOutputAgentCheckpoint(unittest.TestCase):
         self._tmp.cleanup()
 
     def _build(self, conv):
-        with patch(
-            "build_output.ensure_pr",
-            return_value=EnsurePrResult(skipped=True, message="no git remote"),
-        ):
-            return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
+        return build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
 
     def test_fold_overrides_an_agent_emitted_verdict(self):
-        from agent_script.features.dispatch_next_tool import record_turn_outcome
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool import record_turn_outcome
 
         answer = "**Work completed**: X"
         conv = _make_conversation(
@@ -119,7 +106,7 @@ class TestBuildOutputAgentCheckpoint(unittest.TestCase):
 
     def test_successful_run_still_carries_its_verdict(self):
         # Control: without the fold classification the override must not fire.
-        from agent_script.features.dispatch_next_tool import record_turn_outcome
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool import record_turn_outcome
 
         answer = "**Work completed**: X"
         conv = _make_conversation(

@@ -42,7 +42,7 @@ from openhands.tools.terminal.descriptions import (
 from pydantic import Field, field_validator
 from rich.text import Text
 
-from agent_script.features.terminal_batch_tool.command_deny_list import (
+from nebuko.engine.lib.agent_script.features.terminal_batch_tool.command_deny_list import (
     CommandDenyList,
     push_deny_list,
 )

@@ -26,9 +26,9 @@ from pathlib import Path
 
 import pytest
 
-from resolve_config import resolve_config
-from resolve_workflow import TASK_TO_PROMPT
-from workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
+from nebuko.engine.lib.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_MARKER_END, STATE_MARKER_START
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULTS = REPO_ROOT / "defaults"

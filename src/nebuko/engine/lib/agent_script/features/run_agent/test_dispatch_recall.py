@@ -8,7 +8,7 @@ dead.
 
 import unittest
 
-from agent_script.features.run_agent.dispatch_recall import (
+from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import (
     DISPATCH_RECALL_PROMPT,
     MAX_DISPATCH_RECALLS,
     perform_dispatch_recalls,

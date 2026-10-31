@@ -14,13 +14,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import StepRef, WorkflowPosition  # noqa: E402
-from resolve_config.features.build_result.build_result import (  # noqa: E402
+from nebuko.engine.lib.config import StepRef, WorkflowPosition
+from nebuko.engine.lib.resolve_config.features.build_result.build_result import (
     _attach_step_inputs,
     _build_result,
 )
-from resolve_workflow import TASK_TO_PROMPT  # noqa: E402
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
 
 
 def _make_dirs() -> tuple[str, str]:

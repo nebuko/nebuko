@@ -11,7 +11,6 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from nebuko.engine.paths import ensure_import_path
 from nebuko.adapters.base import PostedComment, PosterCapabilities
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
@@ -19,7 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
 
     from nebuko.engine.context_selection import ContextEntry
     from nebuko.engine.models import CommentEntry, Trigger
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
 __all__ = ["GitHubAdapter", "PublishError"]
 
@@ -52,8 +51,7 @@ class PublishError(RuntimeError):
 
 
 def _github_client() -> Any:
-    ensure_import_path()
-    import github_client
+    import nebuko.engine.lib.github_client as github_client
 
     return github_client
 
@@ -77,7 +75,6 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # repository packaging does not cover that directory (issue #590
         # round-4, finding 1). Doing it here keeps the methods themselves
         # ordering-safe under the production ``python -m nebuko.engine.run`` bootstrap.
-        ensure_import_path()
         self._event_path = _Path(event_path) if event_path is not None else None
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
         # resolves the repo from the runner environment instead of failing with
@@ -102,8 +99,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # once ``engine/lib`` is on ``sys.path`` (issue #590 round-4,
         # finding 1 — ``__init__`` also bootstraps, this keeps the method
         # correct on its own if it is ever called on a bare instance).
-        ensure_import_path()
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         path = self._event_path
         if path is None:
@@ -236,7 +232,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     def _thread_snapshot(self) -> Any:
         """Return the cached per-run snapshot, fetching the thread at most once."""
         if self._snapshot is None:
-            from thread_snapshot import STATE_TAIL_FLOOR, build_snapshot
+            from nebuko.engine.lib.thread_snapshot import STATE_TAIL_FLOOR, build_snapshot
 
             limit = self._snapshot_limit
             if limit is not None:
@@ -311,7 +307,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
 
     # @stub-protected
     def save_state(self, state: WorkflowState) -> None:
-        from workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
 
         WorkflowStateCodec().save_prev(state)
 

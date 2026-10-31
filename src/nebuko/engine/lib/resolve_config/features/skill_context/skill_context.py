@@ -21,7 +21,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 import yaml
 
-from config.sub_domains.skill_spec.skill_spec import INJECT, SkillSpec
+from nebuko.engine.lib.config.sub_domains.skill_spec.skill_spec import INJECT, SkillSpec
 
 #: Resolver output keys carrying this step's skill inputs.
 AGENT_SKILL_SPECS_ENV = "AGENT_SKILL_SPECS"
@@ -180,7 +180,7 @@ def skill_context_from_env(env: Mapping[str, str]) -> SkillContext:
 
 
 def _default_skills_dir() -> str:
-    import default_paths
+    import nebuko.engine.lib.default_paths as default_paths
 
     return default_paths.config_dir("skills", "SKILLS_DIR")
 

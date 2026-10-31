@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
+from nebuko.engine.init.app_installation import AppInstallationResolver
+from nebuko.engine.init.caller_workflow import CallerWorkflowWriter
 from nebuko.engine.init.github_host import GitHubHost
 from nebuko.engine.init.ports import (
     GeneratedFiles,
@@ -29,6 +31,7 @@ from nebuko.engine.init.refs import (  # noqa: F401  (DEFAULT_WORKFLOW_REF is re
     GitTagRefResolver,
     StaticRefResolver,
 )
+from nebuko.engine.init.repo_variables import RepoVariableWriter
 from nebuko.engine.init.sources import FileTemplateSource, HttpTemplateSource
 
 EXIT_OK = 0
@@ -38,6 +41,10 @@ EXIT_USAGE = 2
 WORKFLOW_TEMPLATE = "templates/nebuko-caller.yaml"
 AGENT_CONFIG_PATH = ".nebuko/agents/agent-config.yaml"
 WORKFLOW_PATH = ".github/workflows/nebuko.yaml"
+# Published broker endpoint; the generated workflow reads it from the repository
+# variable so a client can point at their own broker without editing the file.
+DEFAULT_BROKER_URL = "https://token-broker.nebuko.dev/token"
+BROKER_VARIABLE = "NEBUKO_BROKER_URL"
 BRANCH = "nebuko/init"
 PR_TITLE = "chore: add Nebuko agent configuration and workflow"
 NEXT_STEPS = """\
@@ -55,6 +62,12 @@ class SetupContext:
     source: TemplateSource
     refs: ReleaseRefResolver
     host: SetupHost
+    # App-aware setup (issue #1025): detection, the broker repo variable and the
+    # generated caller workflow. ``None`` keeps the pre-App behaviour.
+    resolver: AppInstallationResolver | None = None
+    variable_writer: RepoVariableWriter | None = None
+    workflow_writer: CallerWorkflowWriter | None = None
+    broker_url: str = DEFAULT_BROKER_URL
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,7 @@ from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import ExitCode, Trigger
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import Engine
-from workflow_state import IncompleteReason, TurnStatus
+from nebuko.engine.lib.workflow_state import IncompleteReason, TurnStatus
 
 
 def _trigger(body: str = "@@dev continue", number: int = 766) -> Trigger:
@@ -38,7 +38,7 @@ def _engine(tmp_path) -> Engine:
 
 
 def _state():
-    from workflow_state.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
     return WorkflowState(run_id=13, workflow="default", step="plan", agent="dev")
 

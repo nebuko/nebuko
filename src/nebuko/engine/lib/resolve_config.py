@@ -13,9 +13,8 @@ This shim only preserves the historical *script* entry point used by CI:
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 if __name__ == "__main__":
-    from resolve_config.resolve_config import main
+    from nebuko.engine.lib.resolve_config.resolve_config import main
 
     main()

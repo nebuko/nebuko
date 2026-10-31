@@ -65,6 +65,29 @@ scaffold creates the dev session's `feature/issue-<n>-<slug>` branch from it
 before the agent runs, so publication and PR finalization have a branch to
 push.
 
+#### Which repository the dev branch is created in
+
+The branch scaffold, the git session guards (preflight and finalize) and the
+agent's commit/push/PR wind-down all run in the **caller's checked-out
+workspace** — the repository that triggered the run, at `$GITHUB_WORKSPACE` —
+never in the imported `.nebuko-engine` checkout that holds the engine's own
+source. That is what gives a cross-repo `uses: nebuko/nebuko/...` caller its
+`feature/issue-<n>-<slug>` branch, commits and PR in *its* repository. For a
+local (non-CI) run the workspace is the directory the engine was started in,
+falling back to the engine checkout when that directory is gone. The caller
+checkout must therefore be a git checkout with an `origin` remote and push
+credentials; the workflow's checkout step above provides both.
+
+Two roots are involved, and they are not the same directory (issue #1208).
+The agent's **code** — the `agent_script` entry point and the assembly it
+imports — always resolves from the imported `.nebuko-engine` checkout; only the
+git operations above anchor at the caller workspace.
+
+**Behaviour:** an entry point missing from the engine checkout raises
+`EngineAgentUnavailable` and the run falls back to the legacy subprocess seam
+(unchanged), while `GFA_REPO_ROOT` handed to the agent always names the caller
+workspace whenever one exists, so the wind-down's commit/push/PR lands there.
+
 ---
 
 ### Step 2: Check if nebuko Checkout is Needed
@@ -81,7 +104,7 @@ Determines whether the repository already has nebuko embedded. If the prompt fil
 **Input:** `needed` from Step 2.  
 **Output:** nebuko repository cloned at `.nebuko-cache/` (conditional).
 
-Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using `GH_PAT`. Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
+Only runs when `needed=true`. Clones `nebuko/nebuko` into `.nebuko-cache/` using the run's GitHub token (the App installation token by default, `GH_PAT` in PAT fallback mode). Provides scripts and prompts for repositories that don't embed nebuko directly. The orchestration engine resolves script locations from the embedded `engine/lib/` tree, falling back to the `.nebuko-cache/` clone.
 
 ---
 
@@ -208,9 +231,9 @@ Produces a consolidated markdown prompt file.
 
 ---
 
-### Step 14: Configure git to Use GH_PAT
+### Step 14: Configure git to Use the GitHub Token
 
-**Input:** `GH_PAT` secret.  
+**Input:** the run's GitHub token — the App installation token minted via the OIDC broker, or `GH_PAT` in PAT fallback mode.  
 **Output:** Git remote configured with PAT authentication.
 
 Updates the git remote URL to embed the PAT, allowing the agent to push branches and create PRs.
@@ -441,7 +464,7 @@ GitHub Event
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
 | `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |
-| `GH_PAT` | `secrets.GH_PAT` | (required) | GitHub token for API access |
+| `GH_PAT` | `secrets.GH_PAT` | (optional) | GitHub token for API access — PAT fallback only; App-mode runs mint an installation token instead |
 
 ### Output Variables (set during execution)
 

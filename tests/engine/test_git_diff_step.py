@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from config import load_workflow
+from nebuko.engine.lib.config import load_workflow
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_WORKFLOW = REPO_ROOT / ".nebuko" / "workflows" / "plan-dev-review-cmd.yaml"

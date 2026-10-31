@@ -102,8 +102,8 @@ def _seed_journal(run_dir: Path, history: Sequence[Mapping[str, Any]]) -> None:
 
 def _engine_for(fixture: Mapping[str, Any], run_dir: Path, monkeypatch) -> Engine:
     """Build the engine over the recorded payload with a run-dir-backed adapter."""
-    import event_normalizer
-    import resolve_config as resolve_config_package
+    import nebuko.engine.lib.event_normalizer as event_normalizer
+    import nebuko.engine.lib.resolve_config as resolve_config_package
 
     trigger = event_normalizer.normalize_trigger(fixture["payload"])
     adapter = LocalAdapter(run_dir, trigger=trigger)
@@ -166,7 +166,7 @@ def _legacy_caller(body: str) -> str:
 
 
 def _legacy_resolve(body: str, number: int) -> dict:
-    from resolve_config.resolve_config import resolve_config
+    from nebuko.engine.lib.resolve_config.resolve_config import resolve_config
 
     return resolve_config(
         trigger_body=body,
@@ -185,7 +185,7 @@ def _legacy_loop_verdict(resolved: Mapping[str, Any], body: str) -> dict:
     guard can be compared directly — ``test_loop_verdict_matches_the_legacy_replay``
     sweeps the branch space and fails loudly if either side drifts.
     """
-    from loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
+    from nebuko.engine.lib.loop_guard import check_same_agent_advance, detect_human_plus_agent_ping
 
     caller = _legacy_caller(body)
     task = resolved.get("TASK") or ""
@@ -214,7 +214,7 @@ def _legacy_guard(
     history: Sequence[Any],
 ) -> dict:
     """The job's loop-guard block (495-563) plus its circuit-breaker block (596-632)."""
-    from circuit_breaker import check_circuit_breaker
+    from nebuko.engine.lib.circuit_breaker import check_circuit_breaker
 
     verdict = _legacy_loop_verdict(resolved, body)
 

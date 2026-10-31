@@ -151,8 +151,8 @@ The table below maps each limit to the code or workflow that consumes it.
 
 | Limit | Affected Component | File / Location | Notes |
 |-------|-------------------|-----------------|-------|
-| 5,000 req/h rate limit (PAT) | All engine API calls | `engine/lib/github_client.py` (`GitHubTransport`) | Every `gh api` call funnels through one choke point that tracks `x-ratelimit-remaining`/`x-ratelimit-reset`. |
-| 1,000 req/h (GITHUB_TOKEN) | Dependency-install + marker `curl` steps | `.github/workflows/nebuko-workflow.yaml` | Engine steps use `GH_PAT` (5,000/h); some YAML steps still ride `GITHUB_TOKEN` (1,000/h) — unification pending. |
+| 5,000 req/h rate limit (PAT / App installation token) | All engine API calls | `engine/lib/github_client.py` (`GitHubTransport`) | Every `gh api` call funnels through one choke point that tracks `x-ratelimit-remaining`/`x-ratelimit-reset`. |
+| 1,000 req/h (GITHUB_TOKEN) | Dependency-install + marker `curl` steps | `.github/workflows/nebuko-workflow.yaml` | Engine steps use the run's GitHub token — an App installation token (5,000/h) or `GH_PAT` (5,000/h) in PAT fallback mode; some YAML steps still ride `GITHUB_TOKEN` (1,000/h) — unification pending. |
 | Content creation (80/min, 500/h) | Comment/issue writes | `GitHubTransport._pace` + backoff | Mutative calls are paced ≥1 s apart; secondary blocks are retried with jittered backoff. See ADR-0005 for the runs/hour budget. |
 | Comment body size (65,536 chars) | Multi-part message posting | `config/sub_domains/comment_size` (`CommentSizePolicy`) | Splits at 60,000 chars, up to 4 comment parts (issue #913). Safe. |
 | Max comments per issue (~30,000) | Long-running issues | N/A (structural) | Unlikely to be reached in practice. |

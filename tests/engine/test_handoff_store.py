@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_script.features.handoff_tool.handoff_document import HandoffDocument
-from agent_script.features.handoff_tool.handoff_store import (
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_document import HandoffDocument
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_store import (
     HANDOFF_RELATIVE_PATH,
     HandoffStore,
 )

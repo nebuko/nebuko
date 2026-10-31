@@ -3,7 +3,7 @@
 import unittest
 from types import SimpleNamespace
 
-from agent_script.features.run_agent.run_outcome import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
     classify_run,

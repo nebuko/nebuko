@@ -7,15 +7,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from build_output import _build_failure_summary, build_output
-from metrics_schema import Metrics
+from nebuko.engine.lib.metrics_schema import Metrics
 from openhands.sdk.event import MessageEvent
 from openhands.sdk.llm import Message
-from agent_script.features.run_agent.run_failure import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
     RESUME_COMMAND,
     RunFailure,
     RunFailureKind,
 )
-from agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
 
 
 def _failure_outcome(kind: RunFailureKind, summary: str) -> RunOutcome:
@@ -85,11 +85,7 @@ class TestBuildOutputFailure(unittest.TestCase):
             "The agent could not reach the LLM API provider.",
         )
         conv = _make_conversation(run_outcome=outcome)
-        with patch("build_output.ensure_pr") as ep:
-            result = build_output(
-                conv, Metrics(agent_role="dev"), None, prev_state=None
-            )
-        ep.assert_not_called()
+        result = build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
         # The terminal comment names the cause and the recovery command.
         self.assertIn("LLM API provider", result["final_message"])
         self.assertIn(RESUME_COMMAND, result["final_message"])
@@ -103,11 +99,7 @@ class TestBuildOutputFailure(unittest.TestCase):
         # exception) must still get an honest generic message + resume hint.
         outcome = RunOutcome(status=OutcomeStatus.FAILURE)
         conv = _make_conversation(run_outcome=outcome)
-        with patch("build_output.ensure_pr") as ep:
-            result = build_output(
-                conv, Metrics(agent_role="dev"), None, prev_state=None
-            )
-        ep.assert_not_called()
+        result = build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
         self.assertIn(RESUME_COMMAND, result["final_message"])
         self.assertNotIn("unreachable", result["final_message"].lower())
 
@@ -125,11 +117,7 @@ class TestBuildOutputFailure(unittest.TestCase):
         )
         outcome = _failure_outcome(RunFailureKind.UNKNOWN, "The run failed.")
         conv = _make_conversation(events=[msg], run_outcome=outcome)
-        with patch("build_output.ensure_pr") as ep:
-            result = build_output(
-                conv, Metrics(agent_role="dev"), None, prev_state=None
-            )
-        ep.assert_not_called()
+        result = build_output(conv, Metrics(agent_role="dev"), None, prev_state=None)
         self.assertIn("The run failed.", result["final_message"])
         self.assertIn(RESUME_COMMAND, result["final_message"])
         state = result["workflow_state"]

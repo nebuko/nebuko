@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nebuko.engine.models import CommentEntry, Trigger
-from workflow_state.workflow_state import WorkflowState, to_git_comment
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState, to_git_comment
 
 CREATED_AT = "2026-10-01T07:47:47Z"
 BOT_AGENT_MARKER = "<!-- bot-agent-dev -->"
@@ -25,7 +25,7 @@ def _state_body(step: str) -> str:
 
 class TestEventNormalizer:
     def test_issue_comment_payload_becomes_a_trigger(self):
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         trigger = normalize_trigger(
             {
@@ -43,7 +43,7 @@ class TestEventNormalizer:
         )
 
     def test_issue_payload_becomes_a_trigger(self):
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         trigger = normalize_trigger(
             {"issue": {"number": 590, "body": "make it so", "user": {"login": "olivier-norture"}}}
@@ -57,7 +57,7 @@ class TestEventNormalizer:
         )
 
     def test_pull_request_review_comment_payload_becomes_a_trigger(self):
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         trigger = normalize_trigger(
             {
@@ -74,7 +74,7 @@ class TestEventNormalizer:
         )
 
     def test_workflow_payload_is_honoured_not_mislabelled_as_an_issue(self):
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         trigger = normalize_trigger(
             {"inputs": {"prompt_body": "external caller"}, "sender": {"login": "ci"}}
@@ -88,7 +88,7 @@ class TestEventNormalizer:
         )
 
     def test_unknown_payload_raises_instead_of_fabricating_an_issue(self):
-        from event_normalizer import normalize_trigger
+        from nebuko.engine.lib.event_normalizer import normalize_trigger
 
         with pytest.raises(ValueError):
             normalize_trigger({"action": "created"})
@@ -96,7 +96,7 @@ class TestEventNormalizer:
 
 class TestFetchState:
     def test_extract_state_reads_the_latest_recorded_state(self):
-        from resolve_config.features.fetch_state.fetch_state import extract_state
+        from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import extract_state
 
         state = extract_state([_entry(_state_body("analyze")), _entry(_state_body("stub"))])
 
@@ -104,12 +104,12 @@ class TestFetchState:
         assert state.step == "stub"
 
     def test_extract_state_returns_none_without_a_state_block(self):
-        from resolve_config.features.fetch_state.fetch_state import extract_state
+        from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import extract_state
 
         assert extract_state([_entry("just a comment")]) is None
 
     def test_fetch_state_uses_the_injected_history_provider(self):
-        from resolve_config.features.fetch_state.fetch_state import fetch_state
+        from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import fetch_state
 
         calls = []
 
@@ -125,7 +125,7 @@ class TestFetchState:
 
 class TestLoopGuardSeam:
     def test_detects_a_same_agent_loop(self):
-        from loop_guard import check_loop_guard
+        from nebuko.engine.lib.loop_guard import check_loop_guard
 
         verdict = check_loop_guard(
             f"<!-- bot-workflow-terminal -->\n{BOT_AGENT_MARKER}\n@@dev continue",
@@ -135,7 +135,7 @@ class TestLoopGuardSeam:
         assert verdict["SKIP_AGENT"] == "true"
 
     def test_allows_a_cross_agent_call(self):
-        from loop_guard import check_loop_guard
+        from nebuko.engine.lib.loop_guard import check_loop_guard
 
         verdict = check_loop_guard(
             "<!-- bot-workflow-terminal -->\n<!-- bot-agent-architect -->\n@@dev implement",
@@ -145,7 +145,7 @@ class TestLoopGuardSeam:
         assert verdict["SKIP_AGENT"] == "false"
 
     def test_accepts_injected_history(self):
-        from loop_guard import check_loop_guard
+        from nebuko.engine.lib.loop_guard import check_loop_guard
 
         verdict = check_loop_guard("@@dev fix it", "dev", history=[_entry("history")])
 
@@ -156,7 +156,7 @@ class TestCircuitBreakerSeam:
     # Each agent invocation leaves two bot markers (trigger + response), so
     # ``AGENT_CALLS == bot_markers // 2`` (see circuit_breaker.count_bot_markers).
     def test_trips_on_injected_history_at_the_threshold(self):
-        from circuit_breaker import check_circuit_breaker
+        from nebuko.engine.lib.circuit_breaker import check_circuit_breaker
 
         history = [_entry(f"{BOT_AGENT_MARKER}\nintegration {index}") for index in range(6)]
 
@@ -166,7 +166,7 @@ class TestCircuitBreakerSeam:
         assert result["AGENT_CALLS"] == "3"
 
     def test_stays_closed_below_the_threshold(self):
-        from circuit_breaker import check_circuit_breaker
+        from nebuko.engine.lib.circuit_breaker import check_circuit_breaker
 
         result = check_circuit_breaker(
             590, threshold=8, dry_run=True, history=[_entry(f"{BOT_AGENT_MARKER}\nnothing")]
@@ -176,9 +176,9 @@ class TestCircuitBreakerSeam:
         assert result["AGENT_CALLS"] == "0"
 
     def test_legacy_default_still_reads_the_github_api(self, monkeypatch):
-        from circuit_breaker import check_circuit_breaker
+        from nebuko.engine.lib.circuit_breaker import check_circuit_breaker
 
-        monkeypatch.setattr("circuit_breaker.get_issue_comments", lambda *a, **k: [])
+        monkeypatch.setattr("nebuko.engine.lib.circuit_breaker.get_issue_comments", lambda *a, **k: [])
 
         result = check_circuit_breaker(590, threshold=3)
 
@@ -187,17 +187,17 @@ class TestCircuitBreakerSeam:
 
 class TestPrepareCommentSeam:
     def test_select_posted_body_prefers_the_latest_answer(self):
-        from prepare_comment import select_posted_body
+        from nebuko.engine.lib.prepare_comment import select_posted_body
 
         assert select_posted_body("*Dev answer*", "finish note") == "*Dev answer*"
 
     def test_select_posted_body_falls_back_to_the_final_message(self):
-        from prepare_comment import select_posted_body
+        from nebuko.engine.lib.prepare_comment import select_posted_body
 
         assert select_posted_body("", "finish note") == "finish note"
 
     def test_prepare_comment_hands_the_body_to_the_injected_poster(self, monkeypatch, tmp_path):
-        from prepare_comment import prepare_comment
+        from nebuko.engine.lib.prepare_comment import prepare_comment
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("TRIGGER_AUTHOR", raising=False)

@@ -15,13 +15,12 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import StepRef  # noqa: E402
-from workflow_state import HistoryEntry, TurnOutcome, WorkflowState  # noqa: E402
-from workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec  # noqa: E402
-from workflow_state.sub_domains.gate_decision import GateDecision  # noqa: E402
-from workflow_state.workflow_state import STATE_SCHEMA_VERSION  # noqa: E402
+from nebuko.engine.lib.config import StepRef
+from nebuko.engine.lib.workflow_state import HistoryEntry, TurnOutcome, WorkflowState
+from nebuko.engine.lib.workflow_state.state_codec import PrevStateLoad, WorkflowStateCodec
+from nebuko.engine.lib.workflow_state.sub_domains.gate_decision import GateDecision
+from nebuko.engine.lib.workflow_state.workflow_state import STATE_SCHEMA_VERSION
 
 HANDOFF_FILE = "prev_workflow_state.json"
 

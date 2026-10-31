@@ -11,23 +11,23 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_script.features.ensure_pr.ensure_pr import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import (
     ENGINE_OWNED_PATHS,
     EnsurePrResult,
-    PublicationState,
     _default_base,
     _find_pr_for_branch,
     _issue_number_from_env,
+    _dirty_paths,
     _needs_push,
     _prepare_publish,
     _repo_root,
     _run_gh,
     _run_git,
-    check_publication,
     ensure_pr,
+    pr_title,
 )
-from agent_script.features.ensure_pr.ensure_pr import PublishSplit
-from agent_script.features.ensure_pr.workflow_patch import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import PublishSplit
+from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
     PATCH_FILENAME,
     WORKFLOW_DIR,
 )
@@ -113,7 +113,7 @@ class TestHelpers(unittest.TestCase):
                 return '"develop"'
             return ""
 
-        with patch("agent_script.features.ensure_pr.ensure_pr._run_gh",
+        with patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
                    side_effect=gh_out) as gh_mock:
             try:
                 self.assertEqual(_default_base(), "develop")
@@ -130,7 +130,7 @@ class TestHelpers(unittest.TestCase):
     def test_default_base_falls_back_to_main_on_api_failure(self):
         saved = os.environ.pop("GITHUB_BASE_REF", None)
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=RuntimeError("gh api failed"),
         ):
             try:
@@ -146,7 +146,7 @@ class TestHelpers(unittest.TestCase):
 
         saved = os.environ.pop("GITHUB_BASE_REF", None)
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=TimeoutExpired(cmd=["gh", "api"], timeout=120),
         ):
             try:
@@ -157,7 +157,7 @@ class TestHelpers(unittest.TestCase):
 
     def test_find_pr_for_branch_returns_url(self):
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             side_effect=_default_gh_response,
         ):
             url = _find_pr_for_branch("feature/x")
@@ -165,7 +165,7 @@ class TestHelpers(unittest.TestCase):
 
     def test_find_pr_for_branch_none_when_empty(self):
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_gh",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
             return_value="",
         ):
             self.assertIsNone(_find_pr_for_branch("feature/x"))
@@ -223,6 +223,16 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(run_mock.call_args.kwargs["cwd"], "/explicit")
 
 
+class TestDirtyPaths(unittest.TestCase):
+    def test_engine_owned_handoff_path_is_never_agent_work(self):
+        self.assertIn(".nebuko/handoff.md", ENGINE_OWNED_PATHS)
+        with patch(
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
+            return_value=_porcelain_z("?? .nebuko/handoff.md\n M src/a.py"),
+        ):
+            self.assertEqual(_dirty_paths(), ("src/a.py",))
+
+
 class TestEnsurePr(unittest.TestCase):
     """End-to-end behaviour of ensure_pr with subprocess mocked out."""
 
@@ -235,11 +245,11 @@ class TestEnsurePr(unittest.TestCase):
 
         return (
             patch(
-                "agent_script.features.ensure_pr.ensure_pr._run_git",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
                 side_effect=git_side_effect,
             ),
             patch(
-                "agent_script.features.ensure_pr.ensure_pr._run_gh",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
                 side_effect=gh_out if gh_out is not None else _default_gh_response,
             ),
         )
@@ -363,10 +373,10 @@ class TestEnsurePr(unittest.TestCase):
 
         env = {"TARGET_NUMBER": "805", "GITHUB_BASE_REF": ""}
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_git",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git",
             side_effect=_default_git_response,
         ), patch(
-            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
             side_effect=factory,
         ), patch.dict("os.environ", env):
             result = ensure_pr()
@@ -397,7 +407,7 @@ class TestEnsurePr(unittest.TestCase):
                 return _FailedResult()
 
         with patch(
-            "agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport",
             return_value=_FailTransport(),
         ):
             with self.assertRaises(RuntimeError):
@@ -434,6 +444,7 @@ def _patch_git(
     patch="diff --git a/x b/x\n",
     on_push=None,
     after_rebuild=None,
+    unmerged="",
 ):
     """Git fake for the path-split publication flow.
 
@@ -467,6 +478,8 @@ def _patch_git(
             return _porcelain_z(status)
         if joined.startswith("diff --name-only"):
             return committed
+        if joined.startswith("ls-files --unmerged"):
+            return unmerged
         if joined.startswith("rev-list --count @{u}..HEAD"):
             return "0"
         if joined.startswith("rev-list --count"):
@@ -544,13 +557,13 @@ class _GhRecorder:
 def _patch_ensure_pr(git, gh, env=None, artifact_dir=None):
     """Context manager running ``ensure_pr`` against the patch-flow fakes."""
     patchers = [
-        patch("agent_script.features.ensure_pr.ensure_pr._run_git", git),
-        patch("agent_script.features.ensure_pr.ensure_pr.GitHubTransport", gh.factory),
+        patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git", git),
+        patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.GitHubTransport", gh.factory),
     ]
     if artifact_dir is not None:
         patchers.append(
             patch(
-                "agent_script.features.ensure_pr.workflow_patch.PATCH_ARTIFACT_DIR",
+                "nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch.PATCH_ARTIFACT_DIR",
                 artifact_dir,
             )
         )
@@ -762,247 +775,113 @@ class TestWorkflowPatchPublication(unittest.TestCase):
         self.assertFalse(any(mutative for _, mutative in gh.recorded))
 
 
-class TestCheckPublicationWorkflowPaths(unittest.TestCase):
-    """The guard classifies workflow dirtiness as patch-only, not dirty_tree."""
+class TestPublicationNaming(unittest.TestCase):
+    """The commit and the PR are named after the issue, never "WIP checkpoint"."""
 
-    def test_workflow_rename_reports_both_endpoints_as_workflow_paths(self):
-        """A rename is two ``-z`` fields; the origin must not be a phantom."""
-        state = self._check(
-            _publication_git(
-                status=_porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
-                upstream_count="0",
-            )
+    def _run(self, *, env, status=f" M {_CODE}\n", issue_view="", **kwargs):
+        git = _patch_git(status=status, **kwargs)
+        gh = _GhRecorder()
+        original_call = gh.call
+
+        def call(args, **kw):
+            if args[:2] == ["issue", "view"]:
+                gh.recorded.append((list(args), kw.get("mutative", False)))
+
+                class _R:
+                    ok = True
+                    status = 200
+                    detail = ""
+                    payload = issue_view
+
+                return _R()
+            return original_call(args, **kw)
+
+        gh.call = call
+        with _patch_ensure_pr(git, gh, env):
+            result = ensure_pr(**self.ensure_kwargs)
+        return result, git, gh
+
+    def setUp(self):
+        self.ensure_kwargs = {}
+
+    @staticmethod
+    def _commit_message(git):
+        commits = [c for c in git.calls if "commit" in c]
+        assert len(commits) == 1, commits
+        return commits[0][commits[0].index("-m") + 1]
+
+    @staticmethod
+    def _created_pr(gh):
+        creates = [args for args, _ in gh.recorded if args[:2] == ["pr", "create"]]
+        assert len(creates) == 1, creates
+        args = creates[0]
+        return args[args.index("--title") + 1], args[args.index("--body") + 1]
+
+    def test_the_issue_title_names_the_commit_and_the_pr(self):
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Deliver workflow patches"}
         )
-        self.assertEqual(state.reasons, ("workflow_patch",))
-        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
-        self.assertEqual(state.dirty_paths, state.workflow_paths)
-        # The origin path must never come out with its leading character eaten.
-        self.assertNotIn("ithub/workflows/old-checks.yaml", state.dirty_paths)
 
-    def test_workflow_rename_mixed_with_plain_work(self):
-        state = self._check(
-            _publication_git(
-                status=_porcelain_z(f" M {_CODE}")
-                + _porcelain_z_renames(("R ", _WORKFLOW, _WORKFLOW_ORIGIN)),
-                upstream_count="0",
-            )
+        self.assertFalse(result.error, result.message)
+        title, body = self._created_pr(gh)
+        self.assertEqual(title, "Deliver workflow patches (#1080)")
+        self.assertNotIn("WIP", title)
+        self.assertNotIn("time budget", body)
+        message = self._commit_message(git)
+        self.assertTrue(message.startswith("Deliver workflow patches (#1080)"), message)
+        self.assertNotIn("WIP", message)
+
+    def test_the_issue_title_is_looked_up_when_not_given(self):
+        result, _, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": ""},
+            issue_view="Title from GitHub",
         )
-        self.assertIn("dirty_tree", state.reasons)
-        self.assertIn("workflow_patch", state.reasons)
-        self.assertEqual(set(state.workflow_paths), {_WORKFLOW, _WORKFLOW_ORIGIN})
-        self.assertIn(_CODE, state.dirty_paths)
 
-    def test_plain_rename_leaves_the_workflow_split_empty(self):
-        state = self._check(
-            _publication_git(
-                status=_porcelain_z_renames(("R ", _CODE, "src/thing.py")),
-                upstream_count="0",
-            )
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "Title from GitHub (#1080)")
+
+    def test_the_branch_names_the_pr_without_an_issue_title(self):
+        result, _, gh = self._run(env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": ""})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "feature/issue-1080")
+
+    def test_an_explicit_title_wins(self):
+        self.ensure_kwargs = {"issue_title": "Explicit"}
+        result, _, gh = self._run(env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Env"})
+
+        self.assertFalse(result.error, result.message)
+        self.assertEqual(self._created_pr(gh)[0], "Explicit (#1080)")
+
+    def test_an_interrupted_run_says_so_in_the_body_only(self):
+        self.ensure_kwargs = {"interrupted": True}
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "Deliver workflow patches"}
         )
-        self.assertEqual(state.workflow_paths, ())
-        self.assertEqual(set(state.dirty_paths), {_CODE, "src/thing.py"})
 
-    def _check(self, git, pr="https://github.com/acme/repo/pull/7"):
-        with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_git", git
-        ), patch(
-            "agent_script.features.ensure_pr.ensure_pr._find_pr_for_branch",
-            return_value=pr,
-        ):
-            return check_publication()
+        self.assertFalse(result.error, result.message)
+        title, body = self._created_pr(gh)
+        self.assertEqual(title, "Deliver workflow patches (#1080)")
+        self.assertIn("interrupted", body)
+        self.assertIn("interrupted", self._commit_message(git))
 
-    def test_dirty_workflow_file_is_a_workflow_patch_not_dirty_tree(self):
-        state = self._check(
-            _publication_git(status=f" M {_WORKFLOW}", upstream_count="0")
+    def test_unresolved_conflicts_are_never_published(self):
+        result, git, gh = self._run(
+            env={"TARGET_NUMBER": "1080", "ISSUE_TITLE": "T"},
+            unmerged="100644 abc 1\tsrc/a.py\n100644 def 2\tsrc/a.py\n",
         )
-        self.assertEqual(state.reasons, ("workflow_patch",))
-        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
-        # Unchanged semantics: all non-engine dirty paths (issue #1080).
-        self.assertEqual(state.dirty_paths, (_WORKFLOW,))
-        self.assertFalse(state.published)
 
-    def test_dirty_workflow_file_does_not_hide_dirty_code(self):
-        state = self._check(
-            _publication_git(
-                status=f" M {_CODE}\n M {_WORKFLOW}", upstream_count="0"
-            )
-        )
-        self.assertIn("dirty_tree", state.reasons)
-        self.assertIn("workflow_patch", state.reasons)
-        self.assertEqual(state.dirty_paths, (_CODE, _WORKFLOW))
-        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
+        self.assertTrue(result.error)
+        self.assertIn("src/a.py", result.message)
+        self.assertFalse(any("commit" in c for c in git.calls))
+        self.assertFalse(any(c and c[0] == "push" for c in git.calls))
+        self.assertFalse(any(args[:2] == ["pr", "create"] for args, _ in gh.recorded))
 
-    def test_workflow_paths_in_unpushed_commits_are_patch_only(self):
-        state = self._check(
-            _publication_git(upstream_count="1", committed_paths=_WORKFLOW)
-        )
-        self.assertEqual(state.reasons, ("workflow_patch",))
-        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
-        self.assertFalse(state.published)
-
-    def test_mixed_unpushed_commits_keep_unpushed_commits(self):
-        state = self._check(
-            _publication_git(
-                upstream_count="1", committed_paths=f"{_CODE}\n{_WORKFLOW}"
-            )
-        )
-        self.assertIn("unpushed_commits", state.reasons)
-        self.assertIn("workflow_patch", state.reasons)
-        self.assertEqual(state.workflow_paths, (_WORKFLOW,))
-
-
-#: Paths reported as changed by unpushed commits in the check-publication
-#: fakes — plain work by default, so ``unpushed_commits`` fires.
-_PLAIN_COMMIT_PATHS = "src/nebuko/engine/lib/thing.py"
-
-
-def _publication_git(
-    status="",
-    upstream_count=None,
-    base_count="0",
-    branch="feature/x",
-    committed_paths=_PLAIN_COMMIT_PATHS,
-):
-    """Simulate git for ``check_publication`` scenarios.
-
-    ``upstream_count`` is None for a branch with no upstream (git errors);
-    the base-branch comparison then answers with ``base_count``.
-    ``committed_paths`` is what the unpushed commits touched (``git diff
-    --name-only``) — a ``.github/workflows/`` path makes the delta
-    patch-only.
-    """
-
-    def run(args, **kwargs):
-        joined = " ".join(args)
-        if joined == "remote":
-            return "origin"
-        if joined.startswith("rev-parse --abbrev-ref HEAD"):
-            return branch
-        if joined.startswith("rev-parse --verify"):
-            return "sha1"
-        if joined.startswith("status --porcelain"):
-            return _porcelain_z(status)
-        if joined.startswith("diff --name-only"):
-            return committed_paths
-        if joined.startswith("rev-list --count @{u}..HEAD"):
-            if upstream_count is None:
-                raise RuntimeError("no upstream configured")
-            return upstream_count
-        if joined.startswith("rev-list --count"):
-            return base_count
-        raise AssertionError(f"unexpected git call: {joined}")
-
-    return run
-
-
-class TestCheckPublication(unittest.TestCase):
-    """The publication check behind the approved-write guard."""
-
-    #: Sentinel for "the PR lookup raises".
-    _RAISES = object()
-
-    def _check(self, git, pr="https://github.com/acme/repo/pull/7"):
-        """Run the check; ``pr`` is the PR-lookup result (None = no PR)."""
-        with patch(
-            "agent_script.features.ensure_pr.ensure_pr._run_git", side_effect=git
-        ), patch(
-            "agent_script.features.ensure_pr.ensure_pr._find_pr_for_branch",
-            **(
-                {"side_effect": RuntimeError("gh pr list failed")}
-                if pr is self._RAISES
-                else {"return_value": pr}
-            ),
-        ), patch(
-            "agent_script.features.ensure_pr.ensure_pr._default_base",
-            return_value="main",
-        ):
-            return check_publication()
-
-    def test_clean_tree_and_pushed_branch_with_pr_is_published(self):
-        state = self._check(_publication_git(upstream_count="0"))
-        self.assertTrue(state.published)
-        self.assertEqual(state.reasons, ())
-        self.assertEqual(state.skip_reason, "")
-
-    def test_dirty_tree_counts_as_unpublished(self):
-        state = self._check(
-            _publication_git(status=" M logo/nebuko-logo.py", upstream_count="0")
-        )
-        self.assertFalse(state.published)
-        self.assertEqual(state.reasons, ("dirty_tree",))
-        self.assertEqual(state.dirty_paths, ("logo/nebuko-logo.py",))
-
-    def test_engine_owned_handoff_path_never_counts_as_dirty(self):
-        self.assertIn(".nebuko/handoff.md", ENGINE_OWNED_PATHS)
-        state = self._check(
-            _publication_git(status="?? .nebuko/handoff.md", upstream_count="0")
-        )
-        self.assertTrue(state.published)
-        self.assertEqual(state.dirty_paths, ())
-
-    def test_untracked_work_is_dirty(self):
-        # A file the agent created is exactly "uncommitted work"; git already
-        # hides gitignored files from --porcelain.
-        state = self._check(
-            _publication_git(status="?? new_module.py", upstream_count="0")
-        )
-        self.assertEqual(state.dirty_paths, ("new_module.py",))
-
-    def test_unpushed_commits_count_as_unpublished(self):
-        state = self._check(_publication_git(upstream_count="2"))
-        self.assertFalse(state.published)
-        self.assertIn("unpushed_commits", state.reasons)
-        self.assertNotIn("missing_pr", state.reasons)
-
-    def test_branch_never_pushed_counts_via_the_base_comparison(self):
-        state = self._check(
-            _publication_git(upstream_count=None, base_count="3"), pr=""
-        )
-        self.assertIn("unpushed_commits", state.reasons)
-
-    def test_never_pushed_branch_with_nothing_on_it_is_clean(self):
-        # Nothing ahead of the base and no PR: an empty WIP PR would be noise,
-        # so this is deliberately not "missing_pr".
-        state = self._check(
-            _publication_git(upstream_count=None, base_count="0"), pr=""
-        )
-        self.assertTrue(state.published)
-
-    def test_branch_work_without_a_pr_is_unpublished(self):
-        state = self._check(_publication_git(upstream_count="1"), pr="")
-        self.assertFalse(state.published)
-        self.assertEqual(state.reasons, ("unpushed_commits", "missing_pr"))
-
-    def test_no_remote_skips(self):
-        def git(args, **kwargs):
-            if " ".join(args) == "remote":
-                return ""
-            raise AssertionError("must not probe further without a remote")
-
-        state = self._check(git)
-        self.assertTrue(state.published)
-        self.assertEqual(state.skip_reason, "no git remote")
-
-    def test_detached_head_skips(self):
-        state = self._check(_publication_git(branch="HEAD"))
-        self.assertTrue(state.published)
-        self.assertEqual(state.skip_reason, "detached HEAD")
-
-    def test_pr_lookup_failure_degrades_to_a_skip(self):
-        state = self._check(_publication_git(upstream_count="1"), pr=self._RAISES)
-        self.assertEqual(state.skip_reason, "pr lookup failed")
-
-    def test_never_raises(self):
-        def git(args, **kwargs):
-            raise RuntimeError("git exploded")
-
-        state = self._check(git)
-        self.assertTrue(state.published)
-        self.assertTrue(state.skip_reason)
-
-    def test_state_is_immutable(self):
-        with self.assertRaises(Exception):
-            PublicationState(published=True).published = False
+    def test_pr_title_helper(self):
+        self.assertEqual(pr_title(1153, "Prevent multiple branches"),
+                         "Prevent multiple branches (#1153)")
+        self.assertEqual(pr_title(None, "No number"), "No number")
+        self.assertEqual(pr_title(7, "  "), "")
 
 
 class TestRealGitTokenBoundary(unittest.TestCase):
@@ -1020,7 +899,7 @@ class TestRealGitTokenBoundary(unittest.TestCase):
         ).stdout
 
     def test_the_pushed_commit_has_no_workflow_path(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         workflow = ".github/workflows/internal-tests.yaml"
         code = "src/thing.py"
@@ -1142,7 +1021,7 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
         ).stdout
 
     def test_new_workflow_file_is_patched_committed_and_deleted(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         workflow = ".github/workflows/new-pipeline.yaml"
 
@@ -1223,6 +1102,18 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
                 + ") instead of only delivering it as a comment/artifact",
             )
 
+            # ... and pushed with a PR, so a human can fetch the branch and
+            # apply it (degraded delivery): the remote branch carries the
+            # patch file, never the workflow file.
+            self.assertTrue(result.pushed)
+            self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/1")
+            branch = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=work).strip()
+            pushed = self._git(
+                "ls-tree", "-r", "--name-only", branch, cwd=remote
+            ).split()
+            self.assertIn("nebuko-task-logs/workflow-patch.diff", pushed)
+            self.assertNotIn(workflow, pushed)
+
 
 class TestRealGitMissingLocalBase(unittest.TestCase):
     """#1058/#1084: a checkout with no local base branch must not look clean.
@@ -1302,8 +1193,8 @@ class TestRealGitMissingLocalBase(unittest.TestCase):
 
         return _Transport()
 
-    def test_guard_and_ensure_pr_keep_the_workflow_path_out_of_the_push(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+    def test_ensure_pr_keeps_the_committed_workflow_path_out_of_the_push(self):
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         with tempfile.TemporaryDirectory() as root:
             remote, work = self._repo_without_local_main(root)
@@ -1320,15 +1211,6 @@ class TestRealGitMissingLocalBase(unittest.TestCase):
                 {"TARGET_NUMBER": "1058", "GITHUB_REPOSITORY": "acme/repo"},
                 clear=False,
             ):
-                state = mod.check_publication()
-
-                # The guard's job: the committed workflow path is patch-only,
-                # never silently "clean".
-                self.assertFalse(state.published, state.skip_reason)
-                self.assertIn("workflow_patch", state.reasons)
-                self.assertEqual(state.workflow_paths, (self.WORKFLOW,))
-                self.assertEqual(state.dirty_paths, ())
-
                 result = mod.ensure_pr()
                 self.assertFalse(result.error, result.message)
 
@@ -1347,7 +1229,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
     """Unit-level contract of the shared base-ref resolver and the guard."""
 
     def test_resolve_base_ref_prefers_the_remote_tracking_ref(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         calls: list[str] = []
 
@@ -1360,7 +1242,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
         self.assertEqual(calls, ["rev-parse --verify origin/main^{commit}"])
 
     def test_resolve_base_ref_falls_back_then_raises(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         seen: list[str] = []
 
@@ -1386,7 +1268,7 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
                 mod._resolve_base_ref("main", "origin")
 
     def test_unpushed_commit_paths_raises_when_the_diff_fails(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
 
         def git(args, **kwargs):
             raise RuntimeError("fatal: ambiguous argument 'main'")
@@ -1394,28 +1276,6 @@ class TestRealGitBaseRefResolution(unittest.TestCase):
         with patch.object(mod, "_run_git", git):
             with self.assertRaises(RuntimeError):
                 mod._unpushed_commit_paths("main", "feature/x")
-
-    def test_check_publication_is_unpublished_when_inspection_fails(self):
-        from agent_script.features.ensure_pr import ensure_pr as mod
-
-        def git(args, **kwargs):
-            joined = " ".join(args)
-            if joined == "remote":
-                return "origin"
-            if joined.startswith("rev-parse --abbrev-ref HEAD"):
-                return "feature/x"
-            if joined.startswith("status --porcelain"):
-                return ""
-            raise RuntimeError("fatal: ambiguous argument 'main'")
-
-        with patch.object(mod, "_run_git", git), patch.object(
-            mod, "_default_base", return_value="main"
-        ):
-            state = mod.check_publication()
-        self.assertFalse(state.published)
-        self.assertEqual(state.skip_reason, "")
-        self.assertIn("unpushed_commits", state.reasons)
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -1438,7 +1298,7 @@ class TestCommittedOnlyPublication(unittest.TestCase):
 
     def test_given_clean_tree_with_one_unpushed_plain_commit_when_preparing_publish_then_committed_plain_paths_are_reported(self):
         git = self._git()
-        with patch("agent_script.features.ensure_pr.ensure_pr._run_git", git):
+        with patch("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_git", git):
             split = _prepare_publish("origin/main", "feature/issue-1180", "origin/main")
         self.assertEqual(
             split,

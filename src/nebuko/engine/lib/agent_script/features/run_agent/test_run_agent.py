@@ -11,8 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from openhands.sdk.llm.exceptions import LLMServiceUnavailableError
 
-from agent_script.features.ensure_pr.ensure_pr import PublicationState
-from agent_script.features.run_agent.run_agent import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
     _SYSTEM_PROMPT,
     _build_mcp_servers,
     _discard_token,
@@ -21,20 +20,12 @@ from agent_script.features.run_agent.run_agent import (
     _run_supervised,
     run_agent,
 )
-from agent_script.features.run_agent.run_failure import RunFailureKind
-from agent_script.features.run_agent.run_outcome import (
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailureKind
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
 )
-from agent_script.features.run_agent.run_watchdog import RunWatchdog
-
-
-def _clean() -> PublicationState:
-    return PublicationState(published=True)
-
-
-def _dirty() -> PublicationState:
-    return PublicationState(published=False, reasons=("dirty_tree",))
+from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
 
 # SDK registry sections the static prompt used to carry. Issue #943 removes all
@@ -96,19 +87,19 @@ class TestPerformWindDown(unittest.TestCase):
     def test_second_budget_trip_reports_incomplete(self):
         convo = _make_conversation("paused")
         real_supervised = __import__(
-            "agent_script.features.run_agent.run_agent", fromlist=["x"]
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent", fromlist=["x"]
         )._run_supervised
 
         def fake_supervised(c, budget_s, label):
             # Simulate the wind-down budget also tripping.
-            wd = __import__("agent_script.features.run_agent.run_watchdog", fromlist=["x"]).RunWatchdog(
+            wd = __import__("nebuko.engine.lib.agent_script.features.run_agent.run_watchdog", fromlist=["x"]).RunWatchdog(
                 50.0, lambda: None
             )
             wd.fired = True
             return wd, None
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ):
             budget = SimpleNamespace(wind_down_timeout_s=60.0)
@@ -120,10 +111,10 @@ class TestPerformWindDown(unittest.TestCase):
 class TestRunAgentIntegration(unittest.TestCase):
     """Full run_agent flow with a mocked Conversation factory."""
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_success_path_no_wind_down(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -133,7 +124,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo = _make_conversation("finished")
         mock_conversation_cls.return_value = convo
 
-        with patch("agent_script.features.run_agent.run_agent.build_condenser", return_value=None):
+        with patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser", return_value=None):
             result = run_agent(llm_config={}, prompt="do the thing")
         self.assertIs(result, convo)
         self.assertIsInstance(convo.run_outcome, RunOutcome)
@@ -148,10 +139,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         for call in convo.send_message.call_args_list:
             self.assertNotIn("SOFT TIMEOUT", call.args[0])
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_streaming_token_sink_wired(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -162,7 +153,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         mock_conversation_cls.return_value = _make_conversation("finished")
 
         with patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -174,10 +165,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIs(callbacks[0], _discard_token)
         self.assertEqual(callbacks[1].__name__, "on_token")
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_watchdog_trip_triggers_wind_down(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -187,7 +178,7 @@ class TestRunAgentIntegration(unittest.TestCase):
         main_convo = _make_conversation("paused")
         mock_conversation_cls.return_value = main_convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         calls = {"n": 0}
 
@@ -202,10 +193,10 @@ class TestRunAgentIntegration(unittest.TestCase):
             return RunWatchdog(50.0, lambda: None), None
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             result = run_agent(llm_config={}, prompt="do the thing")
@@ -225,10 +216,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         # No recursion: main + wind-down passes, plus one per recall pass.
         self.assertEqual(calls["n"], 2 + recalls)
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_main_run_crash_is_failure_not_success(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -242,15 +233,15 @@ class TestRunAgentIntegration(unittest.TestCase):
 
         def fake_supervised(c, budget_s, label):
             wd = __import__(
-                "agent_script.features.run_agent.run_watchdog", fromlist=["x"]
+                "nebuko.engine.lib.agent_script.features.run_agent.run_watchdog", fromlist=["x"]
             ).RunWatchdog(50.0, lambda: None)
             return wd, RuntimeError("llm exploded")
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             result = run_agent(llm_config={}, prompt="do the thing")
@@ -259,10 +250,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         # No wind-down on a crash — only the original prompt is sent.
         self.assertEqual(convo.send_message.call_count, 1)
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_unreachable_provider_failure_is_modelled_on_outcome(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -277,17 +268,17 @@ class TestRunAgentIntegration(unittest.TestCase):
 
         def fake_supervised(c, budget_s, label):
             wd = __import__(
-                "agent_script.features.run_agent.run_watchdog", fromlist=["x"]
+                "nebuko.engine.lib.agent_script.features.run_agent.run_watchdog", fromlist=["x"]
             ).RunWatchdog(50.0, lambda: None)
             return wd, LLMServiceUnavailableError(
                 "Cannot connect to host 192.168.1.64:31728"
             )
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -297,10 +288,10 @@ class TestRunAgentIntegration(unittest.TestCase):
             convo.run_outcome.failure.kind, RunFailureKind.LLM_UNREACHABLE
         )
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_recall_fires_records_pre_recall_event_offset(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -314,20 +305,20 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(5)]
         mock_conversation_cls.return_value = convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         # Both the main pass and the recall pass complete within budget.
         def fake_supervised(c, budget_s, label):
             return RunWatchdog(50.0, lambda: None), None
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             side_effect=fake_supervised,
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ), patch(
-            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.has_dispatch_decision",
             # No decision at end of main run (recall fires), then the model
             # supplies it on the recall turn (second check stops the loop).
             side_effect=[False, True],
@@ -343,10 +334,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         # first engine-injected recall event.
         self.assertEqual(convo.run_outcome.dispatch_recall_event_offset, 5)
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_no_recall_keeps_event_offset_none(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -360,16 +351,16 @@ class TestRunAgentIntegration(unittest.TestCase):
         convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(3)]
         mock_conversation_cls.return_value = convo
 
-        from agent_script.features.run_agent.run_watchdog import RunWatchdog
+        from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
         with patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent._run_supervised",
             return_value=(RunWatchdog(50.0, lambda: None), None),
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ), patch(
-            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.has_dispatch_decision",
             return_value=True,
         ):
             result = run_agent(
@@ -382,158 +373,13 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertIsNone(convo.run_outcome.dispatch_recall_event_offset)
 
 
-class TestPublicationGuardWiring(unittest.TestCase):
-    """The approved-write publication guard in ``run_agent``.
-
-    A step that finalises approved with unpublished work must be recalled and,
-    failing that, checkpointed by ``ensure_pr`` — never silently left with no
-    PR (run 39622244543).
-    """
-
-    def _run(
-        self,
-        *,
-        tools=("file_editor", "terminal", "finish", "finalize"),
-        approved=True,
-        status="finished",
-        states=(),
-        publish_after_recall=False,
-        pr_url="https://github.com/acme/repo/pull/42",
-    ):
-        budget = SimpleNamespace(soft_timeout_s=60.0, wind_down_timeout_s=30.0)
-        convo = _make_conversation(status)
-        convo.execution_status = SimpleNamespace(value=status)
-        convo.state.events = [SimpleNamespace(id=f"ev-{i}") for i in range(4)]
-        ensure_pr_result = MagicMock(
-            pr_url=pr_url, error=not pr_url, message="m" if pr_url else "boom"
-        )
-        # ``check_publication`` is called once up front, once per recall
-        # iteration and again after the loop; model that with a stateful fake
-        # instead of a fixed call list.
-        queue = list(states) or [_clean()]
-
-        def check():
-            if publish_after_recall and convo.send_message.call_count > 1:
-                return _clean()
-            return queue.pop(0) if len(queue) > 1 else queue[0]
-
-        with patch(
-            "agent_script.features.run_agent.run_agent.Conversation",
-            return_value=convo,
-        ), patch("agent_script.features.run_agent.run_agent.Agent"), patch(
-            "agent_script.features.run_agent.run_agent.LLM"
-        ), patch(
-            "agent_script.features.run_agent.run_agent.resolve_timeout_budget",
-            return_value=budget,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
-            return_value=None,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.has_dispatch_decision",
-            return_value=True,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.recorded_is_approved",
-            return_value=approved,
-        ), patch(
-            "agent_script.features.run_agent.run_agent.check_publication",
-            side_effect=check,
-        ) as check_mock, patch(
-            "agent_script.features.run_agent.run_agent.ensure_pr",
-            return_value=ensure_pr_result,
-        ) as fallback, patch(
-            "agent_script.features.run_agent.run_agent._run_supervised",
-            return_value=(RunWatchdog(50.0, lambda: None), None),
-        ):
-            run_agent(
-                llm_config={},
-                prompt="do the thing",
-                agent_cfg=SimpleNamespace(tools=list(tools)),
-            )
-        return convo, check_mock, fallback
-
-    def test_clean_approved_step_is_marked_clean(self):
-        convo, check, fallback = self._run()
-        check.assert_called_once()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "clean")
-
-    def test_recalled_agent_publishes_and_nothing_else_runs(self):
-        convo, _, fallback = self._run(states=[_dirty()], publish_after_recall=True)
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "recalled_ok")
-        self.assertEqual(convo.run_outcome.publication_recall_count, 1)
-        # The recall turn is engine-injected: its boundary is pinned.
-        self.assertEqual(convo.run_outcome.publication_recall_event_offset, 4)
-        self.assertIn("UNPUBLISHED WORK", convo.send_message.call_args_list[-1].args[0])
-        self.assertEqual(convo.run_outcome.publication_detail, "dirty_tree")
-
-    def test_ignored_recall_falls_back_to_ensure_pr(self):
-        convo, _, fallback = self._run(states=[_dirty()])
-        fallback.assert_called_once()
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_pr")
-        self.assertLessEqual(convo.run_outcome.publication_recall_count, 2)
-        self.assertEqual(
-            convo.run_outcome.publication_detail,
-            "https://github.com/acme/repo/pull/42",
-        )
-
-    def test_agent_without_shell_tool_skips_the_recall(self):
-        """The incident case: no shell tool ⇒ a recall would burn turns."""
-        convo, _, fallback = self._run(
-            tools=("file_editor", "finish", "finalize"),
-            states=[_dirty()],
-        )
-        fallback.assert_called_once()
-        convo.send_message.assert_called_once()  # only the main prompt
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_pr")
-        self.assertEqual(convo.run_outcome.publication_recall_count, 0)
-        self.assertIsNone(convo.run_outcome.publication_recall_event_offset)
-
-    def test_fallback_failure_is_recorded_not_swallowed(self):
-        convo, _, fallback = self._run(
-            tools=("file_editor",),
-            states=[_dirty()],
-            pr_url="",
-        )
-        fallback.assert_called_once()
-        self.assertEqual(convo.run_outcome.publication_guard, "fallback_failed")
-        self.assertEqual(convo.run_outcome.publication_detail, "boom")
-
-    def test_skip_records_nothing(self):
-        convo, _, fallback = self._run(
-            states=[PublicationState(published=True, skip_reason="no git remote")]
-        )
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_rejected_verdict_is_never_checked(self):
-        convo, check, fallback = self._run(approved=False)
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_non_write_tools_are_never_checked(self):
-        convo, check, fallback = self._run(
-            tools=("think", "finish", "finalize")
-        )
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-    def test_non_success_status_is_never_checked(self):
-        convo, check, fallback = self._run(status="error")
-        check.assert_not_called()
-        fallback.assert_not_called()
-        self.assertEqual(convo.run_outcome.publication_guard, "")
-
-
 class TestRunAgentSystemPromptWiring(unittest.TestCase):
     """run_agent hands its own static prompt to the Agent constructor (#943)."""
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_agent_receives_nebuko_static_prompt(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -542,7 +388,7 @@ class TestRunAgentSystemPromptWiring(unittest.TestCase):
         )
         mock_conversation_cls.return_value = _make_conversation("finished")
         with patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -551,10 +397,10 @@ class TestRunAgentSystemPromptWiring(unittest.TestCase):
             mock_agent.call_args.kwargs["system_prompt"], _SYSTEM_PROMPT
         )
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_no_legacy_prompt_levers_reach_the_agent(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -568,7 +414,7 @@ class TestRunAgentSystemPromptWiring(unittest.TestCase):
         )
         mock_conversation_cls.return_value = _make_conversation("finished")
         with patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(llm_config={}, prompt="do the thing")
@@ -626,7 +472,7 @@ class TestMCPServerWiring(unittest.TestCase):
     """``mcp_servers`` config → SDK server handles (issue #823)."""
 
     def _spec(self, name="brave-search", env=None, args=None):
-        from config import MCPServerConfig
+        from nebuko.engine.lib.config import MCPServerConfig
 
         return MCPServerConfig(
             name=name,
@@ -637,7 +483,7 @@ class TestMCPServerWiring(unittest.TestCase):
 
     def test_resolve_mcp_env_returns_values_and_missing(self):
         with patch.dict(
-            "agent_script.features.run_agent.run_agent.os.environ",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.os.environ",
             {"BRAVE_API_KEY": "secret-value"},
             clear=True,
         ):
@@ -658,7 +504,7 @@ class TestMCPServerWiring(unittest.TestCase):
     def test_build_mcp_servers_resolves_env_into_handle(self):
         cfg = SimpleNamespace(mcp_servers=[self._spec()])
         with patch.dict(
-            "agent_script.features.run_agent.run_agent.os.environ",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.os.environ",
             {"BRAVE_API_KEY": "secret-value"},
             clear=True,
         ):
@@ -682,15 +528,15 @@ class TestMCPServerWiring(unittest.TestCase):
             ]
         )
         with patch.dict(
-            "agent_script.features.run_agent.run_agent.os.environ", {}, clear=True
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.os.environ", {}, clear=True
         ):
             servers = _build_mcp_servers(cfg)
         self.assertEqual(list(servers), ["keyless"])
 
-    @patch("agent_script.features.run_agent.run_agent.Conversation")
-    @patch("agent_script.features.run_agent.run_agent.Agent")
-    @patch("agent_script.features.run_agent.run_agent.LLM")
-    @patch("agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_run_agent_attaches_mcp_config(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):
@@ -700,11 +546,11 @@ class TestMCPServerWiring(unittest.TestCase):
         mock_conversation_cls.return_value = _make_conversation("finished")
 
         with patch.dict(
-            "agent_script.features.run_agent.run_agent.os.environ",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.os.environ",
             {"ROLE_NAME": "context", "BRAVE_API_KEY": "secret-value"},
             clear=True,
         ), patch(
-            "agent_script.features.run_agent.run_agent.build_condenser",
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
             run_agent(
@@ -744,7 +590,7 @@ class TestParseContextBodiesEnv(unittest.TestCase):
             self._os.environ["CONTEXT_BODIES"] = self._prior
 
     def test_reads_bodies_from_the_path_and_removes_the_file(self) -> None:
-        from agent_script.features.run_agent.run_agent import (
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
             _parse_context_bodies_env,
         )
 
@@ -757,7 +603,7 @@ class TestParseContextBodiesEnv(unittest.TestCase):
         self.assertFalse(self._os.path.exists(path))
 
     def test_missing_file_degrades_to_an_empty_map(self) -> None:
-        from agent_script.features.run_agent.run_agent import (
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
             _parse_context_bodies_env,
         )
 

@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from resolve_config.features.fetch_state.fetch_state import (  # noqa: E402
+from nebuko.engine.lib.resolve_config.features.fetch_state.fetch_state import (
     _fetch_workflow_state_from_history,
 )
 
@@ -29,13 +28,13 @@ class TestFetchWorkflowStateFromHistory:
 
     def test_extracts_state_from_comments(self):
         comments = [{"body": _state_block(), "id": 1}]
-        with patch("resolve_config.get_issue_comments", return_value=comments):
+        with patch("nebuko.engine.lib.resolve_config.get_issue_comments", return_value=comments):
             state = _fetch_workflow_state_from_history("owner/repo", 42)
         assert state is not None
         assert state.workflow == "default"
 
     def test_returns_none_on_client_error(self):
         with patch(
-            "resolve_config.get_issue_comments", side_effect=RuntimeError("boom")
+            "nebuko.engine.lib.resolve_config.get_issue_comments", side_effect=RuntimeError("boom")
         ):
             assert _fetch_workflow_state_from_history("owner/repo", 42) is None

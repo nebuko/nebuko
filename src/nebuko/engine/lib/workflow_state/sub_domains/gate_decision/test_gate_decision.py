@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from workflow_state.sub_domains.gate_decision import GateDecision
+from nebuko.engine.lib.workflow_state.sub_domains.gate_decision import GateDecision
 
-from config import StepRef
+from nebuko.engine.lib.config import StepRef
 
 
 DECIDED_AT = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)

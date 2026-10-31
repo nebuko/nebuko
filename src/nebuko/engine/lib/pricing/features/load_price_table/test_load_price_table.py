@@ -5,7 +5,7 @@ Every test injects the fetcher and a tmp cache directory — no network.
 
 import json
 
-from pricing.features.load_price_table.load_price_table import (
+from nebuko.engine.lib.pricing.features.load_price_table.load_price_table import (
     DEFAULT_TTL_SECONDS,
     load_price_table,
 )

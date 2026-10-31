@@ -30,8 +30,8 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field
 from rich.text import Text
 
-from agent_script.features.handoff_tool.handoff_document import HandoffDocument
-from agent_script.features.handoff_tool.handoff_store import (
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_document import HandoffDocument
+from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_store import (
     HANDOFF_RELATIVE_PATH,
     HandoffStore,
 )
@@ -212,7 +212,7 @@ class HandoffExecutor(ToolExecutor):
     @staticmethod
     def _to_document(action: HandoffAction) -> HandoffDocument:
         """Build the document, stamping it with the current UTC time."""
-        from agent_script.features.handoff_tool.handoff_store import _timestamp
+        from nebuko.engine.lib.agent_script.features.handoff_tool.handoff_store import _timestamp
 
         return HandoffDocument(
             completed=tuple(action.completed),

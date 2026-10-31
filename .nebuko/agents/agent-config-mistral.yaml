@@ -44,6 +44,13 @@ llms:
     output_price: 0.5
     cache_read_price: 0.03
     reasoning_effort: "low"
+  deepseek-4_1-flash:
+    model_path: "mistral/deepseek-v4-1-flash-1017"
+    provider: "${providers.mistral}"
+    input_price: 0.3
+    output_price: 1.2
+    cache_read_price: 0.007
+    reasoning_effort: "low"
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
 mcp_servers:

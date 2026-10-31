@@ -26,8 +26,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from resolve_config.resolve_config import resolve_config
-from resolve_workflow import (
+from nebuko.engine.lib.resolve_config.resolve_config import resolve_config
+from nebuko.engine.lib.resolve_workflow import (
     TASK_TO_PROMPT,
     _origin_repo_url,
     resolve_workflow_routing,

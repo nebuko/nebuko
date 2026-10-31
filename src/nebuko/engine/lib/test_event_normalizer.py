@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from event_normalizer import normalize_event, normalize_trigger
+from nebuko.engine.lib.event_normalizer import normalize_event, normalize_trigger
 
 
 class TestNormalizeEvent:

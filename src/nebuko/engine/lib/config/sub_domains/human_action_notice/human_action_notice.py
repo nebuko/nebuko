@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Optional
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from workflow_state import TurnOutcome
+    from nebuko.engine.lib.workflow_state import TurnOutcome
 
 # The universal bot marker (line 1) keeps bot detection exact and routes the
 # engine's own comment to the no-op bot path, so the notice can never re-enter
@@ -45,7 +45,7 @@ _LINES = {
     ),
     AWAITING_INPUT: (
         "{ping} workflow **{workflow}** is paused at step `{step}` and needs "
-        "your input. Run `/nebuko resume <your feedback>` to continue."
+        'your input. Run `/nebuko resume --feedback "<your feedback>"` to continue.'
     ),
     WORKFLOW_COMPLETE: (
         "{ping} workflow **{workflow}** has finished at step `{step}`. "
@@ -163,7 +163,7 @@ class HumanActionNotice(BaseModel):
             # Deferred: ``prepare_comment`` pulls in ``workflow_state`` and
             # ``validate_output``, which import ``config`` — a module-level
             # import here would be circular.
-            from prepare_comment import neutralize_human_pings
+            from nebuko.engine.lib.prepare_comment import neutralize_human_pings
 
             body += f"\n\n_{neutralize_human_pings(self.reason)}_"
         return body

@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-sys.path.insert(0, str(Path(__file__).parents[3]))
-from config import WorkflowStep, WorkflowDefinition
+from nebuko.engine.lib.config import WorkflowStep, WorkflowDefinition
 
 
 class TestWorkflowDefinition:
