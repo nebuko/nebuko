@@ -22,6 +22,7 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
+from nebuko.engine.lib.answer_footer import format_answer_footer
 from nebuko.engine.lib.validate_output import strip_agent_run_config
 from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
@@ -612,9 +613,7 @@ def build_comment_body_parts(
         ``(header, body)`` where ``header`` is the answer-comment header and
         ``body`` is the fallback/answer content beneath it.
     """
-    return (
-        format_answer_header(role_name, state),
-        _select_fallback_body(
+    body = _select_fallback_body(
             latest_answer=latest_answer,
             final_message=final_message,
             console_log=console_log,
@@ -623,8 +622,11 @@ def build_comment_body_parts(
             trigger_author=trigger_author,
             role_name=role_name,
             recall_count=_posted_recall_count(state),
-        ),
-    )
+        )
+    footer = format_answer_footer(state)
+    if footer:
+        body = f"{body}\n\n{footer}" if body.strip() else footer
+    return (format_answer_header(role_name, state), body)
 
 
 def build_comment_body(
