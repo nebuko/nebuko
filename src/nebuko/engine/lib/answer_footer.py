@@ -21,6 +21,14 @@ output are excluded — only agent answers carry the footer.
 from __future__ import annotations
 
 from enum import Enum
+try:
+    from workflow_state.sub_domains.turn_outcome.turn_outcome import Appreciation, IncompleteReason
+except ModuleNotFoundError:
+    from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import Appreciation, IncompleteReason
+try:
+    from workflow_state.sub_domains.thread_record.thread_record import ThreadRecordKind
+except ModuleNotFoundError:
+    from nebuko.engine.lib.workflow_state.sub_domains.thread_record.thread_record import ThreadRecordKind
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only (issue #590)
@@ -66,7 +74,16 @@ class StepLinkResolver:
     # @stub-protected: signature defined by architect — do not modify
     def url_for(self, step: str) -> str:
         """Return the permalink of ``step``'s latest agent answer, or ``""``."""
-        raise NotImplementedError
+        for entry in reversed(self._history):
+            if entry.step != step or not entry.comment_ids:
+                continue
+            wanted = set(entry.comment_ids)
+            for record in reversed(self._thread):
+                if record.deleted or record.kind is not ThreadRecordKind.AGENT_OUTPUT:
+                    continue
+                if record.id in wanted:
+                    return record.url
+        return ""
 
 
 class AnswerFooter:
@@ -88,7 +105,14 @@ class AnswerFooter:
         segment (and the separator before it) is omitted entirely for
         ``FooterStatus.IN_PROGRESS``.
         """
-        raise NotImplementedError
+        if state is None or not state.workflow:
+            return ""
+        status = self.resolve_status(state)
+        segments = [state.workflow, self.render_steps(state, steps), status.value]
+        hint = self.render_hint(status, state)
+        if hint:
+            segments.append(hint)
+        return " | ".join(segments)
 
     # @stub-protected: signature defined by architect — do not modify
     def render_steps(
@@ -105,7 +129,17 @@ class AnswerFooter:
         when ``resolver`` is ``None`` or ``url_for`` returns ``""``); the
         current step is bold; pending steps are plain. Separator: ``" -> "``.
         """
-        raise NotImplementedError
+        if not steps:
+            steps = [entry.step for entry in state.history] + [state.step]
+        return " -> ".join(self._render_step(state, step) for step in steps)
+
+    def _render_step(self, state: WorkflowState, step: str) -> str:
+        url = self.resolver.url_for(step) if self.resolver is not None else ""
+        if url:
+            return f"[{step}]({url})"
+        if step == state.step:
+            return f"**{step}**"
+        return step
 
     # @stub-protected: signature defined by architect — do not modify
     def resolve_status(self, state: WorkflowState) -> FooterStatus:
@@ -115,7 +149,20 @@ class AnswerFooter:
         human gate (``state.gate.armed()``) → awaiting-input hold
         (``turn_outcome`` appreciation ``hold``) → :attr:`FooterStatus.IN_PROGRESS`.
         """
-        raise NotImplementedError
+        context = state.current_context or {}
+        if context.get("circuit_breaker_tripped"):
+            return FooterStatus.CIRCUIT_OPEN
+        if state.soft_retry.attempts >= 1 and state.soft_retry.step == state.step:
+            return FooterStatus.SOFT_RETRY_EXHAUSTED
+        if state.gate is not None and state.gate.armed():
+            return FooterStatus.GATE_ARMED
+        outcome = state.turn_outcome
+        if outcome is not None:
+            if outcome.incomplete_reason is IncompleteReason.SOFT_TIMEOUT:
+                return FooterStatus.SOFT_RETRY_EXHAUSTED
+            if outcome.appreciation is Appreciation.HOLD:
+                return FooterStatus.AWAITING_INPUT
+        return FooterStatus.IN_PROGRESS
 
     # @stub-protected: signature defined by architect — do not modify
     def render_hint(self, status: FooterStatus, state: WorkflowState) -> str:
@@ -128,7 +175,15 @@ class AnswerFooter:
             CIRCUIT_OPEN:         ``adjust: /nebuko update circuit-breaker --value <n>``
             IN_PROGRESS:          ``""`` (hint segment omitted entirely)
         """
-        raise NotImplementedError
+        if status is FooterStatus.GATE_ARMED:
+            return "approve or reject: /nebuko approve|reject gate"
+        if status is FooterStatus.AWAITING_INPUT:
+            return "reply then /nebuko resume"
+        if status is FooterStatus.SOFT_RETRY_EXHAUSTED:
+            return "retry /nebuko resume or escalate to architect"
+        if status is FooterStatus.CIRCUIT_OPEN:
+            return "adjust: /nebuko update circuit-breaker --value <n>"
+        return ""
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -140,4 +195,6 @@ def format_answer_footer(
 
     ``""`` when ``state`` is ``None``; otherwise ``AnswerFooter().render(state, steps)``.
     """
-    raise NotImplementedError
+    if state is None:
+        return ""
+    return AnswerFooter().render(state, steps)
