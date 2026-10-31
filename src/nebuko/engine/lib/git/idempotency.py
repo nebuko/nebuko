@@ -34,6 +34,13 @@ class GitIdempotency:
         self._repo_root = repo_root
         self._run_git = run_git
 
+    def has_base_conflict(self, branch: str, base: str) -> list[str]:  # @stub-protected
+        """Dry-run ``git merge-tree --write-tree`` (base first, branch second);
+        return the list of conflicted paths (empty list = clean merge). Never
+        mutates the worktree.
+        """
+        raise NotImplementedError
+
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected
         """Whether ``branch`` already contains ``origin/<base>``.
 
