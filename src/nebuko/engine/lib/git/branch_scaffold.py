@@ -314,11 +314,10 @@ class BranchScaffold:
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
     def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
-        """Merge ``origin/<base>`` into ``branch``; a conflict is data, not a crash.
-
-        When the branch already contains the base the merge is skipped
-        entirely (issue #1194): re-merging an unchanged base made the
-        already-committed work look absent and the agent re-applied it.
+        """Conflict-only base merge (issue #1242): probe with a read-only
+        merge-tree first; merge `origin/<base>` only on a real conflict and
+        hand the conflicted paths to the agent. A clean probe leaves the
+        branch as-is — main's changes must never enter the PR routinely.
         """
         try:
             # A remote-only branch from a previous round is fetched but not
@@ -333,8 +332,9 @@ class BranchScaffold:
                 self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
         except RuntimeError as exc:
             return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
-        if self._idempotency.base_already_merged(branch, base):
-            detail = f"{branch} already contains origin/{base}"
+        conflicted = self._idempotency.has_base_conflict(branch, base)
+        if not conflicted:
+            detail = f"{branch} vs origin/{base}: no conflicts — left as-is"
             logger.info("branch scaffold: %s", detail)
             return ScaffoldResult(
                 ok=True, already_up_to_date=True, detail=detail, branch=branch
@@ -345,7 +345,7 @@ class BranchScaffold:
             # global one cannot create the merge commit.
             self._git(*self._identity_args(), "merge", "--no-edit", f"origin/{base}")
         except RuntimeError as exc:
-            conflicted = self._conflicted_files()
+            paths = self._conflicted_files()
             if not conflicted:
                 # Not a conflict (unrelated histories, a dirty tree, …): the
                 # agent cannot fix it, so the run must fail instead.
