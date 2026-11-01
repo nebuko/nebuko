@@ -19,7 +19,7 @@ import pytest
 from nebuko.engine.lib.git.branch_scaffold import (
     BranchScaffold,
     ScaffoldResult,
-    _git_subprocess_env,
+    git_subprocess_env,
     branch_slug,
     feature_branch_name,
     issue_title_from_payload,
@@ -434,8 +434,8 @@ class TestScaffold:
 class TestGitSubprocessEnv:
     """The git subprocess env must be bounded (E2BIG regression)."""
 
-    def test_git_subprocess_env_drops_payload_vars(self):
-        env = _git_subprocess_env(
+    def testgit_subprocess_env_drops_payload_vars(self):
+        env = git_subprocess_env(
             {
                 "CONTEXT_BODIES": "x" * (1 << 21),
                 "STEP_INPUT_RESULTS": "...",
