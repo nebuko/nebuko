@@ -11,6 +11,7 @@ import {
   HUMAN_AMBER,
   Initial,
   Label,
+  ParticipantChip,
   Pill,
   Pointer,
   RepoHeader,
@@ -729,24 +730,7 @@ export const PullRequestFrame: React.FC<{
                     {participants.length === 0 ? (
                       <Initial name={author} size={24} />
                     ) : (
-                      participants.map((e, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: '50%',
-                            background: t.surface,
-                            border: '1px solid ' + t.border,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 12,
-                          }}
-                        >
-                          {e}
-                        </div>
-                      ))
+                      participants.map((e, i) => <ParticipantChip key={i} entry={e} />)
                     )}
                   </div>
                 </SideSection>

@@ -10,6 +10,7 @@ import {
   GithubReview,
   GithubTimelineEvent,
   IssueFrame,
+  NEBUKO_MARK,
   PullRequestFrame,
   ThemeName,
 } from './github-ui';
@@ -84,7 +85,7 @@ export const PrScene: React.FC<{
       assignees={['nebuko-dev']}
       labels={[{name: 'bug', color: '#d73a4a'}]}
       linkedIssue={{number: 839, title: 'Allow to improve circuit breaker for one issue', closed: merged}}
-      participants={['💻', '👀', '🧑‍💻']}
+      participants={[NEBUKO_MARK, '👀', '🧑‍💻']}
     >
       <GithubIssueMainPost
         author="nebuko-dev"
@@ -128,7 +129,7 @@ const IssueScene: React.FC<{theme: ThemeName}> = ({theme}) => (
     theme={theme}
     commentCount={4}
     anchor="bottom"
-    participants={['🧑‍💻', '📐', '💻']}
+    participants={['🧑‍💻', NEBUKO_MARK]}
     linkedPr={{number: 842, title: 'feat: per-issue circuit breaker limit'}}
   >
     <GithubIssueMainPost

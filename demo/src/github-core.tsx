@@ -183,6 +183,36 @@ export const Avatar: React.FC<{emoji: string; human: boolean; size?: number; rin
   );
 };
 
+/** Sentinel participant entry: the Nebuko logo (every bot agent), see ParticipantChip. */
+export const NEBUKO_MARK = 'nebuko-mark';
+
+/** Sidebar participant chip: humans show their emoji, bots (`NEBUKO_MARK`) the Nebuko logo. */
+export const ParticipantChip: React.FC<{entry: string}> = ({entry}) => {
+  const t = useGH();
+  return (
+    <div
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: '50%',
+        background: t.surface,
+        border: '1px solid ' + t.border,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 12,
+        overflow: 'hidden',
+      }}
+    >
+      {entry === NEBUKO_MARK ? (
+        <Img src={staticFile(nebukoMark(t))} style={{width: 16, height: 16, objectFit: 'contain', display: 'block'}} />
+      ) : (
+        entry
+      )}
+    </div>
+  );
+};
+
 export const Initial: React.FC<{name: string; size?: number}> = ({name, size = 20}) => {
   const t = useGH();
   return (
@@ -697,6 +727,9 @@ export const TitleBlock: React.FC<{
 /** Hero accent: amber = human, matching the logo glow (HeroVideo `C.amber`). */
 export const HUMAN_AMBER = '#F59E0B';
 
+/** The Nebuko logo as it appears in a themed context (avatars, participant chips). */
+export const nebukoMark = (t: Theme): string => (t.name === 'dark' ? 'mark-light.svg' : 'mark-dark.svg');
+
 export const CommentShell: React.FC<{
   avatar: string;
   human: boolean;
@@ -715,6 +748,9 @@ export const CommentShell: React.FC<{
   children: React.ReactNode;
 }> = ({avatar, avatarImg, human, name, verb, time, role, isBot, headerExtra, opacity = 1, translateY = 0, ring = 0, footer, children}) => {
   const t = useGH();
+  // Every bot carries the Nebuko logo in its avatar: the agent emoji render
+  // too faintly at avatar size to read, and depend on the emoji font being set up.
+  const img = avatarImg ?? (isBot ? nebukoMark(t) : undefined);
   // Human comments get the blue "author" style, bots the neutral one:
   // easy to tell people from agents at a glance.
   const headBg = human ? t.accentMuted : t.surface;
@@ -732,7 +768,7 @@ export const CommentShell: React.FC<{
         transform: `translateY(${translateY}px)`,
       }}
     >
-      <Avatar emoji={avatar} human={human} img={avatarImg} />
+      <Avatar emoji={avatar} human={human} img={img} />
       <div style={{flex: 1, minWidth: 0, position: 'relative'}}>
         {/* caret pointing at the avatar */}
         <div

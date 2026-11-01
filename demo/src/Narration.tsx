@@ -7,7 +7,9 @@ import {ThemeName, THEMES} from './github-theme';
  * Not part of GitHub's UI: it uses the theme's inverted colors so it reads as a voice-over.
  * Frames are relative: wrap it in a <Sequence durationInFrames={…}> to set when it shows.
  */
-export const NARRATION_HEIGHT = 88;
+// Sized for the worst case: a caption wrapped to two lines (the thread is
+// ~830px wide at the 960px design width) + 16px above + 24px below the card.
+export const NARRATION_HEIGHT = 122;
 
 export const Narration: React.FC<{text: string; theme?: ThemeName; step?: string}> = ({text, theme = 'light', step}) => {
   const t = THEMES[theme];

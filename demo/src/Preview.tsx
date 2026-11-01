@@ -1,6 +1,6 @@
 import React, {useLayoutEffect, useRef, useState} from 'react';
 import {AbsoluteFill, Easing, interpolate, Sequence, Series, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {Collapse, GithubComment, GithubIssueMainPost, GithubTimelineEvent, IssueFrame, ThemeName} from './github-ui';
+import {Collapse, GithubComment, GithubIssueMainPost, GithubTimelineEvent, IssueFrame, NEBUKO_MARK, ThemeName} from './github-ui';
 import {eventById, events, issueBody, metricsSummary, ThreadEvent} from './data';
 import {Narration, NARRATION_HEIGHT} from './Narration';
 import {Phase, PrContent, PrScene, SAMPLE_PR} from './PrFlowDemo';
@@ -8,7 +8,10 @@ import {Phase, PrContent, PrScene, SAMPLE_PR} from './PrFlowDemo';
 // The engine holds the workflow on the step whose state says `dispatch: HOLD`.
 const isGate = (label?: string) => !!label && /\bdispatch:\s*HOLD\b/.test(label);
 
-const participants = [...new Set(events.map((e) => e.avatar).filter(Boolean))];
+const isHuman = (e: ThreadEvent) => e.kind === 'trigger' || e.kind === 'approve';
+
+// Humans keep their emoji avatar; every bot carries the Nebuko logo instead.
+const participants = [...new Set(events.map((e) => (isHuman(e) ? e.avatar : NEBUKO_MARK)).filter(Boolean))];
 
 /** Frames before the first comment and between two comments. */
 const LEAD_IN = 15;
@@ -57,8 +60,6 @@ type Slot = {
   /** long comment: frames over which it scrolls from its top to its end */
   scroll?: [number, number];
 };
-
-const isHuman = (e: ThreadEvent) => e.kind === 'trigger' || e.kind === 'approve';
 
 /** When each comment lands. A human one is first typed in the composer, then posted with a click. */
 const schedule: Slot[] = (() => {

@@ -11,6 +11,7 @@ import {
   Initial,
   inlineCodeStyle,
   Label,
+  ParticipantChip,
   Pointer,
   prettyJson,
   RepoHeader,
@@ -166,8 +167,6 @@ export const GithubComment: React.FC<{
   return (
     <CommentShell
       avatar={event.avatar || ''}
-      // agents without their own avatar carry the Nebuko mark, not the gear emoji
-      avatarImg={event.avatar ? undefined : t.name === 'dark' ? 'mark-light.svg' : 'mark-dark.svg'}
       human={isHuman}
       name={event.author.trim()}
       verb="commented"
@@ -308,7 +307,7 @@ export const IssueFrame: React.FC<{
   children,
   theme = 'light',
   commentCount = 4,
-  title = 'No module names openhands',
+  title = 'No module named openhands',
   number = 1129,
   repoOwner = 'nebuko',
   repoName = 'nebuko',
@@ -462,24 +461,7 @@ export const IssueFrame: React.FC<{
                 {participants.length === 0 ? (
                   <Initial name={author} size={24} />
                 ) : (
-                  participants.map((e, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: '50%',
-                        background: t.surface,
-                        border: '1px solid ' + t.border,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 12,
-                      }}
-                    >
-                      {e}
-                    </div>
-                  ))
+                  participants.map((e, i) => <ParticipantChip key={i} entry={e} />)
                 )}
               </div>
             </SideSection>
@@ -489,7 +471,7 @@ export const IssueFrame: React.FC<{
         </div>
         {/* caption at the very bottom — where the composer used to live — so it never covers the comment */}
         {narrationHeight > 0 ? (
-          <div style={{height: narrationHeight, flexShrink: 0, padding: '16px 32px 20px'}}>
+          <div style={{height: narrationHeight, flexShrink: 0, padding: '16px 32px 24px'}}>
             {/* position:relative: the <Sequence>s inside are absolutely positioned and
                 would otherwise anchor to the frame root and float mid-screen */}
             <div style={{position: 'relative', height: '100%'}}>{narration}</div>
