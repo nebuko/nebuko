@@ -54,7 +54,7 @@ class GitIdempotency:
                 pass
         try:
             self._run_git([
-                "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                "merge-tree", "--write-tree", "--name-only",
                 base_ref, branch,
             ])
         except RuntimeError:
@@ -63,7 +63,7 @@ class GitIdempotency:
             # re-read it directly.
             result = subprocess.run(
                 ["git", "-C", self._repo_root,
-                 "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                 "merge-tree", "--write-tree", "--name-only",
                  base_ref, branch],
                 capture_output=True,
                 text=True,
