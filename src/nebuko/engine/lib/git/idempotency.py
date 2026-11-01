@@ -5,11 +5,6 @@ base already contained in the feature branch? When it is, the merge is
 skipped and the run reports the branch as *already up to date*, which tells
 the prompt that the previous rounds' work is present.
 
-Most other engine git actions need no guard: a ``git push`` of an up-to-date
-branch, a commit with nothing staged (checked by the caller) and a PR lookup
-before creation are already safe to repeat. A workflow patch whose change the
-base already carries diffs empty and is never delivered.
-
 Like the rest of the git layer, the check never raises for an expected "no".
 """
 

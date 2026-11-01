@@ -121,6 +121,8 @@ def git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
         for key, value in os.environ.items()
         if key not in ("CONTEXT_BODIES", "STEP_INPUT_RESULTS")
     }
+    bounded.pop("CONTEXT_BODIES", None)
+    bounded.pop("STEP_INPUT_RESULTS", None)
     return {**bounded, **overlay, "GIT_TERMINAL_PROMPT": "0"}
 
 
@@ -286,6 +288,15 @@ class BranchScaffold:
                 logger.info("branch scaffold: %s", up_to_date)
                 return ScaffoldResult(
                     ok=True, already_up_to_date=True, detail=up_to_date, branch=branch
+                )
+            conflicts = self._idempotency.has_base_conflict(branch, base)
+            if conflicts == []:
+                # Clean probe: leave the branch as-is, main's changes must
+                # not enter the PR routinely (issue #1242).
+                detail = f"no conflicts merging origin/{base} into {branch}"
+                logger.info("branch scaffold: %s", detail)
+                return ScaffoldResult(
+                    ok=True, already_up_to_date=True, detail=detail, branch=branch
                 )
             return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
