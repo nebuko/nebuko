@@ -788,12 +788,12 @@ class TestAgentAnswerFooterSeam(unittest.TestCase):
     """The publish seam appends the workflow footer to agent answers (issue #1159)."""
 
     def _footer_state(self):
-        from workflow_state.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 
         return WorkflowState(workflow="spec-tdd", step="spec")
 
     def test_appends_the_footer_when_a_state_rides_the_answer(self):
-        from prepare_comment import build_comment_body_parts
+        from nebuko.engine.lib.prepare_comment import build_comment_body_parts
 
         header, body = build_comment_body_parts(
             latest_answer="done",
@@ -805,7 +805,7 @@ class TestAgentAnswerFooterSeam(unittest.TestCase):
         self.assertTrue(body.rstrip().splitlines()[-1].startswith("spec-tdd |"))
 
     def test_omits_the_footer_when_there_is_no_state(self):
-        from prepare_comment import build_comment_body_parts
+        from nebuko.engine.lib.prepare_comment import build_comment_body_parts
 
         header, body = build_comment_body_parts(
             latest_answer="done",
@@ -816,7 +816,7 @@ class TestAgentAnswerFooterSeam(unittest.TestCase):
         self.assertNotIn("spec-tdd |", body)
 
     def test_footer_is_escaped_with_the_body_for_agent_triggers(self):
-        from prepare_comment import build_comment_body_parts, escape_agent_triggers
+        from nebuko.engine.lib.prepare_comment import build_comment_body_parts, escape_agent_triggers
 
         header, body = build_comment_body_parts(
             latest_answer="done",

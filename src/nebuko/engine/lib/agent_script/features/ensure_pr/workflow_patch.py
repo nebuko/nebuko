@@ -202,6 +202,7 @@ def revert_workflow_changes(
     *,
     base_ref: str,
     workflow_paths: Sequence[str],
+    workflow_matches_base: Sequence[str] = (),
     run_git: Callable[..., str],
 ) -> None:
     """Drop the workflow delta so the tree is clean for the guard.
@@ -209,9 +210,16 @@ def revert_workflow_changes(
     Tracked files are restored from ``base_ref`` (staging and worktree);
     untracked ones are removed. Call **only** after the patch is delivered —
     this discards the local copy.
+
+    Issue #1242: paths listed in ``workflow_matches_base`` (content equal to
+    ``origin/<base>``) are main's own state arriving via merge and are kept,
+    never reverted.
     """
-    paths = list(workflow_paths)
-    if not paths:
+    paths = [
+        path for path in workflow_paths if path not in set(workflow_matches_base)
+    ]
+    raise NotImplementedError
+    if not paths:  # pragma: no cover — dead until the stub body is implemented
         return
     try:
         run_git(["restore", "--source", base_ref, "--staged", "--worktree", "--"] + paths)

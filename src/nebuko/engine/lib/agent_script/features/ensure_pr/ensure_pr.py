@@ -446,7 +446,19 @@ def _base_already_in_branch(branch: str, base: str) -> bool:
 
 
 # @stub-protected: signature defined by architect — do not modify
-def _sync_base_before_push(branch: str, base: str) -> str:
+def _base_conflict_paths(branch: str, base: str) -> list[str]:
+    """Read-only merge-tree check (issue #1242): return the conflicted paths
+    a base merge would produce (empty list = clean). Kept local because a
+    cross-boundary import of ``engine.lib.git`` from the agent-script runtime
+    is unconfirmed. Never mutates the worktree.
+    """
+    raise NotImplementedError
+
+
+# Removed per issue #1242: the publish-time base sync (#1219) is gone —
+# the publish flow pushes plainly and never merges the base.
+def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
+    raise NotImplementedError
     """Publish-time base sync (issue #1219): fetch ``origin/<base>`` (no
     tags, explicit refspec, same shape as ``BranchScaffold._fetch_base``),
     skip when ``_base_already_in_branch``, else ``git merge --no-edit
@@ -456,42 +468,13 @@ def _sync_base_before_push(branch: str, base: str) -> str:
     aborted, with the abort outcome) that the caller MUST treat as a refusal
     to push.
     """
-    if _run_git(["status", "--porcelain"]).strip():
-        return (
-            f"cannot merge base '{base}' into '{branch}': the working tree has "
-            "uncommitted changes — commit or stash them before publishing"
-        )
-    try:
-        _run_git([
-            "fetch", "--no-tags", "origin",
-            f"+refs/heads/{base}:refs/remotes/origin/{base}",
-        ])
-    except RuntimeError as exc:
-        return f"could not fetch base '{base}' before pushing: {exc}"
-    if _base_already_in_branch(branch, base):
-        return ""
-    try:
-        _run_git(["merge", "--no-edit", f"origin/{base}"])
-    except RuntimeError as exc:
-        if _unmerged_paths():
-            try:
-                _run_git(["merge", "--abort"])
-                cleanup = "merge aborted cleanly"
-            except RuntimeError as abort_exc:
-                logger.warning(f"ensure_pr: merge --abort failed: {abort_exc}")
-                cleanup = (
-                    "merge --abort FAILED — resolve the conflicts manually "
-                    f"(merge --abort reported: {abort_exc})"
-                )
-            return (
-                f"merging base '{base}' into '{branch}' conflicts with local "
-                f"changes — publish refused, {cleanup}: {exc}"
-            )
-        return (
-            f"merging base '{base}' into '{branch}' failed (no conflicts, "
-            f"no merge in progress): {exc}"
-        )
-    return ""
+    raise NotImplementedError
+
+
+# Removed per issue #1242: the publish-time base sync (#1219) is gone —
+# the publish flow pushes plainly and never merges the base.
+def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
+    raise NotImplementedError
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:

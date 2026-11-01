@@ -1,0 +1,12 @@
+diff --git a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+index cd693fe..f7c90e8 100644
+--- a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
++++ b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
+@@ -11,7 +11,6 @@ permissions:
+   pull-requests: write
+   issues: write
+   id-token: write
+-  actions: write
+ 
+ jobs:
+   agent:
