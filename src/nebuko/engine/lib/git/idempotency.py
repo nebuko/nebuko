@@ -18,6 +18,8 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable, Sequence
 
+from .branch_scaffold import git_subprocess_env
+
 
 class GitIdempotency:
     """Content-level guard that keeps the branch merge from repeating."""
@@ -35,10 +37,16 @@ class GitIdempotency:
         self._repo_root = repo_root
         self._run_git = run_git
 
-    def has_base_conflict(self, branch: str, base: str) -> list[str]:  # @stub-protected
+    def has_base_conflict(
+        self, branch: str, base: str
+    ) -> list[str] | None:  # @stub-protected
         """Dry-run ``git merge-tree --write-tree`` (base first, branch second);
         return the list of conflicted paths (empty list = clean merge). Never
         mutates the worktree.
+
+        ``None`` when the probe itself fails (unresolvable ref, unrelated
+        histories, corrupt repo): "no conflict" must never be guessed from a
+        probe that could not run.
         """
         # ``origin/<base>`` needs a remote-tracking ref, which a probe
         # checkout may not have: fall back to the local ``<base>`` ref when
@@ -53,21 +61,38 @@ class GitIdempotency:
             except RuntimeError:
                 pass
         try:
-            self._run_git([
-                "merge-tree", "--write-tree", "--name-only",
-                base_ref, branch,
-            ])
+            return self._merge_tree_paths(base_ref, branch)
         except RuntimeError:
-            # Exit 1 means a conflict; rc-1 output (tree oid + conflicted
-            # paths) goes to stdout, which ``run_git`` drops when it raises —
-            # re-read it directly.
-            result = subprocess.run(
-                ["git", "-C", self._repo_root,
-                 "merge-tree", "--write-tree", "--name-only",
-                 base_ref, branch],
-                capture_output=True,
-                text=True,
+            # Not a conflict: an unresolvable ref, unrelated histories, a
+            # corrupt repo — the probe cannot say the merge is clean, so the
+            # caller falls back to the unguarded merge.
+            return None
+
+    def _merge_tree_paths(self, base_ref: str, branch: str) -> list[str] | None:
+        """Conflicted paths out of a read-only ``merge-tree`` probe.
+
+        ``[]`` = clean merge. Git 2.56 emits conflicted paths on stdout on
+        rc 1, after the tree oid and before the informational merge messages.
+        """
+        result = subprocess.run(
+            ["git", "-C", self._repo_root,
+             "merge-tree", "--write-tree", "--name-only",
+             base_ref, branch],
+            capture_output=True,
+            text=True,
+            env=git_subprocess_env({}),
+        )
+        if result.returncode not in (0, 1):
+            # Not a conflict: an unresolvable ref, unrelated histories, a
+            # corrupt repo — the probe cannot answer, so the caller falls
+            # back to the unguarded merge instead of trusting a clean read.
+            raise RuntimeError(
+                f"git merge-tree {base_ref} {branch} failed: "
+                f"{(result.stderr or result.stdout).strip()}"
             )
+        if result.returncode == 1:
+            # Exit 1 means a conflict; the rc-1 stdout carries the tree oid,
+            # the conflicted paths, then the informational merge messages.
             lines = [line for line in result.stdout.splitlines() if line]
             # Line 1 is the written tree oid; the conflicted paths follow, up
             # to the blank line before the informational merge messages.

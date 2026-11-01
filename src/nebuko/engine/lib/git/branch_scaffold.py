@@ -98,8 +98,7 @@ def issue_title_from_payload(payload: object) -> str:
     return ""
 
 
-# @stub-protected
-def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
+def git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
     """Bounded env for git subprocesses: ambient env plus git/credential keys.
 
     The session env carries unbounded JSON payloads (CONTEXT_BODIES,
@@ -459,7 +458,7 @@ class BranchScaffold:
             cwd=self.repo_root,
             capture_output=True,
             text=True,
-            env=_git_subprocess_env(self.env),
+            env=git_subprocess_env(self.env),
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
