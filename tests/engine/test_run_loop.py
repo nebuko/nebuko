@@ -4548,6 +4548,132 @@ class TestGitSessionGuardWiring:
             "git session finalize failed: still dirty"
         )
 
+    def test_a_mid_session_branch_switch_fails_finalize_and_strands_the_scaffolded_branch(
+        self, tmp_path, monkeypatch
+    ):
+        """Repro of run 41354010528 (issue #1252): a mid-session
+        ``git checkout -b`` (permitted by the deny list) makes finalize fail
+        after the agent-created branch was already published, stranding the
+        scaffolded branch and the session's work on it.
+        """
+        import subprocess
+
+        from nebuko.engine.lib.git import git_session
+
+        # A caller checkout with a bare remote (mirrors the 740–850 harness).
+        remote = tmp_path / "caller-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        caller = tmp_path / "caller"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.name", "t"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.email", "t@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            # A plain path, not a file:// URI: the scaffold's fetch must reach
+            # the bare remote too (as_uri() breaks ``git fetch`` here).
+            ["git", "-C", str(caller), "remote", "add", "origin", str(remote)],
+            check=True,
+        )
+        (caller / "base.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(caller), "add", "base.txt"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "commit", "-q", "-m", "base"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "push", "-q", "origin", "main"], check=True
+        )
+
+        trigger = _trigger(number=1250)
+        object.__setattr__(
+            trigger, "payload", {"issue": {"title": "fix it", "number": 1250}}
+        )
+        engine = _engine(
+            tmp_path,
+            trigger,
+            env={"GITHUB_WORKSPACE": str(caller)},
+        )
+        # The run's resolved hand-off normally carries ENGINE_TRIGGER; seed it
+        # the way the resolve_config phase does, so the scaffold sees the issue
+        # (_engine()'s repo_root is the real checkout; _active_trigger() reads
+        # the stored hand-off, not the adapter trigger, inside the run flow).
+        engine._run_resolved["resolved"] = {
+            "ENGINE_TRIGGER": trigger,
+            "TASK": "dev",
+        }
+
+        # The autouse isolation fixture stubs the git seams when repo_root is
+        # the real checkout; point the engine at the caller (a git checkout)
+        # so the real scaffold and finalize run against it. The scaffold does
+        # not read defaults/ — only the real repo checkout needs isolating.
+        object.__setattr__(engine, "repo_root", caller)
+
+        # Prompt phase: the scaffold creates the branch and records head_before.
+        # (``run()`` clears ``_scaffold_state`` up front; calling the phases
+        # directly mirrors the log sequence without a full run.)
+        scaffold = engine._branch_scaffold()
+        assert scaffold.ok and not scaffold.skipped, scaffold.detail
+        scaffolded = "feature/issue-1250-fix-it"
+        assert scaffold.branch == scaffolded
+        engine._scaffold_state["head_before"] = git_session.GitSessionGuard(
+            engine._caller_root(), engine._session_env()
+        ).head_sha()
+        head_before = subprocess.run(
+            ["git", "-C", str(caller), "rev-parse", scaffolded],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Agent phase simulation: the agent switches branch mid-session and
+        # commits work there (exactly what the deny list permits today).
+        subprocess.run(
+            ["git", "-C", str(caller), "checkout", "-q", "-b", "feature/issue-1250-claims-verification"],
+            check=True,
+        )
+        (caller / "claims.txt").write_text("claims\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(caller), "add", "claims.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "commit", "-q", "-m", "claims work"], check=True
+        )
+
+        result = engine._git_session_finalize()
+
+        assert not result.ok
+        assert "feature/issue-1250-claims-verification" in result.detail
+        assert "the session ended on" in result.detail
+        assert "not on the scaffolded branch" in result.detail
+        assert scaffolded in result.detail
+        # The stranded-work assertions: the commit exists only on the
+        # agent-created branch, the scaffolded branch HEAD is unchanged, and
+        # finalize pushed nothing.
+        assert subprocess.run(
+            ["git", "-C", str(caller), "rev-parse", scaffolded],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == head_before
+        assert subprocess.run(
+            ["git", "-C", str(caller), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == ""
+        remote_heads = subprocess.run(
+            ["git", "-C", str(caller), "ls-remote", "origin"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert scaffolded not in remote_heads
+
     def test_a_skipped_finalize_is_not_a_failure(self, tmp_path, monkeypatch):
         from nebuko.engine.lib.git import git_session
 
