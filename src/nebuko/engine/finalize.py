@@ -30,7 +30,7 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 
 # ``config`` lives on the frozen runtime path (``engine/lib``), which the
@@ -392,6 +392,28 @@ class AgentCall(BaseModel):
 
     agent_name: str
     task: Optional[str] = None
+    verify: list["VerificationClaim"] = Field(default_factory=list)
+
+    @model_validator(mode="after")  # @stub-protected: signature defined by architect — do not modify
+    def _verify_only_for_context(self) -> "AgentCall":
+        raise NotImplementedError
+
+
+class VerificationClaim(BaseModel):
+    """One falsifiable external assumption attached to a context hand-off.
+
+    ``kind="refute"`` asks for the evidence that would prove the assumption
+    wrong; ``if_wrong`` states what changes in the plan when it is.
+    """
+
+    id: str  # "C1", "C2", … unique within the call
+    claim: str  # phrased so evidence can confirm OR refute
+    kind: Literal["support", "refute"]
+    category: Literal[
+        "build_vs_buy", "version", "capability",
+        "limits_pricing", "alternatives", "compatibility",
+    ]
+    if_wrong: str = Field(min_length=10)  # what changes in the plan if false
 
 
 #: The single valid hold kind: a hold asks a *human* for input. An approval
