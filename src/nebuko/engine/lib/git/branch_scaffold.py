@@ -115,7 +115,14 @@ def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
         or "TOKEN" in key
         or "CREDENTIAL" in key
     }
-    return {**os.environ, **overlay, "GIT_TERMINAL_PROMPT": "0"}
+    # CONTEXT_BODIES carries the session payload: it counts toward the
+    # kernel's E2BIG argv+env limit and must not reach the subprocess.
+    bounded = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("CONTEXT_BODIES", "STEP_INPUT_RESULTS")
+    }
+    return {**bounded, **overlay, "GIT_TERMINAL_PROMPT": "0"}
 
 
 class BranchScaffold:
