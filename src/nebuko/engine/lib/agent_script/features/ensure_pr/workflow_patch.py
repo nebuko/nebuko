@@ -218,7 +218,6 @@ def revert_workflow_changes(
     paths = [
         path for path in workflow_paths if path not in set(workflow_matches_base)
     ]
-    raise NotImplementedError
     if not paths:  # pragma: no cover — dead until the stub body is implemented
         return
     try:
