@@ -15,6 +15,7 @@ Like the rest of the git layer, the check never raises for an expected "no".
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable, Sequence
 
 
@@ -39,7 +40,39 @@ class GitIdempotency:
         return the list of conflicted paths (empty list = clean merge). Never
         mutates the worktree.
         """
-        raise NotImplementedError
+        # ``origin/<base>`` needs a remote-tracking ref, which a probe
+        # checkout may not have: fall back to the local ``<base>`` ref when
+        # the tracking ref is unresolvable.
+        base_ref = f"origin/{base}"
+        try:
+            self._run_git(["rev-parse", "--verify", base_ref])
+        except RuntimeError:
+            try:
+                self._run_git(["rev-parse", "--verify", base, "--"])
+                base_ref = base
+            except RuntimeError:
+                pass
+        try:
+            self._run_git([
+                "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                base_ref, branch,
+            ])
+        except RuntimeError:
+            # Exit 1 means a conflict; rc-1 output (tree oid + conflicted
+            # paths) goes to stdout, which ``run_git`` drops when it raises —
+            # re-read it directly.
+            result = subprocess.run(
+                ["git", "-C", self._repo_root,
+                 "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                 base_ref, branch],
+                capture_output=True,
+                text=True,
+            )
+            lines = [line for line in result.stdout.splitlines() if line]
+            # Line 1 is the written tree oid (present even on conflict); the
+            # rest are the conflicted paths.
+            return lines[1:] if lines else []
+        return []
 
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected
         """Whether ``branch`` already contains ``origin/<base>``.

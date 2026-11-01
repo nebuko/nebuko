@@ -263,8 +263,36 @@ class BranchScaffold:
         An existing branch — local, or remote-only from a previous round —
         must be merged onto the base, never reset: ``checkout -B`` would
         orphan the prior round's commits (issue #1138 round 8).
+
+        Conflict-only (issue #1242): an existing branch is probed with a
+        read-only merge-tree first; a clean probe leaves the branch as-is so
+        the base's changes never enter the PR routinely, and a conflicted
+        probe performs the merge to surface the conflicted paths.
         """
         if self._branch_exists(branch):
+            # The probe is read-only: sync origin/<base> here so it sees
+            # main's latest state. Offline, fall back to the stale ref.
+            self._fetch_base(base)
+            try:
+                conflicts = self._idempotency.has_base_conflict(branch, base)
+            except RuntimeError as exc:
+                logger.warning("branch scaffold: conflict probe failed: %s", exc)
+                conflicts = None
+            if conflicts is not None and not conflicts:
+                # Clean merge: the base would merge without conflicts, so it
+                # is already effectively present — but it is NOT an ancestor
+                # of the branch, so report that honestly.
+                up_to_date = self._idempotency.base_already_merged(branch, base)
+                detail = (
+                    f"{branch} already contains origin/{base}: up to date"
+                    if up_to_date
+                    else f"{branch} vs origin/{base}: no conflicts — left as-is; "
+                    "main's changes must not enter the PR routinely"
+                )
+                logger.info("branch scaffold: %s", detail)
+                return ScaffoldResult(
+                    ok=True, already_up_to_date=True, detail=detail, branch=branch
+                )
             return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
 
@@ -332,9 +360,7 @@ class BranchScaffold:
                 self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
         except RuntimeError as exc:
             return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
-        # @stub-protected body replaced per issue #1242 (conflict-only merge)
-        raise NotImplementedError
-        try:  # pragma: no cover — dead until the stub body is implemented
+        try:
             # The identity is passed inline: the preflight that writes the
             # repo-local identity may not have run yet, and a runner without a
             # global one cannot create the merge commit.
