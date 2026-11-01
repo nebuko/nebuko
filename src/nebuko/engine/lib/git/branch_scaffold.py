@@ -332,6 +332,15 @@ class BranchScaffold:
                 self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
         except RuntimeError as exc:
             return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
+        # The probe is read-only: sync origin/<base> here so it sees main's
+        # latest state. Offline, fall back to the stale tracking ref.
+        try:
+            self._fetch_base(base)
+        except RuntimeError:
+            logger.warning(
+                "branch scaffold: could not fetch origin/%s, probing the "
+                "stale tracking ref", base
+            )
         conflicted = self._idempotency.has_base_conflict(branch, base)
         if not conflicted:
             detail = f"{branch} vs origin/{base}: no conflicts — left as-is"

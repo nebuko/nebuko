@@ -77,6 +77,8 @@ class TestHasBaseConflict:
         _git(seed, "checkout", "-q", "main")
         _commit(seed, "base.txt", "main\n", "main changes base.txt")
         _git(seed, "push", "-q", "origin", "main")
+        # The probe is read-only: syncing origin/main is the caller's job.
+        _git(checkout, "fetch", "-q", "origin", "main")
 
         # when: the read-only conflict probe runs
         guard = BranchScaffold(
