@@ -69,9 +69,9 @@ class GitIdempotency:
                 text=True,
             )
             lines = [line for line in result.stdout.splitlines() if line]
-            # Line 1 is the written tree oid (present even on conflict); the
-            # rest are the conflicted paths.
-            return lines[1:] if lines else []
+            # Line 1 is the written tree oid; the conflicted paths follow, up
+            # to the blank line before the informational merge messages.
+            return lines[1:lines.index("")] if "" in lines else lines[1:]
         return []
 
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected

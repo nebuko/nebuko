@@ -280,25 +280,13 @@ class BranchScaffold:
             # The probe is read-only: sync origin/<base> here so it sees
             # main's latest state. Offline, fall back to the stale ref.
             self._fetch_base(base)
-            try:
-                conflicts = self._idempotency.has_base_conflict(branch, base)
-            except RuntimeError as exc:
-                logger.warning("branch scaffold: conflict probe failed: %s", exc)
-                conflicts = None
-            if conflicts is not None and not conflicts:
-                # Clean merge: the base would merge without conflicts, so it
-                # is already effectively present — but it is NOT an ancestor
-                # of the branch, so report that honestly.
-                up_to_date = self._idempotency.base_already_merged(branch, base)
-                detail = (
+            if self._idempotency.base_already_merged(branch, base):
+                up_to_date = (
                     f"{branch} already contains origin/{base}: up to date"
-                    if up_to_date
-                    else f"{branch} vs origin/{base}: no conflicts — left as-is; "
-                    "main's changes must not enter the PR routinely"
                 )
-                logger.info("branch scaffold: %s", detail)
+                logger.info("branch scaffold: %s", up_to_date)
                 return ScaffoldResult(
-                    ok=True, already_up_to_date=True, detail=detail, branch=branch
+                    ok=True, already_up_to_date=True, detail=up_to_date, branch=branch
                 )
             return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
