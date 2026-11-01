@@ -76,7 +76,6 @@ steps:
     skill:
       - git-pr-workflow
       - stub-only
-    human_gate: true
     conditions:
       - on_result: approved
         next: implement
@@ -95,6 +94,100 @@ steps:
         - name: contract_fidelity
           required: false
           description: Any deviation from the plan's Object Design Contract, with justification (deviations need the gate's explicit ruling).
+
+        - name: critique
+          agent: review
+          prompt_replace: true
+          prompt: |
+            You are the DESIGN CRITIC. You did not write this plan or this spec, and your job is
+            not to approve them: it is to find the reasons they will fail, before any business
+            logic is written. Be specific and evidence-based; politeness is not a goal.
+
+            Inputs, in order of authority:
+              1. The original issue and the human comments. This is the source of truth.
+              2. The requirements ledger (R/K/NG/Q) from the analyze step, if present.
+              3. The @@architect plan: decision, Object Design Contract, doc contract.
+              4. The spec draft PR: doc, red tests, stubs.
+            Treat the plan's reasoning as claims to test, never as evidence. The @@context report
+            counts as evidence only where it cites a source.
+
+            Do, in order. You may read code, grep and run commands; you may NOT edit, commit or push.
+
+            1. COVERAGE. List every requirement and constraint from the issue (use the ledger IDs
+              when they exist; otherwise extract them yourself as R1…, K1…). For each, name the
+              plan step AND the red test that locks it. Report every item with no step or no
+              test, and every non-goal the plan violates.
+
+            2. SPEC FIDELITY.
+              - The stubs match the Object Design Contract 1:1 (paths, fields, types, signatures,
+                `# @stub-protected`).
+              - The tests encode the REQUIREMENTS, not just the stub shapes. A test that would
+                pass against any trivial implementation is a finding.
+              - Run the new tests: each must fail on its assertion or NotImplementedError, not
+                on an import or fixture error.
+              - Run the project's type checker on the stub modules if one is configured.
+
+            3. SIMPLICITY. Is there a materially simpler design that meets every R and K: fewer
+              classes, no new dependency, reuse of existing code in this repo (grep for it), or a
+              standard library or well-known package? If so, sketch it in two lines and say which
+              requirement, if any, it would fail.
+
+            4. RISKIEST ASSUMPTION. Name the single assumption that, if false, breaks the plan the
+              most (library behaviour, version, platform limit, pricing, performance). Say whether
+              it was verified, by what source, and whether the decision is one-way (dependency,
+              schema, public API, vendor) or two-way.
+
+            5. PRE-MORTEM. Six months from now this feature failed or was reverted. Write the three
+              most likely reasons, each tied to a specific section of the plan or file in the spec.
+
+            6. OPERATIONS. Error and failure paths, 10× load or 10× cost, security and secrets
+              handling, migration and rollback. Only where relevant to this change.
+
+            Classify every finding:
+              - BLOCKING: an uncovered R/K, a violated NG, a contract that is not implementable or
+                not type-correct, tests that do not exercise the requirement, an unverified one-way
+                assumption that is likely false, or a materially simpler design that meets all R/K.
+              - SHOULD-FIX: real risk or gap that does not invalidate the plan.
+              - NIT: everything else. Keep at most three.
+            Each finding states: where (plan section or file:line), what is wrong, why it matters,
+            and the DECISION the architect must make. Do not write the fix or redesign the
+            feature yourself.
+
+            Round rule: if a previous critique round exists, first check each earlier BLOCKING
+            finding (resolved / not resolved). Raise a new BLOCKING finding only for issues
+            introduced by the revision or clearly missed before.
+
+            Verdict:
+              - Any unresolved BLOCKING finding → finalize(turn_outcome={appreciation:'rejected'})
+              - Otherwise → finalize(turn_outcome={appreciation:'approved'})
+          human_gate: true
+          conditions:
+            - on_result: approved
+              next: implement
+            - on_result: rejected
+              next: plan
+          output:
+            fields:
+              - name: headline
+                title: true
+                description: One-line verdict, e.g. "2 blocking, 3 should-fix: uncovered K2, test for R1 is vacuous".
+              - name: coverage
+                description: Table of every R/K/NG → plan step → red test, with gaps marked.
+              - name: blocking
+                required: false
+                description: BLOCKING findings, each with location, problem, impact and the decision required.
+              - name: should_fix
+                required: false
+                collapsed: true
+                description: SHOULD-FIX findings and at most three nits.
+              - name: riskiest_assumption
+                description: The assumption, whether and how it was verified, and one-way vs two-way.
+              - name: premortem
+                collapsed: true
+                description: Three most likely failure reasons, each tied to a plan section or file.
+              - name: checks_run
+                collapsed: true
+                description: Commands run (tests, type checker, greps) and their key output.
 
   - name: implement
     agent: dev
