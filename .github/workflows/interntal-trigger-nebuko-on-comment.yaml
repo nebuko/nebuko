@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@004061e8d776bfc487dbb56f17c8ac7ba91475e5
     with:
       agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
     secrets:
