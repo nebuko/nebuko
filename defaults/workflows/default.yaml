@@ -30,6 +30,22 @@ steps:
     skill:
       - discover: ["planning"]
     next: context
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the request and the analysis.
+        - name: context_request
+          collapsed: true
+          required: true
+          description: What @@context must collect (files, docs, facts). Copy this verbatim into `agent_call.task` of the finalize hand-off.
+        - name: assumptions
+          required: false
+          description: Defaults you will proceed with if context is thin.
+        - name: requirements
+          collapsed: true
+          required: true
+          description: The requirements ledger (R/K/NG/Q table with source and origin). Every later step references these IDs.
 
   - name: context
     agent: context
@@ -46,6 +62,19 @@ steps:
         next: implement
       - on_result: rejected
         next: context
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the plan.
+        - name: decision
+          description: The chosen approach and the key rulings.
+        - name: coverage
+          required: true
+          description: One row per ledger ID → the plan decision/step that covers it and the test or check that will verify it.
+        - name: questions
+          required: false
+          description: Open questions for the human gate.
 
   - name: implement
     agent: dev

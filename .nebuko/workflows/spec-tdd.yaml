@@ -22,6 +22,10 @@ steps:
         - name: assumptions
           required: false
           description: Defaults you will proceed with if context is thin.
+        - name: requirements
+          collapsed: true
+          required: true
+          description: The requirements ledger (R/K/NG/Q table with source and origin). Every later step references these IDs.
 
   - name: context
     agent: context
@@ -49,6 +53,9 @@ steps:
         - name: questions
           required: false
           description: Open questions for the human gate.
+        - name: coverage
+          required: true
+          description: One row per ledger ID → the plan decision/step that covers it and the test or check that will verify it.
 
   - name: spec
     agent: dev
