@@ -62,10 +62,10 @@ NO_VERIFY_PATTERN = (
 #: The deny message for a branch-mutating ``git`` statement: switching
 #: branches mid-session strands the scaffolded branch and finalize fails.
 CHECKOUT_DENY_MESSAGE = (
-    "git checkout/switch/branch is disabled for agents: the engine owns the "
-    "branch layout and you must stay on the scaffolded branch until finalize. "
-    "Switching branches mid-session strands the scaffolded branch and loses "
-    "your commits."
+    "git checkout/switch/branch is disabled for agents: the session must stay "
+    "on the scaffolded branch; the engine owns branch lifecycle and "
+    "publishing. Inspect other branches read-only with "
+    "`git log/show/diff/ls-tree <ref>` — no checkout needed."
 )
 
 #: Matches a ``git checkout``, ``git switch`` or ``git branch`` statement
