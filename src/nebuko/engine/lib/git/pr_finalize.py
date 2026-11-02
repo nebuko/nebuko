@@ -21,14 +21,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-try:  # openhands ships with the ``runtime`` extra only.
-    from openhands.sdk import get_logger
-except ImportError:
-    # The lint-config job installs base deps (no openhands) yet must still
-    # import this module through the engine package (issue #1129).
-    get_logger = logging.getLogger
-
-logger = get_logger(__name__)
+# Plain stdlib logger: ``openhands.sdk.get_logger`` is ``logging.getLogger`` plus
+# ``propagate = True`` (the default), and importing it at module top dragged the
+# whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

@@ -3725,7 +3725,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     args = parser.parse_args(raw_args)
 
-    logging.basicConfig(level=logging.INFO)
+    from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
+
+    configure_logging(os.environ)
+    # Overlap the agent SDK's ~5s import with the gh/git-bound phases (issue #1266).
+    prewarm_agent_sdk(os.environ)
     kwargs: dict[str, Any] = {}
     if args.adapter == "local":
         if not args.run_dir:
