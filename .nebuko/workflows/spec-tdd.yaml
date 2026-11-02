@@ -170,7 +170,7 @@ steps:
             fields:
               - name: headline
                 title: true
-                description: One-line verdict, e.g. "2 blocking, 3 should-fix: uncovered K2, test for R1 is vacuous".
+                description: 'One-line verdict, e.g. "2 blocking, 3 should-fix: uncovered K2, test for R1 is vacuous".'
               - name: coverage
                 description: Table of every R/K/NG → plan step → red test, with gaps marked.
               - name: blocking
