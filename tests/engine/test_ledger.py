@@ -63,7 +63,7 @@ def test_entry_id_must_match_kind_prefix():
 
 def test_enforced_ids_are_r_and_k_only():
     ledger = RequirementsLedger.parse(_requirements_body())
-    assert ledger.enforced_ids() == ["R1", "R2", "R3", "K1"]
+    assert ledger.enforced_ids() == ["R1", "R2", "R3", "K1", "K2"]
     assert "Q1" in ledger.inferred_ids()
     assert "Q1" not in ledger.enforced_ids()
 
@@ -83,7 +83,8 @@ def test_validate_coverage_raises_missing_ids():
     body = _coverage_body().replace("| R3 |", "| R3x |")
     with pytest.raises(CoverageValidationError) as exc_info:
         validate_coverage(ledger, CoverageTable.parse(body))
-    assert str(exc_info.value) == "coverage missing: K2, R3"
+    # K2 is covered by the fixture; only R3 (renamed R3x) is missing.
+    assert str(exc_info.value) == "coverage missing: R3"
 
 
 def test_deferred_row_exempts():
