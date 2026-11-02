@@ -11,10 +11,11 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  actions: write
 
 jobs:
   agent:
-    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@004061e8d776bfc487dbb56f17c8ac7ba91475e5
+    uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@main
     with:
       agent_config_path: ".nebuko/agents/agent-config-mistral.yaml"
     secrets:
