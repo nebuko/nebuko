@@ -41,6 +41,7 @@ from nebuko.engine.lib.config.sub_domains.workflow_step.output_field import (  #
     OutputField,
     StepOutput,
 )
+from nebuko.engine.verify import VerificationClaim  # noqa: E402
 from nebuko.engine.lib.workflow_state import (  # noqa: E402 - runtime-path module
     Appreciation,
     FunctionCall,
@@ -392,6 +393,17 @@ class AgentCall(BaseModel):
 
     agent_name: str
     task: Optional[str] = None
+    #: Falsifiable claims (issue #1250) carried only on a hand-off to context;
+    #: enforced in :meth:`TurnOutcomePayload.validate_runtime`.
+    verify: list[VerificationClaim] = Field(default_factory=list)
+
+    def validate_runtime(self) -> None:
+        """Reject claims attached to a hand-off that does not target context."""
+        if self.verify and self.agent_name.strip() != "context":
+            raise ValueError(
+                "verify is only valid on a hand-off to context (got "
+                f"'{self.agent_name}')"
+            )
 
 
 #: The single valid hold kind: a hold asks a *human* for input. An approval
