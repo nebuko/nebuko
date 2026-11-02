@@ -200,6 +200,53 @@ Mechanics:
      feedback injected into its context; the gate re-arms when that run
      completes, so fresh human validation is required;
    - **rejected without feedback** → the `on_result: rejected` successor.
+
+### Gate verdict routing (issue #1274)
+
+**How to use.** A gated step may declare conditional edges alongside
+`human_gate: true`, exactly like any other step:
+
+```yaml
+  - name: plan
+    agent: architect
+    human_gate: true
+    next: implement
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: context
+```
+
+(This is the shape shipped by [`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml): a rejected plan
+sends the run back to `context` for fresh facts.)
+
+**How it works — verdict routing.** When a gated step's agent ends its turn
+with a verdict, the gate guard routes on it *before* parking:
+
+| Agent verdict | Gate has `on_result: rejected` edge? | What happens |
+|---|---|---|
+| `rejected` | yes | The conditional reject edge is routed **automatically** (including backward edges). No human ping, no hold. The armed `GateLock` is consumed on that route so the next turn is not re-parked; the gate re-arms naturally when the gated step completes again. |
+| `rejected` | no | Falls back to the human hold — it never silently follows the forward `next` edge. |
+| `approved` / default / absent | — | Unchanged: parked in `human_gate_hold` until `/nebuko approve gate` / `/nebuko reject gate`. The gate pings the human **only** before moving forward. |
+
+Notes:
+
+- The consult budget (`call_agent` rounds while armed) does not apply to the
+  rejected route; it stays bound to the hold path.
+- The reject route is still bounded: after `MAX_CONSECUTIVE_AUTO_REJECTS = 3`
+  consecutive auto-routed rejects on the same gated step (constant in
+  `src/nebuko/lib/resolve_config/features/resolve_route/resolve_route.py`),
+  the run falls back to the human hold with the reason in the hold note. The
+  counter resets on any human gate decision or on an `approved` verdict for
+  the gated step.
+- Human gate **command** semantics are untouched: a rejected-with-feedback
+  command still re-runs the gated step with the feedback injected.
+
+The example above mirrors the shape shipped in
+[`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml)
+(the `plan` step).
+
 4. Decisions are **single-shot**: a `GateDecision` binds to exactly one
    `(workflow, step, position)` hold instance and is consumed on routing, so
    replaying an old command is a no-op.
