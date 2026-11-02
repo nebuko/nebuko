@@ -103,19 +103,6 @@ def _wire(monkeypatch, host, prompter=None):
     return context
 
 
-def _wire_pat(monkeypatch, host, prompter=None):
-    """Same wiring, forced into PAT mode (pre-App-default contract)."""
-    _wire(monkeypatch, host, prompter)
-    original = cli.main
-
-    def main(argv=None):
-        argv = list(argv) if argv is not None else None
-        return original(["--pat", *(argv or [])])
-
-    monkeypatch.setattr(cli, "main", main)
-    return cli.main
-
-
 def _set_secrets(monkeypatch, **values):
     for name, value in values.items():
         monkeypatch.setenv(f"NEBUKO_SECRET_{name}", value)
@@ -129,7 +116,7 @@ def test_non_interactive_opens_a_pr_and_sets_the_secrets(monkeypatch, capsys):
     _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    code = cli.main(["--repo", "acme/widgets", "--provider", "openrouter", "--pat", "--non-interactive"])
+    code = cli.main(["--repo", "acme/widgets", "--provider", "openrouter", "--non-interactive"])
 
     captured = capsys.readouterr()
     assert code == 0
@@ -145,7 +132,7 @@ def test_the_pull_request_carries_the_config_and_the_pinned_workflow(monkeypatch
     _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    assert cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"]) == 0
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
 
     files = host.prs[0]["files"]
     assert files.agent_config_path == ".nebuko/agents/agent-config.yaml"
@@ -164,7 +151,7 @@ def test_missing_workflow_scope_exits_two_with_the_remediation(monkeypatch, caps
     _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    code = cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"])
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
 
     assert code == 2
     assert "gh auth refresh -s workflow" in capsys.readouterr().err
@@ -194,7 +181,7 @@ def test_success_prints_the_next_steps(monkeypatch, capsys):
     _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    assert cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"]) == 0
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
 
     out = capsys.readouterr().out
     print("CAPTURED", repr(out))
@@ -209,7 +196,7 @@ def test_the_wordmark_is_printed_first(monkeypatch, capsys):
     _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    assert cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"]) == 0
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
 
     out = capsys.readouterr().out
     print("CAPTURED", repr(out))
@@ -229,7 +216,7 @@ def test_the_wordmark_is_printed_before_the_gh_check(monkeypatch, capsys):
 
 def test_missing_gh_cli_exits_two_with_an_install_hint(monkeypatch, capsys):
     host = FakeHost(gh_available=False)
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
@@ -257,7 +244,7 @@ def test_non_interactive_requires_the_secret_env_vars(monkeypatch, capsys):
     _wire(monkeypatch, host)
     monkeypatch.delenv("NEBUKO_SECRET_OPENROUTER_API_KEY", raising=False)
 
-    code = cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"])
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
 
     assert code == 2
     assert "NEBUKO_SECRET_OPENROUTER_API_KEY" in capsys.readouterr().err
@@ -272,7 +259,7 @@ def test_non_interactive_requires_the_repo_flag(monkeypatch, capsys):
 
 def test_org_flag_targets_org_level_secrets(monkeypatch):
     host = FakeHost()
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
@@ -283,7 +270,7 @@ def test_org_flag_targets_org_level_secrets(monkeypatch):
 
 def test_non_interactive_defaults_to_repository_level_secrets(monkeypatch):
     host = FakeHost()
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     assert cli.main(["--repo", "acme/widgets", "--non-interactive"]) == 0
@@ -297,7 +284,7 @@ def test_interactive_asks_where_to_store_the_secrets(monkeypatch, capsys):
         choices=["organization", "openrouter"],
         secrets=["key-123", "pat-456"],
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
 
     assert cli.main([]) == 0
     assert host.prs[0]["target"].org == "acme-org"
@@ -311,7 +298,7 @@ def test_interactive_defaults_to_repository_level_secrets(monkeypatch):
         choices=["repository", "openrouter"],
         secrets=["key-123", "pat-456"],
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
 
     assert cli.main([]) == 0
     assert host.prs[0]["target"].org is None
@@ -329,7 +316,7 @@ def test_unknown_provider_is_a_usage_error(monkeypatch):
 
 def test_existing_config_is_not_overwritten_without_confirmation(monkeypatch, capsys):
     host = FakeHost(existing=(".nebuko/agents/agent-config.yaml",))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
@@ -341,7 +328,7 @@ def test_existing_config_is_not_overwritten_without_confirmation(monkeypatch, ca
 
 def test_force_overwrites_existing_config(monkeypatch):
     host = FakeHost(existing=(".github/workflows/nebuko.yaml",))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--non-interactive", "--force"])
@@ -358,7 +345,7 @@ def test_interactive_run_asks_before_overwriting(monkeypatch, capsys):
         secrets=["key-123", "pat-456"],
         confirm_answer=True,
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
 
     assert cli.main([]) == 0
     assert prompter.confirmations
@@ -370,7 +357,7 @@ def test_interactive_run_asks_before_overwriting(monkeypatch, capsys):
 
 def test_existing_org_secrets_are_skipped_and_reported(monkeypatch, capsys):
     host = FakeHost(existing_secrets=("GH_PAT", "OPENROUTER_API_KEY"))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
 
     code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
 
@@ -391,7 +378,7 @@ def test_existing_secrets_are_reported_right_after_the_scope_selection(monkeypat
     prompter = FakePrompter(
         texts=["acme/widgets", "acme-org", "ubuntu-latest"], choices=["organization"]
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
     printed: list[str] = []
     mocker.patch.object(cli, "print", side_effect=lambda text: printed.append(text))
     original_provider = cli._resolve_provider
@@ -416,7 +403,7 @@ def test_existing_secrets_are_reported_right_after_the_scope_selection(monkeypat
 
 def test_force_rewrites_existing_secrets(monkeypatch):
     host = FakeHost(existing_secrets=("GH_PAT", "OPENROUTER_API_KEY"))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive", "--force"])
@@ -428,7 +415,7 @@ def test_force_rewrites_existing_secrets(monkeypatch):
 
 def test_non_interactive_does_not_require_the_skipped_secret_env(monkeypatch, capsys):
     host = FakeHost(existing_secrets=("GH_PAT",))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123")
 
     code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
@@ -440,7 +427,7 @@ def test_non_interactive_does_not_require_the_skipped_secret_env(monkeypatch, ca
 
 def test_repository_level_existing_secrets_are_skipped_too(monkeypatch, capsys):
     host = FakeHost(existing_secrets=("OPENROUTER_API_KEY",))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
@@ -455,7 +442,7 @@ def test_repository_level_existing_secrets_are_skipped_too(monkeypatch, capsys):
 def test_a_failing_secret_listing_fails_the_run(monkeypatch, capsys):
     host = FakeHost()
     host.existing_secrets = Mock(side_effect=SetupError("gh secret list failed: boom"))
-    _wire_pat(monkeypatch, host)
+    _wire(monkeypatch, host)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
     code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
@@ -475,7 +462,7 @@ def test_interactive_flow_asks_for_everything(monkeypatch, capsys):
         choices=["repository", "commandcode"],
         secrets=["cc-key", "pat-9"],
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
 
     code = cli.main([])
 
@@ -505,7 +492,7 @@ def test_an_empty_secret_answer_skips_that_secret(monkeypatch, capsys):
     prompter = FakePrompter(
         texts=["acme/widgets"], choices=["repository", "openrouter"], secrets=["", ""]
     )
-    _wire_pat(monkeypatch, host, prompter)
+    _wire(monkeypatch, host, prompter)
 
     assert cli.main([]) == 0
     assert host.secrets == {}
