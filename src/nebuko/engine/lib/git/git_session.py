@@ -337,6 +337,15 @@ class GitSessionGuard:
         logger.info("git session: installed the push token for %s", self.remote)
         return None
 
+    # @stub-protected
+    def recover(self, expected_branch: str) -> GuardResult:
+        """Return the session to ``expected_branch`` after a drift (issue #1268).
+
+        Never destroys work: a dirty tree is stashed and restored, and commits
+        already made on the drifted branch are left there, named in ``detail``.
+        """
+        raise NotImplementedError
+
     # ── Publication ───────────────────────────────────────────────
 
     # @stub-protected
