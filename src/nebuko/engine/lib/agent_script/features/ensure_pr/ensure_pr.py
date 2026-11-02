@@ -27,6 +27,7 @@ content-creation secondary limit can no longer silently drop the PR (issue #805)
 """
 
 import os
+import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -630,6 +631,84 @@ def _dirty_paths() -> tuple[str, ...]:
     return tuple(paths)
 
 
+# Closing keywords GitHub honours for auto-linking (Closes/Fixes/Resolves,
+# optionally colon-separated), case-insensitive.
+_CLOSING_RE = re.compile(r"\b(?:Closes|Fixes|Resolves):?\s+#\d+\b", re.IGNORECASE)
+
+
+def _pr_number_from_url(pr_url: str) -> Optional[str]:
+    """Parse the trailing ``/pull/<digits>`` from a gh PR URL.
+
+    Returns the number as a string, or ``None`` when unparseable.
+    """
+    match = re.search(r"/pull/(\d+)\s*$", pr_url)
+    return match.group(1) if match else None
+
+
+def _fetch_pr_body(
+    repo: str, pr_number: str, *, transport: Optional[GitHubTransport] = None
+) -> str:
+    """Return the PR body via ``gh pr view``; ``""`` on failure."""
+    try:
+        return _run_gh(
+            ["pr", "view", pr_number, "--repo", repo, "--json", "body",
+             "--jq", ".body"],
+            transport=transport,
+        )
+    except (RuntimeError, TimeoutExpired) as exc:
+        logger.warning(f"ensure_pr: could not fetch body of PR #{pr_number}: {exc}")
+        return ""
+
+
+def _append_closes_line(body: str, issue_number: int) -> str:
+    """Append ``Closes #<issue_number>`` unless a closing reference already
+    exists; never removes existing content."""
+    if _CLOSING_RE.search(body):
+        return body
+    link = f"Closes #{issue_number}"
+    if body and not body.endswith("\n"):
+        body += "\n"
+    return f"{body}\n{link}" if body else link
+
+
+def ensure_issue_link(
+    pr_url: str,
+    issue_number: Optional[int],
+    *,
+    repo: str = "",
+    transport: Optional[GitHubTransport] = None,
+) -> bool:
+    """Idempotently ensure the PR body carries a closing reference to the issue.
+
+    No-op (returns False) without an issue number or a parseable PR URL;
+    patches the body via ``gh pr edit`` when the link is missing and never
+    raises — linking must not fail the PR step. Returns True iff the closing
+    reference is present afterwards.
+    """
+    if not issue_number or not pr_url:
+        return False
+    pr_number = _pr_number_from_url(pr_url)
+    if not pr_number:
+        return False
+    try:
+        body = _fetch_pr_body(repo, pr_number, transport=transport)
+        if not body:
+            return False
+        if _CLOSING_RE.search(body):
+            return True
+        new_body = _append_closes_line(body, issue_number)
+        _run_gh(
+            ["pr", "edit", pr_number, "--repo", repo, "--body", new_body],
+            transport=transport,
+            mutative=True,
+        )
+        return True
+    except (RuntimeError, TimeoutExpired) as exc:
+        # Linking must never fail the PR step.
+        logger.warning(f"ensure_pr: could not link PR #{pr_number} to issue: {exc}")
+        return False
+
+
 def _open_pr(
     repo: str,
     head: str,
@@ -983,9 +1062,11 @@ def _ensure_pr_impl(
 
     existing = _find_pr_for_branch(branch, transport=transport)
     pr_url = existing or ""
+    # Resolved lazily: paths that never link (no PR URL) must not fail on a
+    # missing remote.
+    repo = _run_git(["remote", "get-url", remote]) if pr_url else ""
+    issue_number = _issue_number_from_env()
     if not pr_url and not no_push:
-        repo = _run_git(["remote", "get-url", remote])
-        issue_number = _issue_number_from_env()
         title = pr_title(issue_number, issue_title) or branch
         pr_url = _open_pr(
             repo,
@@ -1002,6 +1083,9 @@ def _ensure_pr_impl(
             logger.info(f"ensure_pr: PR links the target issue via 'Closes #{issue_number}'")
     elif existing:
         logger.info(f"ensure_pr: PR already exists for '{branch}': {existing}")
+
+    if pr_url:
+        ensure_issue_link(pr_url, issue_number, repo=repo, transport=transport)
 
     if held_back:
         try:
