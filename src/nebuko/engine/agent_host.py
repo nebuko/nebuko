@@ -396,8 +396,30 @@ def _salvage_finalize_body(
     ``salvage`` never raises; an empty result means no section survived, and the
     caller keeps the fallback chain.
     """
-    report = handler.salvage(_finalize_turn_text(conversation))
-    return OutputRenderer(contract).render(report.sections)
+    from nebuko.engine.report_text import closing_turn_report_candidates
+
+    # A candidate wins only when it yields at least one marker-pair section:
+    # a title-only lead-in (``# …`` alone) is exactly the title-only post that
+    # starved the next run's prompt (issue #1263), so it is not salvageable.
+    try:
+        candidates = closing_turn_report_candidates(conversation)
+    except Exception:  # noqa: BLE001 - salvage must never raise
+        return ""
+    for candidate in candidates:
+        try:
+            report = handler.salvage(candidate)
+        except Exception:  # noqa: BLE001 - salvage must never raise
+            continue
+        if not any(
+            not field.title and report.sections.get(field.name)
+            for field in contract.fields
+        ):
+            continue
+        try:
+            return handler.terminator.renderer.render(report.sections)
+        except Exception:  # noqa: BLE001 - salvage must never raise
+            continue
+    return ""
 
 
 def _turn_outcome_payload(conversation: Any, state: Any) -> dict[str, Any] | None:

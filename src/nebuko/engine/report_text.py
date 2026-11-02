@@ -106,37 +106,69 @@ def closing_turn_report_text(conversation: Any) -> str:
     finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
     section skeleton (issue #1020), and harvesting it posts the template.
     """
-    anchor = finalize_anchor_index(conversation)
+    # @stub-protected: signature defined by architect — do not modify
+    return _first_salvageable(closing_turn_report_candidates(conversation))
+
+
+def _first_salvageable(candidates: list[str]) -> str:
+    """The first candidate with any text, or ``""`` (the wrapper's contract)."""
+    for text in candidates:
+        if text:
+            return text
+    return ""
+
+
+def closing_turn_report_candidates(conversation: Any) -> list[str]:
+    """Every candidate report text for the anchored finalize turn (issue #1263).
+
+    Precedence order: (1) the anchor finalize call's ``report`` argument
+    (including from a call the SDK rejected), (2) the anchor event's
+    ``thought``, (3) the nearest preceding agent-authored message bounded by the
+    finalize/user-turn window. Whitespace-only candidates are omitted; no event
+    after the anchor is ever read; never raises.
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    try:
+        anchor = finalize_anchor_index(conversation)
+    except Exception:  # noqa: BLE001 - salvage must never raise
+        return []
     if anchor < 0:
-        return ""
+        return []
     events = events_of(conversation)
+    candidates: list[str] = []
     argument = _report_argument(events[anchor])
     if argument:
-        return argument
-    text = content_text(getattr(events[anchor], "thought", None)).strip()
-    if text:
-        return text
+        candidates.append(argument)
+    thought = content_text(getattr(events[anchor], "thought", None)).strip()
+    if thought:
+        candidates.append(thought)
+    # The message fallback applies only when the anchor turn carries no text
+    # of its own beyond the report argument: a turn whose own text named the
+    # report already, and the earlier message is that turn's context, not this
+    # turn's deliverable. A bare `report` argument is not turn text, so it does
+    # not disqualify the fallback (issue #1263).
+    message_candidate = not thought
     # This closing turn starts at its own prompt (a user ``MessageEvent``) and
     # ends at the anchor. An earlier ``finalize`` call (a refused or recorded
     # attempt) also bounds the window: the messages after it are that attempt's
     # acknowledgements, never this turn's report (issue #1038).
-    offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
-    start = offset
-    for index in range(anchor - 1, offset - 1, -1):
+    start = 0
+    for index in range(anchor - 1, -1, -1):
         if is_finalize_call(events[index]) or (
             getattr(events[index], "source", None) == "user"
         ):
             start = index + 1
             break
-    for index in range(anchor - 1, start - 1, -1):
-        if getattr(events[index], "tool_name", None) is not None:
-            continue
-        if getattr(events[index], "source", None) != "agent":
-            continue
-        message = getattr(events[index], "llm_message", None)
-        if message is None:
-            continue
-        text = content_text(getattr(message, "content", None)).strip()
-        if text:
-            return text
-    return ""
+    if message_candidate:
+        for index in range(anchor - 1, start - 1, -1):
+            if getattr(events[index], "tool_name", None) is not None:
+                continue
+            if getattr(events[index], "source", None) != "agent":
+                continue
+            message = getattr(events[index], "llm_message", None)
+            if message is None:
+                continue
+            text = content_text(getattr(message, "content", None)).strip()
+            if text:
+                candidates.append(text)
+    return candidates
