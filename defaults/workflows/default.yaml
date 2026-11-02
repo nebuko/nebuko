@@ -9,8 +9,23 @@ steps:
     agent: architect
     complexity: low
     prompt: |
-      Analysis turn: a human issue or request just arrived.
-      - Decide what context @@context must collect (files, docs, facts).
+      Analysis turn: a human issue or request just arrives. Before writing the
+      context request, think (`think` tool) through:
+      1. Sketch 2–3 candidate approaches, one line each. No plan yet.
+      2. List the external facts each approach depends on (build vs buy,
+         versions, capabilities, limits and pricing).
+      3. Think in opposites: for the preferred approach, state what you would
+         expect to find if it were WRONG, and ask @@cort confirm or refute that.
+      4. Keep only claims whose `if_wrong` would actually change the plan
+         (max 3 at low complexity, 5 medium, 8 high; at least one third must
+         be refuting claims).
+      5. Treat every version, price and limit as unverified until @@context
+         confirms it from a registry or the vendor's official page.
+      - Attach these as `agent_call.verify` (list of {id: "C1", claim, kind:
+        "support"|"refute", category: build_vs_buy|version|capability|
+        limits_pricing|alternatives|compatibility, if_wrong}) on the hand-off.
+        Never include the draft plan in the task — the claims are checked
+        independently of it.
       - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
       - Delegate to @@context in the SAME turn, and end with the typed hand-off:
         finalize(
@@ -18,7 +33,7 @@ steps:
           turn_outcome={
             "appreciation": "approved",
             "complexity": "low",            # optional: omit to inherit the step's
-            "agent_call": {"agent_name": "context", "task": "…exact files/facts to collect…"},
+            "agent_call": {"agent_name": "context", "task": "…exact files/facts to collect…", "verify": [{"id": "C1", "claim": "…", "kind": "refute", "category": "version", "if_wrong": "…what changes in the plan…"}]},
           },
         )
         Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
