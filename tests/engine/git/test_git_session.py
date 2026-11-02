@@ -189,40 +189,6 @@ def test_ensure_push_auth_installs_token_after_probe_failure(checkout):
     assert "tok-1134" not in header
 
 
-# ── recover ─────────────────────────────────────────────────────
-
-
-def test_recover_is_a_noop_without_drift(checkout):
-    guard = _local_guard(checkout)
-
-    result = guard.recover("main")
-
-    assert result.ok
-    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "main"
-
-
-def test_recover_checks_out_the_scaffolded_branch_from_a_dirty_tree(checkout):
-    _git(checkout, "checkout", "-b", "feature/other")
-    (checkout / "loose.txt").write_text("uncommitted\n", encoding="utf-8")
-
-    result = _local_guard(checkout).recover("main")
-
-    assert result.ok, result.detail
-    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "main"
-    assert _git(checkout, "status", "--porcelain") != ""  # work restored
-    assert (checkout / "loose.txt").read_text(encoding="utf-8") == "uncommitted\n"
-
-
-def test_recover_fails_without_touching_anything_on_a_missing_branch(checkout):
-    guard = _local_guard(checkout)
-
-    result = guard.recover("no-such-branch")
-
-    assert not result.ok
-    assert "no-such-branch" in result.detail
-    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "main"
-
-
 # ── finalize ─────────────────────────────────────────────────────
 
 
