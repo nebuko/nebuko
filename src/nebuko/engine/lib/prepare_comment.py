@@ -65,6 +65,7 @@ MAX_COMMENT_LENGTH = 60000
 # Wrapped in <details> at posting time so a long context report stays scannable
 # while remaining fully auditable in the comment body (issue #557).
 CONTEXT_SECTION_HEADINGS = [
+    "CLAIM VERIFICATION",
     "FILES FOUND",
     "RELEVANT SNIPPETS",
     "EXTERNAL REFERENCES",

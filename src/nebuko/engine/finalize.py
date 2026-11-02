@@ -394,7 +394,8 @@ class AgentCall(BaseModel):
     agent_name: str
     task: Optional[str] = None
     #: Falsifiable claims (issue #1250) carried only on a hand-off to context;
-    #: enforced in :meth:`TurnOutcomePayload.validate_runtime`.
+    #: validated by :class:`~nebuko.engine.verify.ClaimsValidator` in
+    #: :meth:`TurnOutcomePayload.validate_runtime`.
     verify: list[VerificationClaim] = Field(default_factory=list)
 
     def validate_runtime(self) -> None:
@@ -463,6 +464,17 @@ class TurnOutcomePayload(BaseModel):
             raise ValueError(f"round must be >= 0 (got {self.round})")
         if self.agent_call is not None and not self.agent_call.agent_name.strip():
             raise ValueError("agent_call.agent_name is required and must not be blank")
+        if self.agent_call is not None and self.agent_call.verify:
+            from nebuko.engine.verify import ClaimsValidator  # noqa: PLC0415
+
+            complexity = self.complexity or "medium"
+            message = ClaimsValidator().validate(
+                self.agent_call.verify,
+                agent_name=self.agent_call.agent_name.strip(),
+                complexity=complexity,
+            )
+            if message is not None:
+                raise ValueError(f"agent_call.verify: {message}")
 
     def to_turn_outcome(self, *, status: TurnStatus = TurnStatus.COMPLETED) -> TurnOutcome:
         """Map onto the factual ``TurnOutcome`` model.
@@ -485,9 +497,16 @@ class TurnOutcomePayload(BaseModel):
         """
         if self.agent_call is None or self.appreciation == "hold":
             return None
+        # Render the claims into the callee's task (issue #1250): the evidence
+        # table travels with the task, the draft plan itself never does.
+        task = self.agent_call.task
+        if self.agent_call.verify:
+            from nebuko.engine.verify import ClaimTaskRenderer  # noqa: PLC0415
+
+            task = ClaimTaskRenderer().render_task(task, self.agent_call.verify)
         return FunctionCall(
             agent_name=self.agent_call.agent_name.strip(),
-            task=self.agent_call.task,
+            task=task,
             complexity=self.complexity or "",
         )
 

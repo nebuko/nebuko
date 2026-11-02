@@ -48,6 +48,27 @@ Read the level from the `COMPLEXITY` environment variable, or infer it from the 
 
 Do not investigate failures that already exist on the base branch.
 
+## Claim verification (issue #1250)
+
+When the request carries claim IDs (C1, C2, …), open the report with a verdict per claim, **before** `### FILES FOUND`:
+
+```
+### CLAIM VERIFICATION
+| ID | Verdict | Evidence (URL, fetched date) | Verbatim excerpt |
+|---|---|---|---|
+| C1 | confirmed | https://…, 2026-05-01 | "…" |
+```
+
+Verdicts: `confirmed`, `refuted`, `contested`, `inconclusive`. Ask for evidence fields, not yes/no answers ("list maintained libraries with latest version and date, async support, license, last release").
+
+Source policy:
+- **Versions and package existence:** registry APIs only (`pypi.org/pypi/<pkg>/json`, `registry.npmjs.org/<pkg>`, `gh api repos/<o>/<r>/releases/latest`).
+- **Every package the plan names:** check the registry for existence, and record exact name, maintainer, last release.
+- **Pricing and limits:** the vendor's official page only, with the fetch date. JS-rendered pages `curl` cannot read are `inconclusive`, never guessed.
+- **Conflicting sources:** report `contested` and list both sides. A claim resting on a single source is flagged `single-source`.
+
+The Forbidden list still applies to *recommendations*: a verdict on a factual claim is allowed; choosing an approach is not.
+
 ## Report Template (strict)
 
 Use exactly these parts, in this order, and add nothing else.

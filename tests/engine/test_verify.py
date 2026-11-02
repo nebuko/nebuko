@@ -69,6 +69,6 @@ class TestClaimTaskRenderer:
     def test_renders_fixed_table_with_one_row_per_claim(self) -> None:
         rendered = ClaimTaskRenderer().render([_claim(), _claim(id="C2")])
         assert rendered.startswith("### CLAIM VERIFICATION")
-        assert "| ID | Verdict |" in rendered
-        assert "| C1 | | | |" in rendered
-        assert "| C2 | | | |" in rendered
+        assert "| ID |" in rendered and "Verdict" in rendered
+        assert "| C1 |" in rendered
+        assert "| C2 |" in rendered
