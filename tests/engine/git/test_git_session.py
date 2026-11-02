@@ -217,6 +217,32 @@ def test_finalize_fails_when_the_session_switched_branch(checkout):
     assert "feature/other" in result.detail
 
 
+def test_finalize_abandons_leftovers_when_the_session_switched_branch(checkout):
+    """Repro of the code loss in run 41354010528 (issue #1252).
+
+    The agent commits on the scaffolded branch, then a mid-session
+    ``git checkout -b`` strands both the commit and a dirty leftover:
+    finalize fails on the branch mismatch without recovering either.
+    """
+    _git(checkout, "checkout", "-b", "feature/x")
+    (checkout / "work.txt").write_text("work\n", encoding="utf-8")
+    _git(checkout, "add", "work.txt")
+    _git(checkout, "commit", "-m", "session work")
+    _git(checkout, "checkout", "-b", "feature/other")
+    (checkout / "loose.txt").write_text("uncommitted\n", encoding="utf-8")
+    scaffolded_head = _git(checkout, "rev-parse", "feature/x")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert not result.ok
+    assert "feature/other" in result.detail and "feature/x" in result.detail
+    # The code-loss assertion: neither branch carries the work forward.
+    assert _git(checkout, "rev-parse", "feature/x") == scaffolded_head
+    assert _git(checkout, "status", "--porcelain") != ""
+    remote_heads = _git(checkout, "ls-remote", "origin")
+    assert "feature/x" not in remote_heads and "feature/other" not in remote_heads
+
+
 def test_finalize_without_expected_branch_still_skips_a_detached_head(checkout):
     _git(checkout, "checkout", "--detach")
 
