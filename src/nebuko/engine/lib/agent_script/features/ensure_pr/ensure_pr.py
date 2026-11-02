@@ -452,7 +452,42 @@ def _base_conflict_paths(branch: str, base: str) -> list[str]:
     cross-boundary import of ``engine.lib.git`` from the agent-script runtime
     is unconfirmed. Never mutates the worktree.
     """
-    raise NotImplementedError
+    # --write-tree performs the merge in memory (no index/worktree touch).
+    # Exit code 1 means "conflicts found" — that answer carries the conflicted
+    # entries on stdout, so capture it instead of letting _run_git raise.
+    result = subprocess.run(
+        ["git", "merge-tree", "--write-tree", f"origin/{base}", branch],
+        capture_output=True,
+        text=True,
+        timeout=DEFAULT_TIMEOUT,
+        cwd=_repo_root(),
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(
+            f"git merge-tree --write-tree origin/{base} {branch} failed"
+            f" ({result.returncode}): {result.stderr.strip()}"
+        )
+    return _parse_conflict_paths(result.stdout)
+
+
+def _parse_conflict_paths(merge_tree_output: str) -> list[str]:
+    """Extract conflicted paths from ``git merge-tree --write-tree`` output.
+
+    Output format: first line is the merged OID; conflicted sections follow,
+    each as ``<mode> <oid> <stage>\t<path>`` (stage 1/2/3) plus informational
+    lines like ``Auto-merging <path>``. We keep only the tab-separated
+    conflicted-entry paths, deduplicated, in first-seen order.
+    """
+    paths: list[str] = []
+    for line in merge_tree_output.splitlines():
+        if "\t" not in line:
+            continue
+        meta, path = line.split("\t", 1)
+        parts = meta.split(" ")
+        if len(parts) == 3 and parts[2] in {"1", "2", "3"}:
+            if path not in paths:
+                paths.append(path)
+    return paths
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
