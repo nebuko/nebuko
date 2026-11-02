@@ -3,45 +3,44 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 
 import pytest
 
-from nebuko.engine.init.manifest import ManifestError, load_packaged_manifest, parse_manifest
-
-REPO_ROOT_PROVIDERS = {
-    "openrouter": (
-        "defaults/agents/agent-config-openrouter.yaml",
-        ("OPENROUTER_API_KEY",),
-    ),
-    "commandcode": (
-        "defaults/agents/agent-config-commandcode.yaml",
-        ("COMMANDCODE_API_KEY",),
-    ),
-    "opencode": (
-        "defaults/agents/agent-config-opencode.yaml",
-        ("OPENCODE_GO_API_KEY",),
-    ),
-    "mistral": (
-        "defaults/agents/agent-config-mistral.yaml",
-        ("MISTRAL_API_KEY",),
-    ),
-}
+from nebuko.engine.init.manifest import (
+    Manifest,
+    ManifestError,
+    load_packaged_manifest,
+    parse_manifest,
+)
+from nebuko.engine.init.providers import PROVIDER_PROFILES
 
 
-# Given a manifest with the four shipped providers, when parsed, then the
-# provider set matches providers.py verbatim (paths and secret names included)
+# Given the packaged manifest, when loaded, then a valid Manifest with
+# non-empty providers is returned (pyproject package-data gate)
+def test_load_packaged_manifest():
+    manifest = load_packaged_manifest()
+    assert isinstance(manifest, Manifest)
+    assert manifest.providers
+
+
+# Given the four shipped providers, when the manifest is compared against
+# providers.py, then names, secret_names and template_path match verbatim
 def test_providers_match_providers_py():
     manifest = load_packaged_manifest()
-    got = {p.name: (p.template_path, p.secret_names) for p in manifest.providers.values()}
-    assert got == REPO_ROOT_PROVIDERS
+    expected = {p.name: (p.secret_names, p.template_path) for p in PROVIDER_PROFILES}
+    got = {p.name: (p.secret_names, p.template_path) for p in manifest.providers.values()}
+    assert got == expected
 
 
-# Given a packaged manifest, when loaded, then the caller template is
-# relative to the manifest's own directory and template_path is repo-root-relative
+# Given a packaged manifest, when its paths are checked, then the caller
+# template resolves to an existing file in the manifest's own directory and
+# every template_path is repo-root-relative
 def test_packaged_manifest_paths():
     manifest = load_packaged_manifest()
     assert manifest.caller_workflow_template == "nebuko-caller.yaml"
-    assert manifest.workflow_filename == "nebuko.yaml"
+    resource = files("nebuko.engine.init").joinpath(manifest.caller_workflow_template)
+    assert resource.is_file()
     for spec in manifest.providers.values():
         assert not spec.template_path.startswith("/")
 

@@ -1,64 +1,103 @@
 # `nebuko init` — manifest + core refactor (issue #1272)
 
-This document is the user-facing spec for the `nebuko init` refactor: how the
-command is used, and how the new `manifest` and `core` modules plug into the
-engine. It replaces the broker-based flow described in `docs/nebuko-init.md`.
+How the `nebuko init` command is used after the refactor, and how the new
+`manifest` and `core` modules work. This replaces the broker-based flow
+described in `docs/nebuko-init.md`.
 
 ---
 
-## Usage
+## How to use
 
 ```bash
 nebuko init                      # interactive
 NEBUKO_SECRET_OPENROUTER_API_KEY=... \
   nebuko init --repo acme/widgets --provider openrouter --non-interactive
+nebuko init --force              # rewrite existing files and secrets
 ```
 
-What `init` does after the refactor:
+The interactive flow asks, in order:
 
-1. Reads the packaged manifest (`nebuko.engine.init.manifest.load_packaged_manifest`).
-2. Plans the change purely (`plan_init`): computes which secrets must be
-   created vs updated, and which target files conflict with existing content.
-3. Executes the plan (`execute_init`) through a `GitHubInitClient`, writing
-   branch `nebuko/init`, upserting secrets and reusing the open PR if one
-   exists.
-4. Prints the outcome: PR URL, files written, per-secret statuses.
+1. **Target scope** — repository secrets or organization secrets. Org scope
+   requires `--org` (or prompts for the org name); without it `init` refuses
+   to plan.
+2. **Provider** — one of the four shipped profiles (`openrouter`,
+   `commandcode`, `opencode`, `mistral`), read from the packaged manifest.
+3. **Secret values** — each secret the chosen provider needs is prompted for
+   unless it already exists at the target (then it is skipped, or rewritten
+   with `--force`) or is supplied via `NEBUKO_SECRET_<NAME>`.
+4. **PAT vs web mode** — in PAT mode the client is asked for a GitHub personal
+   access token and `GH_PAT` is stored alongside the provider secrets. In web
+   (App) mode no PAT is collected and `GH_PAT` is **not** written.
 
-Secrets: in PAT mode the plaintext token is passed (`str`); in App/web mode a
-`SealedSecret` from the broker is passed. `GH_PAT` is CLI-only.
+`--force` rewrites files and secrets that already exist instead of skipping
+them; without it, existing target files are reported as conflicts and `init`
+asks before overwriting.
 
----
+## Behaviour changes
 
-## Mechanics — where it plugs in
+- `init` **no longer writes a local workflow file** — the caller workflow
+  comes from the packaged manifest (`nebuko-caller.yaml`) and is committed to
+  the `nebuko/init` branch.
+- `--broker-url`, the broker repository variable (`NEBUKO_BROKER_URL`) and the
+  whole `RepoVariableWriter` path are **removed**.
+- `GH_PAT` is set **only in PAT mode** — never in web mode.
+- Org-scope targets **require `--org`**; a missing org is a hard error.
 
-New modules under `src/nebuko/engine/init/`:
+## Manifest schema
 
-- **`manifest.py`** — `ProviderSpec` and `Manifest` dataclasses,
-  `parse_manifest(raw)` (strict JSON schema validation, `ManifestError` on
-  unknown fields or empty providers) and `load_packaged_manifest()` (an
-  `importlib.resources` read of the copy shipped under
-  `nebuko.engine.init`; no network). `caller_workflow_template` is relative to
-  the manifest's own directory (`"nebuko-caller.yaml"`); the CLI resolves it
-  against the packaged copy's directory and the Worker against the repo
-  checkout at the resolved release tag. `ProviderSpec.template_path` stays
-  repo-root-relative — it is always fetched at `pin_ref` — and the four
-  providers mirror `providers.py` verbatim (enforced by a parity test).
-- **`core.py`** — the planning/execution engine:
-  - `SecretTarget` (repo or org scope), `RenderInputs`, `InitRequest`,
-    `SealedSecret`, `SecretValue`, `SecretStatus`, `InitPlan` (with
-    `conflicts`), `InitOutcome`.
-  - `GitHubInitClient` — a Protocol for I/O only: `get_existing_files`,
-    `existing_secrets`, `upsert_branch_and_commit` (force-updates
-    `nebuko/init`), `get_or_open_pull_request`, `put_secret`.
-  - `plan_init(...)` — module-level, pure; receives `existing_files` and
-    `existing_secrets` (the target's `scope` field decides repo vs org) and
-    returns an `InitPlan`.
-  - `execute_init(plan, client, secrets)` — module-level; never prompts or
-    prints.
-- **`setup.py`** stays the thin interactive wrapper: prompts informed by
-  `existing_secrets`, delegates to `plan_init` / `execute_init`, asks for
-  `GH_PAT` only in PAT mode.
+The packaged manifest (`nebuko.engine.init.manifest`) is JSON with:
 
-Behaviour changes: `init` no longer writes a local workflow file (the caller
-workflow comes from the packaged manifest), and the broker variables /
-`RepoVariableWriter` path is removed — the Worker resolves the tag at runtime.
+| Field | Meaning |
+|---|---|
+| `schema_version` | integer schema version |
+| `workflow_filename` | always `"nebuko.yaml"` |
+| `caller_workflow_template` | e.g. `"nebuko-caller.yaml"`, **relative to the manifest's own directory** |
+| `providers` | map of provider name → `{description, template_path, secret_names}` |
+
+`parse_manifest` validates strictly and raises `ManifestError` on unknown
+fields or an empty `providers` map. Path resolution rules:
+
+- `caller_workflow_template` is resolved relative to the manifest's directory:
+  the CLI resolves it against the packaged copy under
+  `src/nebuko/engine/init/`; the Worker resolves the same relative path
+  against the repo checkout at the resolved release tag.
+- `template_path` stays **repo-root-relative** (e.g.
+  `defaults/agents/agent-config-openrouter.yaml`) because it is always fetched
+  at `pin_ref` — never packaged.
+
+The four providers mirror `providers.py` verbatim; the drift guard
+`tests/engine/init/test_manifest.py::test_providers_match_providers_py`
+imports `PROVIDER_PROFILES` and fails on any divergence, and stays in force
+until `providers.py` is deleted.
+
+## How it works
+
+The engine splits planning from I/O:
+
+- **`plan_init(request, manifest, caller_template, agent_config,
+  existing_files, existing_secrets)`** — a pure module-level function. It
+  renders the agent config and `.github/workflows/nebuko.yaml`, computes
+  `secret_actions` (exactly the chosen provider's `secret_names`, plus
+  `GH_PAT` only when `pat_mode=True`), and records `conflicts` for target
+  files that already exist when `force=False`. Per-name action:
+  `skip_existing` if the name is in `existing_secrets`, else `create`;
+  upgraded to `update` for existing names when `force=True`. Raises
+  `ValueError` for an org-scope target without an org.
+- **`execute_init(plan, client, secrets)`** — module-level, takes the
+  `GitHubInitClient` as an argument, never prompts or prints. It force-updates
+  branch `nebuko/init`, reuses the open PR (or opens one), and calls
+  `put_secret` **only for names present in `plan.secret_actions`** — passing
+  the value through verbatim: a plaintext `str` in PAT mode, a `SealedSecret`
+  in web mode.
+- **`GitHubInitClient`** is the I/O-only Protocol:
+  `get_existing_files`, `existing_secrets` (raises on listing failure — never
+  a silent empty set), `upsert_branch_and_commit`,
+  `get_or_open_pull_request`, `put_secret`. Its `SecretTarget.scope` selects
+  repo vs org endpoints.
+
+Per-secret statuses in the outcome are `created`, `updated`,
+`skipped_existing` or `failed`, each with a human-readable detail line.
+
+**`setup.py`** stays the thin interactive wrapper: prompts informed by
+`existing_secrets`, delegates to `plan_init` / `execute_init`, asks for
+`GH_PAT` only in PAT mode, and contains no broker/variable-writing path.
