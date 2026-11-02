@@ -330,6 +330,11 @@ def resolve_post_decision_gate(  # @stub-protected: signature defined by archite
       and the re-run's completion raises a new one.
     - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).
     - otherwise -> gate unchanged.
+
+    When no gate command rode along but ``gate_released`` is set (the auto
+    reject-verdict route of issue #1274), the armed lock is consumed on the
+    routed edge so the dispatched run is not re-parked; the gate re-arms
+    naturally when the gated step completes again (``apply_gate_lock``).
     """
     if decision is not None:
         if (
@@ -340,6 +345,9 @@ def resolve_post_decision_gate(  # @stub-protected: signature defined by archite
             return GateLock(step=workflow_step)
         if gate_released and gate is not None:
             return gate.model_copy(update={"status": GateStatus.RELEASED})
+        return gate
+    if gate_released and gate is not None:
+        return gate.model_copy(update={"status": GateStatus.RELEASED})
     return gate
 
 

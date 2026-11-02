@@ -218,7 +218,7 @@ Mechanics:
         next: context
 ```
 
-(This is the shape `defaults/workflows/default.yaml` ships: a rejected plan
+(This is the shape shipped by [`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml): a rejected plan
 sends the run back to `context` for fresh facts.)
 
 **How it works — verdict routing.** When a gated step's agent ends its turn
@@ -234,8 +234,18 @@ Notes:
 
 - The consult budget (`call_agent` rounds while armed) does not apply to the
   rejected route; it stays bound to the hold path.
+- The reject route is still bounded: after `MAX_CONSECUTIVE_AUTO_REJECTS = 3`
+  consecutive auto-routed rejects on the same gated step (constant in
+  `src/nebuko/lib/resolve_config/features/resolve_route/resolve_route.py`),
+  the run falls back to the human hold with the reason in the hold note. The
+  counter resets on any human gate decision or on an `approved` verdict for
+  the gated step.
 - Human gate **command** semantics are untouched: a rejected-with-feedback
   command still re-runs the gated step with the feedback injected.
+
+The example above mirrors the shape shipped in
+[`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml)
+(the `plan` step).
 
 4. Decisions are **single-shot**: a `GateDecision` binds to exactly one
    `(workflow, step, position)` hold instance and is consumed on routing, so
