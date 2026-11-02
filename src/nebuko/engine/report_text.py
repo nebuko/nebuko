@@ -121,27 +121,3 @@ def closing_turn_report_candidates(conversation: Any) -> list[str]:
     """
     # @stub-protected: signature defined by architect — do not modify
     raise NotImplementedError
-    # This closing turn starts at its own prompt (a user ``MessageEvent``) and
-    # ends at the anchor. An earlier ``finalize`` call (a refused or recorded
-    # attempt) also bounds the window: the messages after it are that attempt's
-    # acknowledgements, never this turn's report (issue #1038).
-    offset = getattr(conversation, REPORT_OFFSET_ATTR, 0) or 0
-    start = offset
-    for index in range(anchor - 1, offset - 1, -1):
-        if is_finalize_call(events[index]) or (
-            getattr(events[index], "source", None) == "user"
-        ):
-            start = index + 1
-            break
-    for index in range(anchor - 1, start - 1, -1):
-        if getattr(events[index], "tool_name", None) is not None:
-            continue
-        if getattr(events[index], "source", None) != "agent":
-            continue
-        message = getattr(events[index], "llm_message", None)
-        if message is None:
-            continue
-        text = content_text(getattr(message, "content", None)).strip()
-        if text:
-            return text
-    return ""

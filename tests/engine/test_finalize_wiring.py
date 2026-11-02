@@ -635,6 +635,37 @@ class TestSalvageCandidateFallback:
         assert "from-thought" in body
         assert "from-message" not in body
 
+    def test_no_candidate_salvageable_degrades_to_finish_note(self) -> None:
+        """All candidates marker-less: salvage yields nothing, the finish note survives.
+
+        The incident's terminal failure mode (issue #1263): every candidate
+        report text lacks intact section markers, so ``_salvage_finalize_body``
+        returns ``""`` and the run falls back to the work-loop's captured
+        deliverable instead of posting a broken or title-only comment.
+        """
+        from nebuko.engine.agent_host import (
+            _REPORT_OFFSET_ATTR,
+            _salvage_finalize_body,
+        )
+
+        contract = _contract()
+        conversation = _FinalizeConversation(turns=[[]])
+        conversation.state.events = [
+            _agent_message_event("no markers here either"),
+            _finalize_event(
+                "still no markers in the thought",
+                {"appreciation": "approved"},
+                report=self._mangled_answer(),
+            ),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        body = _salvage_finalize_body(
+            FinalizeToolHandler(RunTerminator(contract)), contract, conversation
+        )
+
+        assert body == ""
+
 
 class _FakeAgent:
     def __init__(self, tools: dict[str, Any]) -> None:
