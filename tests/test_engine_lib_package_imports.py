@@ -36,8 +36,8 @@ import importlib, json, os, sys
 before = list(sys.path)
 for name in {modules!r}:
     importlib.import_module(name)
-# litellm's proxy_cli (pulled in through the OpenHands SDK) does
-# ``sys.path.append(os.getcwd())`` at import time; that third-party side effect
+# litellm's proxy_cli (pulled in through the OpenHands SDK)
+# appends its os.getcwd() to the import path at import time; that third-party side effect
 # is not a nebuko bootstrap, so the probe's own cwd is not counted.
 print(json.dumps([p for p in sys.path if p not in before and p != os.getcwd()]))
 """
