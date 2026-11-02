@@ -379,6 +379,35 @@ def _human_gate_hold_result(step: str, note: str = "") -> dict:
     }
 
 
+# @stub-protected: signature defined by architect — do not modify
+def _gate_step_has_rejected_edge(
+    step_name: str,
+    wf_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> bool:
+    """True when the workflow declares an ``on_result: rejected`` edge."""
+    raise NotImplementedError
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _release_armed_gate(prev_state: "WorkflowState", armed: "GateLock") -> None:
+    """Consume the armed gate lock and persist the released state."""
+    raise NotImplementedError
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _gate_reject_verdict_route(
+    prev_state: "WorkflowState",
+    armed: "GateLock",
+    outcome: "TurnOutcome",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[dict]:
+    """Route a rejected verdict via the conditional reject edge, lock released."""
+    raise NotImplementedError
+
+
 def _armed_gate(prev_state: Optional["WorkflowState"]) -> Optional[GateLock]:
     """The root-level gate lock (issue #1003) when it is armed, else None."""
     gate = getattr(prev_state, "gate", None) if prev_state is not None else None
@@ -1136,6 +1165,11 @@ def _resolve_outcome_path(
         )
         if consult is not None:
             return consult
+        reject_route = _gate_reject_verdict_route(
+            prev_state, armed, outcome, workflows_dir, local_workflows_dir
+        )
+        if reject_route is not None:
+            return reject_route
         return _human_gate_hold_result(
             prev_state.step or "", _consult_exhausted_note(prev_state)
         )
@@ -2272,6 +2306,11 @@ def _resolve_bot_fallback_path(
         )
         if consult is not None:
             return consult
+        reject_route = _gate_reject_verdict_route(
+            prev_state, armed, outcome, workflows_dir, local_workflows_dir
+        )
+        if reject_route is not None:
+            return reject_route
         return _human_gate_hold_result(
             getattr(prev_state, "step", "") or "",
             _consult_exhausted_note(prev_state),
