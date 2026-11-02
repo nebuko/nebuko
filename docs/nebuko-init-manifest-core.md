@@ -58,17 +58,27 @@ The packaged manifest (`nebuko.engine.init.manifest`) is JSON with:
 fields or an empty `providers` map. Path resolution rules:
 
 - `caller_workflow_template` is resolved relative to the manifest's directory:
-  the CLI resolves it against the packaged copy under
-  `src/nebuko/engine/init/`; the Worker resolves the same relative path
-  against the repo checkout at the resolved release tag.
+  both the manifest (`nebuko-init.json`) and the caller template
+  (`nebuko-caller.yaml`) live in `src/nebuko/engine/init/defaults/` — the repo
+  file *is* the packaged copy. The CLI resolves both through
+  `importlib.resources.files("nebuko.engine.init.defaults")`; the Worker
+  fetches `src/nebuko/engine/init/defaults/nebuko-init.json` at the resolved
+  release tag and resolves the template as a sibling at the same ref. On 404
+  (any tag cut before PR 1 merged) the Worker returns a clear error naming the
+  resolved tag — never a silent fallback. **PR 2 gate:** the first release tag
+  containing `defaults/` must exist before PR 2 step 10 ships.
 - `template_path` stays **repo-root-relative** (e.g.
   `defaults/agents/agent-config-openrouter.yaml`) because it is always fetched
   at `pin_ref` — never packaged.
 
-The four providers mirror `providers.py` verbatim; the drift guard
+The manifest is a static, committed file (not generated from `providers.py` at
+build time): the Worker fetches raw JSON at runtime with no Python in its
+build, and a generated manifest would still need an equality check in CI. The
+drift guard
 `tests/engine/init/test_manifest.py::test_providers_match_providers_py`
 imports `PROVIDER_PROFILES` and fails on any divergence, and stays in force
-until `providers.py` is deleted.
+until `providers.py` is deleted (at which point the manifest becomes the sole
+source).
 
 ## How it works
 

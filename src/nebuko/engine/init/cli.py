@@ -326,7 +326,7 @@ def _collect_secrets(
     app_mode: bool | None = None,
 ) -> dict[str, str]:
     """Ask for (or read from the environment) the values to store as secrets."""
-    names = list(secret_names(provider))
+    names = list(secret_names(provider, pat_mode=True))
     installed = host.app_installed(target) if app_mode is None else app_mode
     if installed:
         names.remove("GH_PAT")

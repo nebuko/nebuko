@@ -39,7 +39,7 @@ def test_providers_match_providers_py():
 def test_packaged_manifest_paths():
     manifest = load_packaged_manifest()
     assert manifest.caller_workflow_template == "nebuko-caller.yaml"
-    resource = files("nebuko.engine.init").joinpath(manifest.caller_workflow_template)
+    resource = files("nebuko.engine.init.defaults").joinpath(manifest.caller_workflow_template)
     assert resource.is_file()
     for spec in manifest.providers.values():
         assert not spec.template_path.startswith("/")

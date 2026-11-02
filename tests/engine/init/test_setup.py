@@ -24,7 +24,10 @@ class FakeSource:
 
 
 class RaisingHost:
-    """Stand-in host whose secret listing fails (decision 9 / R9)."""
+    """Stand-in client whose secret listing fails (decision 9 / R9)."""
+
+    def get_existing_files(self, target, paths):
+        return {}
 
     def existing_paths(self, target, paths):
         return set()
