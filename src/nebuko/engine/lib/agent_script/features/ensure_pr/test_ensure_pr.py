@@ -14,15 +14,19 @@ from unittest.mock import patch
 from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import (
     ENGINE_OWNED_PATHS,
     EnsurePrResult,
+    _append_closes_line,
     _default_base,
+    _fetch_pr_body,
     _find_pr_for_branch,
     _issue_number_from_env,
+    _pr_number_from_url,
     _dirty_paths,
     _needs_push,
     _prepare_publish,
     _repo_root,
     _run_gh,
     _run_git,
+    ensure_issue_link,
     ensure_pr,
     pr_title,
 )
@@ -221,6 +225,167 @@ class TestHelpers(unittest.TestCase):
         ):
             _run_git(["remote"], cwd="/explicit")
         self.assertEqual(run_mock.call_args.kwargs["cwd"], "/explicit")
+
+
+class TestIssueLinking(unittest.TestCase):
+    """Idempotent PR↔issue linking (issue #1280).
+
+    Given a resolved PR URL and a target issue number, when the PR body
+    lacks a closing reference, then `gh pr edit` appends `Closes #N`; when
+    the link already exists (or there is nothing to link), nothing is edited.
+    """
+
+    def test_pr_number_from_url_valid(self):
+        self.assertEqual(
+            _pr_number_from_url("https://github.com/acme/repo/pull/101"), "101"
+        )
+
+    def test_pr_number_from_url_invalid(self):
+        self.assertIsNone(_pr_number_from_url("https://github.com/acme/repo"))
+        self.assertIsNone(_pr_number_from_url(""))
+
+    def test_append_closes_line_appends_when_missing(self):
+        body = _append_closes_line("Work done.", 489)
+        self.assertIn("Closes #489", body)
+        self.assertTrue(body.startswith("Work done."))
+
+    def test_append_closes_line_idempotent(self):
+        body = "Summary text.\n\nCloses #489"
+        self.assertEqual(_append_closes_line(body, 489), body)
+
+    def test_ensure_issue_link_skips_without_issue_number(self):
+        with patch(
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh"
+        ) as gh_mock:
+            result = ensure_issue_link(
+                "https://github.com/acme/repo/pull/101", None, repo="acme/repo"
+            )
+        self.assertFalse(result)
+        gh_mock.assert_not_called()
+
+    def test_ensure_issue_link_appends_via_pr_edit(self):
+        def gh_out(args, **k):
+            if args[:2] == ["pr", "view"]:
+                return "Agent-authored body."
+            return ""
+
+        with patch(
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
+            side_effect=gh_out,
+        ) as gh_mock:
+            result = ensure_issue_link(
+                "https://github.com/acme/repo/pull/101", 489, repo="acme/repo"
+            )
+        self.assertTrue(result)
+        edit_calls = [
+            c for c in gh_mock.call_args_list
+            if c.args and c.args[0][:2] == ["pr", "edit"]
+        ]
+        self.assertEqual(len(edit_calls), 1)
+        edit_args = edit_calls[0].args[0]
+        self.assertEqual(edit_args[edit_args.index("--repo") + 1], "acme/repo")
+        body = edit_args[edit_args.index("--body") + 1]
+        self.assertIn("Closes #489", body)
+        self.assertTrue(edit_calls[0].kwargs.get("mutative"))
+
+    def test_ensure_issue_link_no_edit_when_already_linked(self):
+        def gh_out(args, **k):
+            if args[:2] == ["pr", "view"]:
+                return "Body.\n\nCloses #489"
+            return ""
+
+        with patch(
+            "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr._run_gh",
+            side_effect=gh_out,
+        ) as gh_mock:
+            result = ensure_issue_link(
+                "https://github.com/acme/repo/pull/101", 489, repo="acme/repo"
+            )
+        self.assertTrue(result)
+        self.assertFalse(
+            any(
+                c.args and c.args[0][:2] == ["pr", "edit"]
+                for c in gh_mock.call_args_list
+            )
+        )
+
+    def test_existing_pr_without_link_gets_patched(self):
+        # Full ensure_pr flow: the PR already exists (reused), its body lacks
+        # the closing reference → ensure_pr patches it via gh pr edit.
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return "https://github.com/acme/repo/pull/101"
+            if joined.startswith("pr view"):
+                return "_Opened by the nebuko engine for the agent's work._"
+            return ""
+
+        env = {"TARGET_NUMBER": "489", "GITHUB_BASE_REF": "main"}
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", env):
+            result = ensure_pr()
+        self.assertFalse(result.error)
+        edit_calls = [
+            c for c in gh_mock.call_args_list
+            if c.args and c.args[0][:2] == ["pr", "edit"]
+        ]
+        self.assertEqual(len(edit_calls), 1)
+        edit_args = edit_calls[0].args[0]
+        body = edit_args[edit_args.index("--body") + 1]
+        self.assertIn("Closes #489", body)
+
+    def test_existing_pr_with_link_untouched(self):
+        # Full flow: the reused PR body already carries Closes #489 → no edit.
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return "https://github.com/acme/repo/pull/101"
+            if joined.startswith("pr view"):
+                return "_Opened by the nebuko engine for the agent's work._\n\nCloses #489"
+            return ""
+
+        env = {"TARGET_NUMBER": "489", "GITHUB_BASE_REF": "main"}
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", env):
+            result = ensure_pr()
+        self.assertFalse(result.error)
+        self.assertFalse(
+            any(
+                c.args and c.args[0][:2] == ["pr", "edit"]
+                for c in gh_mock.call_args_list
+            )
+        )
+
+    def test_new_pr_with_link_not_re_edited(self):
+        # Full flow: a fresh PR is opened with Closes #489 in its body; the
+        # post-resolution link step must not issue a second (edit) mutation.
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return ""
+            if joined.startswith("pr create"):
+                return "https://github.com/acme/repo/pull/102"
+            if joined.startswith("pr view"):
+                return "_Opened by the nebuko engine for the agent's work._\n\nCloses #489"
+            return ""
+
+        env = {"TARGET_NUMBER": "489", "GITHUB_BASE_REF": "main"}
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", env):
+            result = ensure_pr()
+        self.assertFalse(result.error)
+        self.assertFalse(
+            any(
+                c.args and c.args[0][:2] == ["pr", "edit"]
+                for c in gh_mock.call_args_list
+            )
+        )
 
 
 class TestDirtyPaths(unittest.TestCase):

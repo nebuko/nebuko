@@ -29,6 +29,26 @@ The publish pipeline is engine-owned end to end, in this order:
 `ensure_pr` is idempotent: re-running it finds the existing PR, pushes only
 what is missing, and refreshes the patch — it is safe on every re-run.
 
+## Automatic issue linking
+
+**What happens automatically.** When the engine opens a pull request for the
+run's branch, the PR body carries a `Closes #<issue>` line, so merging the PR
+closes the issue. This also covers PRs the engine *reuses*: if a PR already
+exists for the branch (or was opened by the agent via `gh pr create`) and its
+body lacks the closing reference, `ensure_pr` fetches the body and appends
+`Closes #<issue>` with `gh pr edit` — nothing else in the body is touched, and
+a body that already links the issue is left alone (the step is idempotent).
+
+**When it applies / limitations.** Linking needs the target issue number
+(`TARGET_NUMBER`); on `workflow_call` re-runs it is only present when the
+caller sets it. `nebuko init` setup pull requests are never linked — they are
+not issue-driven. If the PR's base is not the repository's default branch,
+GitHub shows the `Closes #N` reference on the issue timeline but may not
+auto-close the issue on merge.
+
+**How to verify.** Open the PR body and check for the closing line, or check
+the issue's timeline for the linked pull-request reference.
+
 ## Branch switching is denied for agents
 
 The terminal deny-list also blocks every statement that would move the

@@ -630,6 +630,48 @@ def _dirty_paths() -> tuple[str, ...]:
     return tuple(paths)
 
 
+def _pr_number_from_url(pr_url: str) -> Optional[str]:
+    """Parse the trailing ``/pull/<digits>`` from a gh PR URL.
+
+    Returns the number as a string, or ``None`` when unparseable.
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
+def _fetch_pr_body(
+    repo: str, pr_number: str, *, transport: Optional[GitHubTransport] = None
+) -> str:
+    """Return the PR body via ``gh pr view``; ``""`` on failure."""
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
+def _append_closes_line(body: str, issue_number: int) -> str:
+    """Append ``Closes #<issue_number>`` unless a closing reference already
+    exists; never removes existing content."""
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
+def ensure_issue_link(
+    pr_url: str,
+    issue_number: Optional[int],
+    *,
+    repo: str = "",
+    transport: Optional[GitHubTransport] = None,
+) -> bool:
+    """Idempotently ensure the PR body carries a closing reference to the issue.
+
+    No-op (returns False) without an issue number or a parseable PR URL;
+    patches the body via ``gh pr edit`` when the link is missing and never
+    raises — linking must not fail the PR step. Returns True iff the closing
+    reference is present afterwards.
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
 def _open_pr(
     repo: str,
     head: str,
@@ -983,9 +1025,9 @@ def _ensure_pr_impl(
 
     existing = _find_pr_for_branch(branch, transport=transport)
     pr_url = existing or ""
+    repo = _run_git(["remote", "get-url", remote])
+    issue_number = _issue_number_from_env()
     if not pr_url and not no_push:
-        repo = _run_git(["remote", "get-url", remote])
-        issue_number = _issue_number_from_env()
         title = pr_title(issue_number, issue_title) or branch
         pr_url = _open_pr(
             repo,
@@ -1002,6 +1044,9 @@ def _ensure_pr_impl(
             logger.info(f"ensure_pr: PR links the target issue via 'Closes #{issue_number}'")
     elif existing:
         logger.info(f"ensure_pr: PR already exists for '{branch}': {existing}")
+
+    if pr_url:
+        ensure_issue_link(pr_url, issue_number, repo=repo, transport=transport)
 
     if held_back:
         try:
