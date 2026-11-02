@@ -34,7 +34,7 @@ steps:
           },
         )
         Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
-      - Do not plan yet. The engine's closing turn asks only for this step's report (the context request): the delegate has not run yet, so there is nothing to plan from.
+      - Do not plan yet. The engine's closing turn asks only for this step's report in its declared sections: the delegate has not run yet, so there is nothing to plan from.
       - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
     next: context
     output:
@@ -42,6 +42,18 @@ steps:
         - name: headline
           title: true
           description: One-line summary of the request and the analysis.
+        - name: approaches
+          type: table
+          collapsed: true
+          required: false
+          columns: [approach, dependencies, verdict]
+          description: The 2-3 candidate approaches sketched before planning.
+        - name: claims
+          type: table
+          collapsed: true
+          required: false
+          columns: [id, claim, kind, category, if_wrong]
+          description: The verification claims mirroring agent_call.verify, one row per claim.
         - name: context_request
           collapsed: true
           required: true
@@ -52,6 +64,10 @@ steps:
 
   - name: context
     agent: context
+    prompt: |
+      Collect what the analyze step's context request (agent_call.task) asks
+      for, and return it as this step's report. The claims attached to the hand-off (agent_call.verify)
+      are checked independently: cite a source for every claim in your report.
     next: plan
 
   - name: plan
