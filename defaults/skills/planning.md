@@ -8,6 +8,13 @@ Be concise: a human reads the artifact at a gate and @@dev materializes it, so w
 
 ## The Planning Artifact (single turn)
 
+**Claim verification (issue #1250).** The claims @@architect attached to the context hand-off (`C1`, `C2`, …) are the run's verified-evidence ledger:
+- Claims still open and material go through the one-time re-ask of @@context via `verify`.
+- **`## Context` must address every claim ID** — confirmed, refuted (and what changed in the plan as a result), or contested/inconclusive. Ignoring late or contradicting evidence is the failure mode this guards against.
+- `## Approaches considered` cites claim IDs, e.g. `✅ C1 refuted → use tenacity`.
+- Unverified claims go to `## Questions` as explicit assumptions, each with the default you proceed with.
+- Claim IDs carry into the implementation steps, so review can trace each dependency choice back to its evidence.
+
 **Context missing or insufficient.** Ask @@context for more at most **once** per run, listing exactly the facts missing.
 Past that, or when the gap is minor, write the plan anyway and record each assumption under `## Questions` with the default you proceed with.
 Never invent file paths, class names or fields the context did not confirm. Nobody answers mid-run, so never stop with a "blocked" post and no plan.

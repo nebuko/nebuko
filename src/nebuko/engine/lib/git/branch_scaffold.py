@@ -40,9 +40,24 @@ logger = get_logger(__name__)
 DEFAULT_BASE_BRANCH = "main"
 
 #: Installed by the scaffold: agent commits may not stage workflow files.
+#:
+#: A merge commit is the exception for paths whose staged content equals the
+#: merged-in side (``MERGE_HEAD``): that is the base's own state arriving, not
+#: an agent edit. Refusing it made agents ``git restore --staged`` the path,
+#: which silently kept the branch's stale copy and turned every PR diff into a
+#: revert of the base's workflow change (PRs #1256, #1277).
 WORKFLOW_PRE_COMMIT_HOOK = """#!/bin/sh
 # Installed by the nebuko engine (branch scaffold).
 staged=$(git diff --cached --name-only -- .github/workflows/)
+if [ -n "$staged" ] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  own=""
+  for path in $staged; do
+    ours=$(git rev-parse -q --verify ":$path" 2>/dev/null)
+    theirs=$(git rev-parse -q --verify "MERGE_HEAD:$path" 2>/dev/null)
+    [ "$ours" = "$theirs" ] || own="$own $path"
+  done
+  staged=$(echo $own)
+fi
 if [ -n "$staged" ]; then
   echo "nebuko: do not commit .github/workflows/* changes:" >&2
   echo "$staged" >&2
