@@ -575,7 +575,15 @@ def _patch_ensure_pr(git, gh, env=None, artifact_dir=None):
     stack = contextlib.ExitStack()
     for p in patchers:
         stack.enter_context(p)
-    stack.enter_context(patch.dict("os.environ", env or {}, clear=False))
+    # The patch comment is posted to GITHUB_REPOSITORY; pin it so the tests do
+    # not depend on the ambient environment (set in CI, unset on a dev box).
+    stack.enter_context(
+        patch.dict(
+            "os.environ",
+            {"GITHUB_REPOSITORY": "acme/repo", **(env or {})},
+            clear=False,
+        )
+    )
     return stack
 
 
@@ -928,6 +936,9 @@ class TestRealGitTokenBoundary(unittest.TestCase):
             self._git("add", "-A", cwd=work)
             self._git("commit", "-qm", "base", cwd=work)
             self._git("push", "-q", "-u", "origin", "main", cwd=work)
+            # The agent works on its scaffolded feature branch: ensure_pr refuses
+            # to publish from the base branch (issue #1268).
+            self._git("checkout", "-q", "-b", "feature/issue-1080", cwd=work)
 
             # Agent work: a plain file *and* a workflow file, both left dirty.
             with open(os.path.join(work, code), "w", encoding="utf-8") as fh:
@@ -993,7 +1004,7 @@ class TestRealGitTokenBoundary(unittest.TestCase):
                     "show",
                     "--name-only",
                     "--format=",
-                    "main",
+                    "feature/issue-1080",
                 ],
                 capture_output=True,
                 text=True,
@@ -1044,6 +1055,9 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
             self._git("add", "-A", cwd=work)
             self._git("commit", "-qm", "base", cwd=work)
             self._git("push", "-q", "-u", "origin", "main", cwd=work)
+            # The agent works on its scaffolded feature branch: ensure_pr refuses
+            # to publish from the base branch (issue #1268).
+            self._git("checkout", "-q", "-b", "feature/issue-1080", cwd=work)
 
             # WHEN: a brand-new (untracked) file under .github/workflows/
             os.makedirs(os.path.join(work, ".github", "workflows"))

@@ -44,6 +44,9 @@ Test-writing pitfalls that have broken `main` before:
   #748).
 - A subprocess started with an explicit, minimal `env` must still carry
   `PATH`; `/bin/sh`'s fallback PATH has no coreutils on Nix hosts.
+- Never rely on ambient CI env vars (`GITHUB_REPOSITORY`, `TARGET_NUMBER`, ...):
+  set what the code reads with `patch.dict(os.environ, ...)`, or the test
+  passes in CI/the sandbox and fails on a dev box.
 - The sandbox runs as root, so "this path is not writable" cases must use a
   path *under a regular file*, not a missing top-level directory.
 - Red spec tests (`# @stub-protected`) must not be merged to `main` without
