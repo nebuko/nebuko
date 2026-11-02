@@ -72,3 +72,43 @@ class TestBaseAlreadyMerged:
         _git(repo, "checkout", "-q", "feature/x")
 
         assert _guard(repo).base_already_merged("feature/x", "main") is False
+
+
+def _remote_only(repo: Path, branch: str) -> None:
+    """Move ``branch`` to ``refs/remotes/origin/`` only (a fresh runner's view)."""
+    sha = _git(repo, "rev-parse", branch)
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "update-ref", f"refs/remotes/origin/{branch}", sha)
+    _git(repo, "branch", "-qD", branch)
+
+
+class TestRemoteOnlyBranch:
+    """Issue #1268: a previous round's branch exists only on the remote."""
+
+    @pytest.fixture()
+    def remote_repo(self, repo):
+        _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+        return repo
+
+    def test_base_already_merged_resolves_the_remote_ref(self, remote_repo):
+        _git(remote_repo, "checkout", "-q", "-b", "feature/x")
+        _commit(remote_repo, "work.txt", "work\n", "work")
+        _remote_only(remote_repo, "feature/x")
+
+        assert _guard(remote_repo).base_already_merged("feature/x", "main")
+
+    def test_a_conflict_on_a_remote_only_branch_is_reported(self, remote_repo):
+        _git(remote_repo, "checkout", "-q", "-b", "feature/x")
+        _commit(remote_repo, "base.txt", "branch\n", "branch side")
+        _remote_only(remote_repo, "feature/x")
+        _commit(remote_repo, "base.txt", "main\n", "main side")
+        _git(remote_repo, "update-ref", "refs/remotes/origin/main", "main")
+
+        assert _guard(remote_repo).has_base_conflict("feature/x", "main") == [
+            "base.txt"
+        ]
+
+    def test_an_unresolvable_branch_is_a_failed_probe_not_clean(self, remote_repo):
+        # ``merge-tree`` exits 1 with an empty stdout here, like a conflict:
+        # it must never read as "no conflicts".
+        assert _guard(remote_repo).has_base_conflict("feature/missing", "main") is None

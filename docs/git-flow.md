@@ -33,7 +33,12 @@ what is missing, and refreshes the patch — it is safe on every re-run.
 
 The terminal deny-list also blocks every statement that would move the
 session off the scaffolded branch: `git checkout` (with or without `-b`),
-`git switch`, and `git branch <name>`. The engine owns branch lifecycle —
+`git switch`, `git branch <name>` and the mutating `git branch` options
+(`-d`/`-D`, `-m`/`-M`, `-c`/`-C`, `-f`, `--set-upstream-to`, …). Read-only
+forms stay allowed (issue #1268): `git branch` alone, `--show-current`,
+`-a`/`-r`/`-vv`, `--list <pattern>`, `--contains`/`--merged <commit>`, and
+`git checkout [<tree-ish>] -- <path>…`, which restores files without moving
+HEAD. The engine owns branch lifecycle —
 it scaffolds the branch before the run and publishes it after finalize —
 so a mid-session switch strands the agent's commit on a branch finalize
 does not know about (run 41354010528).
@@ -54,6 +59,13 @@ rule: obfuscated invocations (a script or alias that itself switches
 branch) are not caught. Finalize's branch check remains the last line of
 defense and still fails the session loudly if the working branch was
 somehow changed.
+
+The engine holds up its own end before the agent starts (issue #1268): the
+scaffold checks out the feature branch on every path — created, merged, or
+continued as-is when the base is already contained or merges cleanly — and
+fails the run if `HEAD` is not on it afterwards. `ensure_pr` refuses to
+publish from the base branch, and its failure detail always names the
+exception type (`error: <ExcType>: <message>`).
 
 ## How to use it
 
