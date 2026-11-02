@@ -151,6 +151,11 @@ class PublishSplit:
             unpushed commits (clean tree); publishable by pushing the branch
             as-is. Empty when the unpushed commits touched workflow files
             (those force the merge-base rebuild) or there is nothing unpushed.
+        base_workflow_paths: workflow paths whose content equals the base's —
+            the base's own change arriving through a merge, not agent work.
+            They are committed and pushed with the merge (never patched or
+            reverted): dropping them turned the PR diff into a silent revert
+            of the base's workflow change (PRs #1256, #1277).
     """
 
     # @stub-protected: signature defined by architect — do not modify
@@ -159,6 +164,7 @@ class PublishSplit:
     republished: bool
     # @stub-protected: signature defined by architect — do not modify
     committed_plain_paths: tuple[str, ...] = ()
+    base_workflow_paths: tuple[str, ...] = ()
 
 
 def _current_branch() -> str:
@@ -243,8 +249,10 @@ def _commit_pending_changes(
     """Stage and commit the agent's leftovers. Returns the hash, or ``""``.
 
     ``paths`` restricts the commit to exactly those paths; it must never
-    contain a ``.github/workflows/*`` path, because committing one would only
-    make the next ``git push`` fail (issue #1080). ``None`` stages everything
+    contain an agent-edited ``.github/workflows/*`` path, because committing
+    one would only make the next ``git push`` fail (issue #1080). The one
+    exception is a workflow path carried in by a base merge
+    (``PublishSplit.base_workflow_paths``). ``None`` stages everything
     git reports except workflow and engine-owned paths. Every change kind is
     staged (deletions and renames included), so no second engine commit is
     needed for what this one skipped. A merge left in progress by the scaffold
@@ -281,6 +289,115 @@ def _unmerged_paths() -> tuple[str, ...]:
     out = _run_git(["ls-files", "--unmerged"])
     paths = (line.split("\t", 1)[-1] for line in out.splitlines() if "\t" in line)
     return tuple(dict.fromkeys(paths))
+
+
+def _blob_at(spec: str) -> str:
+    """Object id of ``<rev>:<path>``, or ``""`` when the path is absent there."""
+    try:
+        return _run_git(["rev-parse", "-q", "--verify", spec])
+    except RuntimeError:
+        return ""
+
+
+def _worktree_blob(path: str) -> str:
+    """Object id the working-tree file would hash to, ``""`` when deleted."""
+    full = os.path.join(_repo_root() or os.getcwd(), path)
+    if not os.path.lexists(full):
+        return ""
+    try:
+        return _run_git(["hash-object", "--", path])
+    except RuntimeError:
+        return ""
+
+
+def _paths_matching_base(
+    paths: Sequence[str], base_ref: str, *, rev: str = ""
+) -> tuple[str, ...]:
+    """The ``paths`` whose content equals ``base_ref``'s.
+
+    ``rev`` names the side compared (``"HEAD"`` for committed content); empty
+    compares the working tree. A path absent on both sides counts as equal,
+    so a deletion the base made matches as well.
+    """
+    matching = []
+    for path in paths:
+        ours = _blob_at(f"{rev}:{path}") if rev else _worktree_blob(path)
+        if ours == _blob_at(f"{base_ref}:{path}"):
+            matching.append(path)
+    return tuple(matching)
+
+
+def _is_workflow_push_refusal(exc: Exception) -> bool:
+    """Whether a push failed only because the token lacks the workflow scope."""
+    text = str(exc).lower()
+    return "workflow" in text and ("refusing to allow" in text or "permission" in text)
+
+
+def _hold_back_base_workflows(
+    branch: str, base_ref: str, paths: Sequence[str]
+) -> None:
+    """Rebuild the unpushed range so ``paths`` keep the remote branch's copy.
+
+    Fallback for a token GitHub refuses to let push a merge that carries the
+    base's workflow change. The unpushed commits are folded into one commit on
+    top of the upstream; it stays a merge of ``base_ref`` when the branch had
+    merged it, so the base is still recorded as integrated. The workflow files
+    keep the upstream's copy in the commit and the base's copy in the working
+    tree; the caller must then tell a human, because the PR diff now shows
+    those paths reverted.
+    """
+    upstream = _run_git(["rev-parse", "--verify", f"{branch}@{{upstream}}"])
+    head = _run_git(["rev-parse", "HEAD"])
+    _run_git(["read-tree", head])
+    for path in paths:
+        listing = _run_git(["ls-tree", upstream, "--", path])
+        if listing:
+            meta, _, _name = listing.partition("\t")
+            mode, _type, blob = meta.split()
+            _run_git(["update-index", "--add", "--cacheinfo", f"{mode},{blob},{path}"])
+        else:
+            _run_git(["update-index", "--force-remove", "--", path])
+    tree = _run_git(["write-tree"])
+    parents = ["-p", upstream]
+    base_commit = _run_git(["rev-parse", "--verify", f"{base_ref}^{{commit}}"])
+    try:
+        _run_git(["merge-base", "--is-ancestor", base_commit, head])
+        merged = True
+    except RuntimeError:
+        merged = False
+    if merged:
+        try:
+            _run_git(["merge-base", "--is-ancestor", base_commit, upstream])
+        except RuntimeError:
+            parents += ["-p", base_commit]
+    message = (
+        f"Merge {base_ref} into {branch}\n\n"
+        "The push token cannot update workflow files, so these paths keep the "
+        "branch's copy and need a human to bring them in line with the base:\n"
+        + "".join(f"- {path}\n" for path in paths)
+    )
+    commit = _run_git(
+        [*git_identity_args(), "commit-tree", tree, *parents, "-m", message]
+    )
+    _run_git(["reset", "--soft", commit])
+
+
+def _held_back_note(branch: str, base: str, paths: Sequence[str]) -> str:
+    """Comment body telling a human how to finish a held-back base merge."""
+    listed = "\n".join(f"- `{path}`" for path in paths)
+    joined = " ".join(paths)
+    return (
+        "**Workflow files from the base need a human.** Merging "
+        f"`{base}` into this branch brought in workflow changes the agent "
+        "token cannot push, so the branch kept its old copy and this PR's diff "
+        f"shows them **reverted**:\n\n{listed}\n\n"
+        "Restore them from the base with a workflow-scoped token before merging:\n\n"
+        "```bash\n"
+        f"git fetch origin && git checkout {branch}\n"
+        f"git checkout origin/{base} -- {joined}\n"
+        f'git commit -m "restore workflow files from {base}" && git push\n'
+        "```"
+    )
 
 
 def _issue_title(*, transport: Optional[GitHubTransport] = None) -> str:
@@ -366,16 +483,28 @@ def _reset_to_merge_base(publish_base: str) -> str:
     return base
 
 
-def _prepare_publish(compare_ref: str, branch: str, publish_base: str) -> PublishSplit:
-    """Partition the delta so no workflow path can reach the push.
+def _prepare_publish(
+    compare_ref: str, branch: str, publish_base: str, *, base_ref: str = ""
+) -> PublishSplit:
+    """Partition the delta so no agent-edited workflow path can reach the push.
 
     Dirty paths split directly. When the branch already has *committed*,
     unpushed workflow changes (the agent committed them before its own push
     was rejected) the publish commit is rebuilt from the merge base so those
     files stay out of the pushed history too.
+
+    ``base_ref`` (the resolved ``origin/<base>``) exempts workflow paths whose
+    content equals the base's — a base merge carrying the base's own workflow
+    change. They are returned as ``base_workflow_paths``: committed with the
+    merge, never patched, and they must not trigger the rebuild, which would
+    discard the merge itself.
     """
     dirty = _dirty_paths()
     workflow_dirty, plain_dirty = split_paths(dirty)
+    carried_dirty: tuple[str, ...] = ()
+    if base_ref and workflow_dirty and _merge_in_progress():
+        carried_dirty = _paths_matching_base(workflow_dirty, base_ref)
+        workflow_dirty = tuple(p for p in workflow_dirty if p not in carried_dirty)
 
     republished = False
     committed = _unpushed_commit_paths(compare_ref, branch)
@@ -383,6 +512,10 @@ def _prepare_publish(compare_ref: str, branch: str, publish_base: str) -> Publis
     # (they are no longer in ``git status``). Rebuilding the publish commit
     # picks them up as dirty paths, so the delivery below still sees them.
     committed_workflow = [p for p in committed if is_workflow_path(p)]
+    carried_committed: tuple[str, ...] = ()
+    if base_ref and committed_workflow:
+        carried_committed = _paths_matching_base(committed_workflow, base_ref, rev="HEAD")
+        committed_workflow = [p for p in committed_workflow if p not in carried_committed]
     if committed_workflow:
         try:
             _reset_to_merge_base(publish_base)
@@ -402,6 +535,9 @@ def _prepare_publish(compare_ref: str, branch: str, publish_base: str) -> Publis
             )
         workflow_dirty, plain_dirty = split_paths(_dirty_paths())
 
+        # The rebuild reset past any merge: nothing is "carried" any more.
+        carried_dirty = carried_committed = ()
+
     return PublishSplit(
         workflow_paths=workflow_dirty,
         plain_paths=plain_dirty,
@@ -409,6 +545,7 @@ def _prepare_publish(compare_ref: str, branch: str, publish_base: str) -> Publis
         committed_plain_paths=tuple(
             p for p in committed if not is_workflow_path(p)
         ),
+        base_workflow_paths=tuple(dict.fromkeys((*carried_dirty, *carried_committed))),
     )
 
 
@@ -757,7 +894,7 @@ def _ensure_pr_impl(
     # so resetting past the upstream would only discard published history.
     publish_base = compare_ref
 
-    split = _prepare_publish(compare_ref, branch, publish_base)
+    split = _prepare_publish(compare_ref, branch, publish_base, base_ref=patch_base)
 
     if dry_run:
         logger.info(
@@ -801,6 +938,8 @@ def _ensure_pr_impl(
     if not issue_title:
         issue_title = _issue_title(transport=transport)
     commit_paths = list(split.plain_paths)
+    # The base's own workflow changes conclude the merge with everything else.
+    commit_paths.extend(split.base_workflow_paths)
     if patch_commit_path:
         commit_paths.append(patch_commit_path)
     commit_hash = ""
@@ -818,11 +957,25 @@ def _ensure_pr_impl(
     # Initialised before the first fallible block so a no-push run never
     # reads it unbound below (issue: engine cannot create PR).
     pushed = False
+    held_back: tuple[str, ...] = ()
 
     if not no_push:
         # Conflict-only flow (issue #1242): the publish pushes plainly and
         # never merges the base; the scaffold owns the conflict merge.
-        _push_branch(branch, remote, force=split.republished)
+        try:
+            _push_branch(branch, remote, force=split.republished)
+        except RuntimeError as exc:
+            if not (split.base_workflow_paths and _is_workflow_push_refusal(exc)):
+                raise
+            # The token may not push even the base's own workflow change:
+            # keep the branch's copy, push, and say so loudly on the PR.
+            logger.warning(
+                "ensure_pr: push refused for the base's workflow files "
+                f"{list(split.base_workflow_paths)}; holding them back: {exc}"
+            )
+            _hold_back_base_workflows(branch, patch_base, split.base_workflow_paths)
+            held_back = split.base_workflow_paths
+            _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")
 
@@ -849,6 +1002,16 @@ def _ensure_pr_impl(
             logger.info(f"ensure_pr: PR links the target issue via 'Closes #{issue_number}'")
     elif existing:
         logger.info(f"ensure_pr: PR already exists for '{branch}': {existing}")
+
+    if held_back:
+        try:
+            _post_patch_comment(
+                _held_back_note(branch, base, held_back),
+                pr_url=pr_url,
+                transport=transport,
+            )
+        except (RuntimeError, TimeoutExpired) as exc:
+            logger.warning(f"ensure_pr: held-back workflow note not posted: {exc}")
 
     if split.workflow_paths:
         # Posted before the PR existed, so re-target the patch comment at the

@@ -482,6 +482,10 @@ def _patch_git(
             return unmerged
         if joined.startswith("rev-list --count @{u}..HEAD"):
             return "0"
+        if joined.startswith("rev-parse -q --verify") and ":" in args[-1]:
+            # ``<rev>:<path>`` blob lookup: the agent's copy never equals the
+            # base's, so no workflow path reads as carried in by a base merge.
+            return f"blob-of-{args[-1]}"
         if joined.startswith("rev-list --count"):
             return "1" if committed else "0"
         if joined.startswith("rev-list --max-parents=0"):
