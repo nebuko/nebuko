@@ -59,6 +59,26 @@ NO_VERIFY_PATTERN = (
     rf"(?:\s+{_ARG})*?\s+(?:--no-verify|-[A-Za-z]*n[A-Za-z]*)(?:\s+{_ARG})*\s*"
 )
 
+#: The deny message for a branch-mutating ``git`` statement: switching
+#: branches mid-session strands the scaffolded branch and finalize fails.
+CHECKOUT_DENY_MESSAGE = (
+    "git checkout/switch/branch is disabled for agents: the session must stay "
+    "on the scaffolded branch; the engine owns branch lifecycle and "
+    "publishing. Inspect other branches read-only with "
+    "`git log/show/diff/ls-tree <ref>` — no checkout needed."
+)
+
+#: Matches a ``git checkout``, ``git switch`` or ``git branch`` statement
+#: that mutates branches: same preamble handling as ``PUSH_PATTERN``, with
+#: the branch-mutating subcommand as the first non-option token.
+CHECKOUT_PATTERN = (
+    r"\s*"
+    r"(?:[A-Za-z_][A-Za-z_0-9]*=\S*\s+)*"
+    r"git(?:\s+(?:-{1,2}\S+|-c|-C|--git-dir|--work-tree|--namespace"
+    r"|--exec-path|--super-prefix)(?:\s+[^\s-]\S*)?)*\s+"
+    r"(?:checkout|switch|branch)(?:\s+\S+)*\s*"
+)
+
 #: Shell operators that chain statements inside one ``commands`` entry.
 #: Quoted text is never split (``git commit -m 'a; git push'`` is one
 #: statement whose message happens to contain a mention).
@@ -141,6 +161,11 @@ def push_deny_list() -> CommandDenyList:
                 name="git-commit-no-verify",
                 pattern=re.compile(NO_VERIFY_PATTERN),
                 message=NO_VERIFY_DENY_MESSAGE,
+            ),
+            DenyRule(
+                name="git-branch-switch",
+                pattern=re.compile(CHECKOUT_PATTERN),
+                message=CHECKOUT_DENY_MESSAGE,
             ),
         ]
     )
