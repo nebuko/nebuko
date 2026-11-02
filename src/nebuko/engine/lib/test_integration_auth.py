@@ -86,7 +86,7 @@ class TestClassifyIntegrationDenial:
 class TestIntegrationDenialIsNotRetried:
     """A ``GET /user`` integration denial fails fast instead of cooling down."""
 
-    @patch("github_client.subprocess.run")
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
     def test_given_denial_on_user_call_when_called_then_no_sleep(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1,
@@ -109,7 +109,7 @@ class TestIntegrationDenialIsNotRetried:
 class TestEngineActorFailsFast:
     """engine_actor() resolves without retry stalls on an App token."""
 
-    @patch("github_client.get_authenticated_user")
+    @patch("nebuko.engine.lib.github_client.get_authenticated_user")
     def test_given_unresolvable_user_when_resolved_then_zero_actor_fast(
         self, mock_get_user
     ):

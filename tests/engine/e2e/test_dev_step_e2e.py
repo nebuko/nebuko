@@ -23,7 +23,7 @@ from nebuko.engine.lib.git.branch_scaffold import feature_branch_name
 from nebuko.engine.models import ExitCode, Trigger
 from nebuko.engine.run_loop import PHASES, Engine
 
-from workflow_state import Appreciation
+from nebuko.engine.lib.workflow_state import Appreciation
 
 ISSUE_NUMBER = 1207
 ISSUE_TITLE = "End-to-end test for a running dev agent"
@@ -67,7 +67,7 @@ class GitCommandRecorder:
         for module in (
             git_session,
             branch_scaffold,
-            importlib.import_module("agent_script.features.ensure_pr.ensure_pr"),
+            importlib.import_module("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr"),
         ):
             monkeypatch.setattr(module, "subprocess", proxy)
 
@@ -148,7 +148,7 @@ def _finalize_turn(*, report: str, turn_outcome: dict[str, Any] | None) -> list[
     _structured_output={"turn_outcome": turn_outcome} and the report text.
     turn_outcome=None or a dict missing required keys (e.g. {"note": "done"})
     produces the malformed first-turn finalize."""
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
@@ -295,10 +295,10 @@ def _resolved() -> dict[str, str]:
 
 def _pin_resolver(monkeypatch) -> None:
     """Pin the resolver facade's output (the ``_patch_resolver`` pattern)."""
-    import resolve_config  # noqa: F401 - ensures the submodule is imported
+    import nebuko.engine.lib.resolve_config  # noqa: F401 - ensures the submodule is imported
 
     monkeypatch.setattr(
-        sys.modules["resolve_config.resolve_config"],
+        sys.modules["nebuko.engine.lib.resolve_config.resolve_config"],
         "resolve_config",
         lambda **_: _resolved(),
     )
@@ -347,7 +347,7 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     def _fake_ensure_pr(
         dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
     ):
-        from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
+        from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 
         return EnsurePrResult(
             pr_url="https://github.com/nebuko/nebuko/pull/1207",
@@ -355,7 +355,7 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
         )
 
     monkeypatch.setattr(
-        "agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake_ensure_pr
+        "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake_ensure_pr
     )
     _pin_resolver(monkeypatch)
     engine = _dev_engine(tmp_path, root, _dev_trigger())

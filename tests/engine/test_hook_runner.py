@@ -1,6 +1,7 @@
 """Unit tests for the session hook runner (issue #884)."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,11 @@ def _write_script(root: Path, rel: str, body: str) -> Path:
 
 
 def _runner(workspace: Path, env: dict | None = None) -> HookRunner:
-    return HookRunner(workspace=workspace, env=env or {})
+    # Keep the caller's PATH: with an empty env ``/bin/sh`` falls back to a
+    # default PATH, which has no coreutils on Nix-style hosts (sleep/tail -> 127).
+    return HookRunner(
+        workspace=workspace, env={"PATH": os.environ.get("PATH", ""), **(env or {})}
+    )
 
 
 class TestHookRunner:
