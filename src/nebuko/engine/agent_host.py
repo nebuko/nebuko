@@ -396,8 +396,8 @@ def _salvage_finalize_body(
     ``salvage`` never raises; an empty result means no section survived, and the
     caller keeps the fallback chain.
     """
-    report = handler.salvage(_finalize_turn_text(conversation))
-    return OutputRenderer(contract).render(report.sections)
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
 
 
 def _turn_outcome_payload(conversation: Any, state: Any) -> dict[str, Any] | None:

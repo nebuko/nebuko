@@ -106,16 +106,21 @@ def closing_turn_report_text(conversation: Any) -> str:
     finalize prompt is a ``user``-sourced ``MessageEvent`` that embeds the
     section skeleton (issue #1020), and harvesting it posts the template.
     """
-    anchor = finalize_anchor_index(conversation)
-    if anchor < 0:
-        return ""
-    events = events_of(conversation)
-    argument = _report_argument(events[anchor])
-    if argument:
-        return argument
-    text = content_text(getattr(events[anchor], "thought", None)).strip()
-    if text:
-        return text
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
+
+
+def closing_turn_report_candidates(conversation: Any) -> list[str]:
+    """Every candidate report text for the anchored finalize turn (issue #1263).
+
+    Precedence order: (1) the anchor finalize call's ``report`` argument
+    (including from a call the SDK rejected), (2) the anchor event's
+    ``thought``, (3) the nearest preceding agent-authored message bounded by the
+    finalize/user-turn window. Whitespace-only candidates are omitted; no event
+    after the anchor is ever read; never raises.
+    """
+    # @stub-protected: signature defined by architect — do not modify
+    raise NotImplementedError
     # This closing turn starts at its own prompt (a user ``MessageEvent``) and
     # ends at the anchor. An earlier ``finalize`` call (a refused or recorded
     # attempt) also bounds the window: the messages after it are that attempt's

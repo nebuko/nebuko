@@ -532,6 +532,110 @@ def _with_observations(events: list[Any]) -> list[Any]:
     return stream
 
 
+class TestSalvageCandidateFallback:
+    """Salvage falls back through candidate report texts (issue #1263)."""
+
+    def _mangled_answer(self) -> str:
+        """A report whose markers are missing — the incident's report argument."""
+        return "# Wired the format\n\n- a.py\n"
+
+    def test_repro_mangled_report_argument_salvages_from_turn_text(
+        self, tmp_path: Path
+    ) -> None:
+        """A mangled ``report`` argument must not starve the salvage (issue #1263).
+
+        The anchor finalize call carries a report argument with no intact
+        section markers, and the agent-authored message before the call has
+        well-formed sections. Pre-fix, the salvage read only the report
+        argument, dropped every section, and posted a title-only message —
+        which left the next run with an empty prompt.
+        """
+        from nebuko.engine.agent_host import (
+            _REPORT_OFFSET_ATTR,
+            _salvage_finalize_body,
+        )
+
+        contract = _contract()
+        conversation = _FinalizeConversation(turns=[[]])
+        conversation.state.events = [
+            _agent_message_event(_answer("A true headline")),
+            _finalize_event(
+                "", {"appreciation": "approved"}, report=self._mangled_answer()
+            ),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        body = _salvage_finalize_body(
+            FinalizeToolHandler(RunTerminator(contract)), contract, conversation
+        )
+
+        assert body != ""
+        assert "A true headline" in body
+        assert "- a.py" in body
+
+    def test_salvage_tries_candidates_in_precedence_order(self) -> None:
+        """The first candidate with any surviving section wins; later ones are not consulted."""
+        from nebuko.engine.agent_host import (
+            _REPORT_OFFSET_ATTR,
+            _salvage_finalize_body,
+        )
+
+        contract = _contract()
+        conversation = _FinalizeConversation(turns=[[]])
+        conversation.state.events = [
+            _agent_message_event(
+                "# third\n\n<!-- nebuko:section changes -->\n- from-message\n"
+                "<!-- /nebuko:section -->\n"
+            ),
+            _finalize_event(
+                "# second\n\n<!-- nebuko:section verification -->\n- from-thought\n"
+                "<!-- /nebuko:section -->\n",
+                {"appreciation": "approved"},
+                report="# first\n\n<!-- nebuko:section changes -->\n- from-report\n"
+                "<!-- /nebuko:section -->\n",
+            ),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        body = _salvage_finalize_body(
+            FinalizeToolHandler(RunTerminator(contract)), contract, conversation
+        )
+
+        assert "from-report" in body
+        assert "from-thought" not in body
+        assert "from-message" not in body
+
+    def test_a_mangled_report_argument_falls_back_to_the_thought(self) -> None:
+        """With the argument mangled, the anchor's thought outranks the message."""
+        from nebuko.engine.agent_host import (
+            _REPORT_OFFSET_ATTR,
+            _salvage_finalize_body,
+        )
+
+        contract = _contract()
+        conversation = _FinalizeConversation(turns=[[]])
+        conversation.state.events = [
+            _agent_message_event(
+                "# third\n\n<!-- nebuko:section changes -->\n- from-message\n"
+                "<!-- /nebuko:section -->\n"
+            ),
+            _finalize_event(
+                "# second\n\n<!-- nebuko:section verification -->\n- from-thought\n"
+                "<!-- /nebuko:section -->\n",
+                {"appreciation": "approved"},
+                report=self._mangled_answer(),
+            ),
+        ]
+        setattr(conversation, _REPORT_OFFSET_ATTR, 1)
+
+        body = _salvage_finalize_body(
+            FinalizeToolHandler(RunTerminator(contract)), contract, conversation
+        )
+
+        assert "from-thought" in body
+        assert "from-message" not in body
+
+
 class _FakeAgent:
     def __init__(self, tools: dict[str, Any]) -> None:
         import threading
