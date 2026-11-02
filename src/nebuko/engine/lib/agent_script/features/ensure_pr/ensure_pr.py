@@ -455,28 +455,6 @@ def _base_conflict_paths(branch: str, base: str) -> list[str]:
     raise NotImplementedError
 
 
-# Removed per issue #1242: the publish-time base sync (#1219) is gone —
-# the publish flow pushes plainly and never merges the base.
-def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
-    raise NotImplementedError
-    """Publish-time base sync (issue #1219): fetch ``origin/<base>`` (no
-    tags, explicit refspec, same shape as ``BranchScaffold._fetch_base``),
-    skip when ``_base_already_in_branch``, else ``git merge --no-edit
-    origin/<base>`` into ``branch``. On a conflict, abort the merge and
-    report it. Returns ``""`` on success or benign skip, or an actionable
-    error detail (fetch failed / dirty tree / merge failed / conflict
-    aborted, with the abort outcome) that the caller MUST treat as a refusal
-    to push.
-    """
-    raise NotImplementedError
-
-
-# Removed per issue #1242: the publish-time base sync (#1219) is gone —
-# the publish flow pushes plainly and never merges the base.
-def _sync_base_before_push(branch: str, base: str) -> str:  # @stub-protected
-    raise NotImplementedError
-
-
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
     args = ["push", remote, branch]
     try:
@@ -758,6 +736,17 @@ def _ensure_pr_impl(
     # may only carry ``origin/main``); ``compare_ref`` is the
     # branch-comparison anchor.
     base = _default_base(transport=transport)
+    if branch == base:
+        # Publishing the base would push the session's work straight to it
+        # (or fail on branch protection with an opaque error): the session
+        # must be on its scaffolded branch (issue #1268).
+        return EnsurePrResult(
+            error=True,
+            message=(
+                f"error: refusing to publish from the base branch {base!r}: "
+                "the session is not on its feature branch"
+            ),
+        )
     patch_base = _resolve_base_ref(base, remote)
     try:
         compare_ref = _run_git(["rev-parse", "--abbrev-ref", "@{u}"]).strip() or patch_base
@@ -831,10 +820,8 @@ def _ensure_pr_impl(
     pushed = False
 
     if not no_push:
-        # @stub-protected: signature defined by architect — do not modify
-        sync_detail = _sync_base_before_push(branch, base)
-        if sync_detail:
-            return EnsurePrResult(error=True, message=f"error: {sync_detail}")
+        # Conflict-only flow (issue #1242): the publish pushes plainly and
+        # never merges the base; the scaffold owns the conflict merge.
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")
@@ -949,6 +936,17 @@ def ensure_pr(
     try:
         return _ensure_pr_impl(dry_run, issue_title, interrupted)
     except Exception as e:
-        logger.error(f"ensure_pr failed: {e}")
-        return EnsurePrResult(error=True, message=f"error: {e}")
+        detail = format_failure_detail(e)
+        logger.exception("ensure_pr failed: %s", detail)
+        return EnsurePrResult(error=True, message=f"error: {detail}")
+
+
+def format_failure_detail(exc: BaseException) -> str:
+    """``<ExcType>: <message>``, never empty (issue #1268).
+
+    A bare ``str(exc)`` is empty for an exception raised without a message,
+    which left the run log with an undiagnosable ``ensure_pr failed: ``.
+    """
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 

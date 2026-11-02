@@ -431,6 +431,77 @@ class TestScaffold:
         assert "is not a git checkout" in result.detail
 
 
+class TestContinuationChecksOutTheBranch:
+    """Issue #1268: a continuation round must land on the feature branch.
+
+    ``actions/checkout`` leaves the runner on ``main`` (not detached) and the
+    previous round's branch exists only on the remote. The early returns of
+    the conflict-only scaffold (#1242) reported the branch as ready without
+    checking it out, so the agent committed on ``main``.
+    """
+
+    @staticmethod
+    def _round_one_on_the_remote(checkout: Path) -> str:
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "round 1")
+        _git(checkout, "push", "-q", "origin", BRANCH)
+        round1 = _git(checkout, "rev-parse", "HEAD")
+        # Fresh runner for round 2: on main, no local or tracking branch.
+        _git(checkout, "checkout", "-q", "main")
+        _git(checkout, "branch", "-qD", BRANCH)
+        _git(checkout, "update-ref", "-d", f"refs/remotes/origin/{BRANCH}")
+        return round1
+
+    def test_an_up_to_date_remote_branch_is_checked_out(self, checkout):
+        round1 = self._round_one_on_the_remote(checkout)
+
+        result = _scaffold(checkout)
+
+        assert result.ok and result.already_up_to_date
+        assert "already contains origin/main" in result.detail
+        assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        assert _git(checkout, "rev-parse", "HEAD") == round1
+
+    def test_a_clean_probe_remote_branch_is_checked_out_unmerged(self, checkout):
+        round1 = self._round_one_on_the_remote(checkout)
+        seed = checkout.parent / "seed"
+        _commit(seed, "main-only.txt", "main\n", "main moves on")
+        _git(seed, "push", "-q", "origin", "main")
+
+        result = _scaffold(checkout)
+
+        assert result.ok and result.already_up_to_date
+        assert "no conflicts" in result.detail
+        assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+        # Conflict-only (#1242): the clean base advance is not merged in.
+        assert _git(checkout, "rev-parse", "HEAD") == round1
+
+    def test_a_local_branch_is_checked_out_from_main(self, checkout):
+        _git(checkout, "checkout", "-q", "-b", BRANCH)
+        _commit(checkout, "work.txt", "work\n", "round 1")
+        _git(checkout, "checkout", "-q", "main")
+
+        result = _scaffold(checkout)
+
+        assert result.ok
+        assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
+
+    def test_a_scaffold_that_leaves_head_elsewhere_fails_closed(self, checkout):
+        self._round_one_on_the_remote(checkout)
+        scaffold = BranchScaffold(
+            checkout, {}, issue_number=ISSUE_NUMBER, issue_title=ISSUE_TITLE
+        )
+        # A regression that reports the branch without checking it out.
+        lying = ScaffoldResult(
+            ok=True, already_up_to_date=True, detail="up to date", branch=BRANCH
+        )
+        with mock.patch.object(scaffold, "_prepare_branch", return_value=lying):
+            result = scaffold.scaffold()
+
+        assert not result.ok
+        assert BRANCH in result.detail and "'main'" in result.detail
+
+
 class TestGitSubprocessEnv:
     """The git subprocess env must be bounded (E2BIG regression)."""
 

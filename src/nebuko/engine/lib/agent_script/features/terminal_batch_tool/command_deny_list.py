@@ -59,6 +59,57 @@ NO_VERIFY_PATTERN = (
     rf"(?:\s+{_ARG})*?\s+(?:--no-verify|-[A-Za-z]*n[A-Za-z]*)(?:\s+{_ARG})*\s*"
 )
 
+#: The deny message for a branch-mutating ``git`` statement: switching
+#: branches mid-session strands the scaffolded branch and finalize fails.
+CHECKOUT_DENY_MESSAGE = (
+    "git checkout/switch/branch is disabled for agents: the session must stay "
+    "on the scaffolded branch; the engine owns branch lifecycle and "
+    "publishing. Inspect other branches read-only with "
+    "`git log/show/diff/ls-tree <ref>` — no checkout needed."
+)
+
+#: ``git branch`` options that only list or inspect (issue #1268): with one of
+#: them, a positional argument is a pattern or a commit, not a new branch.
+_BRANCH_LISTING = (
+    r"(?:--list|-l|--show-current|--contains|--no-contains|--merged"
+    r"|--no-merged|--points-at)(?=[\s=]|$)"
+)
+
+#: ``git branch`` options that delete, rename, copy, reset or retrack a branch.
+_BRANCH_MUTATING = (
+    r"(?:-[A-Za-z]*[dDmMcCfu][A-Za-z]*|--(?:delete|move|copy|force"
+    r"|set-upstream-to|unset-upstream|edit-description|track|no-track"
+    r"|create-reflog|recurse-submodules))(?=[\s=]|$)"
+)
+
+#: Matches a ``git checkout``, ``git switch`` or ``git branch`` statement
+#: that mutates branches: same preamble handling as ``PUSH_PATTERN``, with
+#: the branch-mutating subcommand as the first non-option token.
+#:
+#: Read-only forms pass (issue #1268: denying ``git branch --show-current``
+#: left the agent unable to see it was on the wrong branch):
+#:
+#: - ``git checkout`` with a ``--`` pathspec separator restores files and
+#:   never moves HEAD (``git checkout -- a.txt``, ``git checkout HEAD -- a``);
+#: - ``git branch`` without arguments, with listing options only, or with a
+#:   listing option and a pattern/commit (``--show-current``, ``-a``, ``-vv``,
+#:   ``--list 'feat*'``, ``--contains <sha>``), unless a mutating option is
+#:   present too.
+CHECKOUT_PATTERN = (
+    r"\s*"
+    r"(?:[A-Za-z_][A-Za-z_0-9]*=\S*\s+)*"
+    r"git(?:\s+(?:-{1,2}\S+|-c|-C|--git-dir|--work-tree|--namespace"
+    r"|--exec-path|--super-prefix)(?:\s+[^\s-]\S*)?)*\s+"
+    r"(?:"
+    r"switch"
+    r"|checkout(?!(?:\s+\S+)*?\s+--(?:\s|$))"
+    r"|branch(?="
+    rf"(?:\s+\S+)*?\s+{_BRANCH_MUTATING}"
+    rf"|(?!(?:\s+\S+)*?\s+{_BRANCH_LISTING})(?:\s+\S+)*?\s+[^\s-]"
+    r")"
+    r")(?:\s+\S+)*\s*"
+)
+
 #: Shell operators that chain statements inside one ``commands`` entry.
 #: Quoted text is never split (``git commit -m 'a; git push'`` is one
 #: statement whose message happens to contain a mention).
@@ -141,6 +192,11 @@ def push_deny_list() -> CommandDenyList:
                 name="git-commit-no-verify",
                 pattern=re.compile(NO_VERIFY_PATTERN),
                 message=NO_VERIFY_DENY_MESSAGE,
+            ),
+            DenyRule(
+                name="git-branch-switch",
+                pattern=re.compile(CHECKOUT_PATTERN),
+                message=CHECKOUT_DENY_MESSAGE,
             ),
         ]
     )
