@@ -20,4 +20,10 @@ class LedgerMetricsCollector:
     def collect(
         self, ledger: Optional[RequirementsLedger], coverage_refusals: int
     ) -> LedgerMetrics:
-        raise NotImplementedError
+        return LedgerMetrics(
+            ledger_size=len(ledger.entries) if ledger is not None else 0,
+            inferred_entries=(
+                len(ledger.inferred_ids()) if ledger is not None else 0
+            ),
+            coverage_refusals=coverage_refusals,
+        )
