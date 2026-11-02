@@ -32,6 +32,22 @@ class GitIdempotency:
         self._repo_root = repo_root
         self._run_git = run_git
 
+    def _branch_ref(self, branch: str) -> str:
+        """The ref that names ``branch``: local first, else remote-tracking.
+
+        A previous round's branch on a fresh runner exists only as
+        ``refs/remotes/origin/<branch>``: the bare name does not resolve, and
+        the probes then answered "not merged" / "clean" for any branch
+        (issue #1268).
+        """
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            try:
+                self._run_git(["rev-parse", "--verify", "-q", ref])
+                return ref
+            except RuntimeError:
+                continue
+        return branch
+
     def has_base_conflict(
         self, branch: str, base: str
     ) -> list[str] | None:  # @stub-protected
@@ -56,7 +72,7 @@ class GitIdempotency:
             except RuntimeError:
                 pass
         try:
-            return self._merge_tree_paths(base_ref, branch)
+            return self._merge_tree_paths(base_ref, self._branch_ref(branch))
         except RuntimeError:
             # Not a conflict: an unresolvable ref, unrelated histories, a
             # corrupt repo — the probe cannot say the merge is clean, so the
@@ -71,7 +87,7 @@ class GitIdempotency:
         """
         result = subprocess.run(
             ["git", "-C", self._repo_root,
-             "merge-tree", "--write-tree", "--name-only",
+             "merge-tree", "--write-tree", "--name-only", "--no-messages",
              base_ref, branch],
             capture_output=True,
             text=True,
@@ -85,13 +101,24 @@ class GitIdempotency:
                 f"git merge-tree {base_ref} {branch} failed: "
                 f"{(result.stderr or result.stdout).strip()}"
             )
+        if result.returncode == 1 and not result.stdout.strip():
+            # An unresolvable ref also exits 1 ("not something we can
+            # merge"), with nothing on stdout: that is a failed probe, never
+            # a clean merge (issue #1268).
+            raise RuntimeError(
+                f"git merge-tree {base_ref} {branch} failed: "
+                f"{result.stderr.strip()}"
+            )
         if result.returncode == 1:
             # Exit 1 means a conflict; the rc-1 stdout carries the tree oid,
             # the conflicted paths, then the informational merge messages.
-            lines = [line for line in result.stdout.splitlines() if line]
-            # Line 1 is the written tree oid; the conflicted paths follow, up
-            # to the blank line before the informational merge messages.
-            return lines[1:lines.index("")] if "" in lines else lines[1:]
+            # ``--no-messages`` drops the informational section (its
+            # "Auto-merging …" lines were read as paths): line 1 is the
+            # written tree oid, the conflicted paths follow.
+            lines = result.stdout.splitlines()
+            if "" in lines:
+                lines = lines[: lines.index("")]
+            return [line for line in lines[1:] if line]
         return []
 
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected
@@ -101,7 +128,7 @@ class GitIdempotency:
         of the branch — the merge would be a no-op and must not run.
         """
         try:
-            self._run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
+            self._run_git(["merge-base", "--is-ancestor", f"origin/{base}", self._branch_ref(branch)])
         except RuntimeError:
             return False
         return True
