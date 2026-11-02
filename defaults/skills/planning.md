@@ -33,6 +33,13 @@ Sections, **in this order**:
    1. **`path/to/file`** — what changes and why
    </details>
    ```
-6. **`## Questions (if relevant)`** (optional). Open questions and assumptions, each with the default you proceed with. Omit when none.
+6. **`## Coverage`** (required when the analyze step emitted a requirements ledger). One row per ledger ID — ID / Covered by (the decision or implementation step that covers it) / Verified by (the test name or check):
+   ```
+   | ID | Covered by | Verified by |
+   |---|---|---|
+   | R1 | Decision §2, step 3 | test_r1_... |
+   ```
+   Every `R` and `K` must appear. A missing ID makes the plan invalid unless the row is explicitly `deferred: <reason>` (use it only for work genuinely out of scope). Each NG entry is checked as "not violated"; Q entries rank the options in `## Approaches considered`.
+7. **`## Questions (if relevant)`** (optional). Open questions and assumptions, each with the default you proceed with. Omit when none.
 
 Signatures and field lists are allowed; method *bodies* and implementation code are forbidden. String/namespace encodings or function-only designs are a last resort: justify in one sentence why no class can model it.

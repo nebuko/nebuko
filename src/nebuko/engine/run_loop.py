@@ -673,6 +673,13 @@ class Engine:
     _config_caller_root: dict[str, Path] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # Requirements-ledger bookkeeping (issue #1257): the ledger parsed from the
+    # analyze step's output, and whether this run's plan finalize was refused
+    # for missing coverage. Engine-internal, so it is excluded from
+    # ``__init__``/equality/repr.
+    _ledger_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     # @stub-protected
     def _caller_root(self) -> Path:
@@ -830,6 +837,7 @@ class Engine:
         self._publish_state.clear()
         self._hook_state.clear()
         self._scaffold_state.clear()
+        self._ledger_state.clear()
         # The typed thread and its selection describe *this* run's thread: a
         # reused engine over a new run must not serve the previous snapshots.
         self._context_state.clear()
@@ -1091,6 +1099,16 @@ class Engine:
                     "validate", lambda: self.validate(agent_result)
                 )
                 failure_reason = validation.error
+            # Requirements-ledger gate (issue #1257): a plan step whose coverage
+            # table misses an enforced (R/K) ledger ID is refused in the same
+            # turn, like the no-report refusal. Fail-open: no ledger in run
+            # state, or an unparseable one, is a no-op.
+            if failure_reason is None:
+                refusal = self._run_phase(
+                    "coverage", lambda: self._check_coverage(agent_result)
+                )
+                if not refusal.ok:
+                    failure_reason = refusal.error
 
             # Published even on failure: legacy always reaches ``prepare_comment``
             # (``if: always()``), so the issue thread is never left silent. A
@@ -2662,6 +2680,64 @@ class Engine:
         self._resolve_bridge()
 
     # @stub-protected
+    def _check_coverage(self, agent_result: Any) -> None:
+        """Refuse a plan finalize whose coverage misses a ledger ID (issue #1257).
+
+        Runs in the ``validate`` phase, after the section validation: the plan
+        step's answer is parsed for its ``coverage`` section and the analyze
+        step's recorded output for its ``requirements`` ledger. The check is
+        fail-open on both sides — a step that declares no ``coverage`` field,
+        no parseable ledger in run state, or an unparseable ledger (warning
+        only) is a no-op, so default and legacy workflows are unaffected. A
+        :class:`CoverageValidationError` propagates to the run loop, which
+        fails the step with ``coverage missing: ...``.
+        """
+        from nebuko.engine.ledger import CoverageValidationError, PlanCoverageGuard
+
+        resolved = self._handoff_config()
+        contract = step_output_contract(self._get(resolved, "STEP_OUTPUT"))
+        if contract is None or not any(f.name == "coverage" for f in contract.fields):
+            return
+        coverage_body = self._extract_declared_section(
+            _posted_answer_of(agent_result), contract, "coverage"
+        )
+        if coverage_body is None:
+            return
+        try:
+            PlanCoverageGuard().check(coverage_body, self._requirements_body())
+        except CoverageValidationError:
+            self._ledger_state["refused"] = True
+            raise
+
+    def _extract_declared_section(
+        self, body: str, contract: Any, name: str
+    ) -> str | None:
+        """One declared section of the answer, or ``None`` when absent."""
+        from nebuko.engine.finalize import OutputRenderer, SectionExtractionError
+
+        try:
+            return OutputRenderer(contract).extract_section(body, name)
+        except SectionExtractionError:
+            return None
+
+    def _requirements_body(self) -> str | None:
+        """The analyze step's ``requirements`` ledger body from run state.
+
+        ``None`` when no analyze output is addressable or it declares no
+        ``requirements`` field — the guard then stays a no-op (issue #1257).
+        """
+        scope = self._step_output_scope(list(self._context_history()))
+        body = scope.get("analyze")
+        if not body:
+            return None
+        contract = self._declared_outputs().get("analyze")
+        if contract is None or not any(
+            f.name == "requirements" for f in contract.fields
+        ):
+            return None
+        return self._extract_declared_section(body, contract, "requirements")
+
+    # @stub-protected
     def validate(self, agent_result: Any) -> None:
         """Delegate to ``validate_output``."""
         bridge = self._resolve_bridge()
@@ -2751,6 +2827,7 @@ class Engine:
         if state is None:
             return None
         state = self._record_hook_failure(state)
+        state = self._record_ledger_metrics(state)
         state = self._backfill_step_output(state)
         if self._publish_state.get("failed") and not state.publish_failed:
             # The journal must record that this run's deliverable was lost
@@ -2802,6 +2879,34 @@ class Engine:
             return state
         context = dict(state.current_context)
         context["post_hook_failure"] = note
+        return state.model_copy(update={"current_context": context})
+
+    def _record_ledger_metrics(self, state: WorkflowState) -> WorkflowState:
+        """Collect the requirements-ledger metrics into the persisted state (#1257).
+
+        ``current_context`` is the durable surface, so the ledger size, the
+        inferred-entry count and this run's coverage refusals ride there for
+        the metrics pipeline to aggregate. Fail-open: no parseable ledger in
+        run state leaves the state untouched.
+        """
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.ledger_metrics import (
+            LedgerMetricsCollector,
+        )
+        from nebuko.engine.ledger import RequirementsLedger
+
+        ledger_body = self._requirements_body()
+        if not ledger_body:
+            return state
+        try:
+            ledger = RequirementsLedger.parse(ledger_body)
+        except Exception:  # noqa: BLE001 - metrics are best-effort
+            return state
+        metrics = LedgerMetricsCollector().collect(
+            ledger,
+            coverage_refusals=1 if self._ledger_state.get("refused") else 0,
+        )
+        context = dict(state.current_context)
+        context["ledger_metrics"] = metrics.model_dump()
         return state.model_copy(update={"current_context": context})
 
     def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
