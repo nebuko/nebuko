@@ -360,6 +360,37 @@ Persisted form of one materialized step input (issue #872).
 }
 ```
 
+### Step Output Fields: Requirements Ledger and Coverage (issue #1257)
+
+Two output fields carry the requirements ledger and its plan coverage as
+markdown tables (see [ADR-0016](./adr/0016-requirements-ledger.md)).
+
+**How to use.** The `analyze` step writes a `requirements` field: a table with
+one row per ledger entry — ID (`R<n>` requirement, `K<n>` constraint,
+`NG<n>` non-goal, `Q<n>` quality goal), kind, one atomic checkable statement,
+a source (short quote or comment link), and an origin (`explicit` or
+`inferred`). Mark inferred rows so the human gate can confirm or remove them;
+ambiguities become `## Questions` entries with the default you proceed with —
+never stop and wait. The `plan` step writes a `coverage` field: one row per
+ledger ID with `covered by` (the decision or implementation step that covers
+it) and `verified by` (the test name or check). Every R and K must appear;
+a row may instead be `deferred: <reason>` (use it only for work genuinely out
+of scope, with the reason). Each NG entry is checked as "not violated", and Q
+entries rank the options in `## Approaches considered`.
+
+**How it works.** The engine parses the IDs from the `requirements` body of
+the analyze output and the `coverage` body of the plan output
+(`src/nebuko/engine/ledger.py`). When the plan step's `output.fields`
+declares `coverage`, the finalize path compares the enforced IDs (R and K
+only — NG and Q are prompt/critique-checked, never refused) against the
+covered and deferred rows; a missing ID refuses the finalize in the same turn
+with `coverage missing: R3, K1` (sorted, comma-joined), like the no-report
+refusal. The check is fail-open: no `coverage` field, no ledger in run state,
+or an unparseable ledger (warning only) makes the check a no-op, so default
+and legacy workflows are unaffected. Metrics emitted: ledger size, number of
+`inferred` entries, and coverage refusals per run
+(`LedgerMetricsCollector`).
+
 ---
 
 ## External Reference JSON
