@@ -35,7 +35,6 @@ from nebuko.engine.init.providers import (
 from nebuko.engine.init.repo_variables import RepoVariableWriter
 from nebuko.engine.init.setup import (
     BROKER_VARIABLE,
-    DEFAULT_BROKER_URL,
     EXIT_ERRORS,
     EXIT_OK,
     EXIT_USAGE,
@@ -67,6 +66,14 @@ PAT_INSTRUCTIONS = """\
 A GitHub Personal Access Token is required (fine-grained, with Contents,
 Pull requests and Issues read/write on the target repository). Create one at
 https://github.com/settings/personal-access-tokens/new
+"""
+APP_INSTALL_URL = "https://github.com/apps/nebuko/installations/new"
+APP_MISSING_MESSAGE = f"""
+The Nebuko GitHub App is not installed on the target repository.
+
+Install it first: {APP_INSTALL_URL}
+Then re-run this command — or run it with `--pat` to use a fine-grained
+Personal Access Token instead of the App.
 """
 
 
@@ -119,6 +126,10 @@ def _no_input(prompt: str) -> str:
     raise SetupError("no interactive input available (use --non-interactive with flags)")
 
 
+def _print_err(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
 class NonInteractivePrompter(InitPrompter):
     """No TTY: never confirm an overwrite, and fail loudly on any prompt."""
 
@@ -167,6 +178,10 @@ def _run(args: argparse.Namespace) -> int:
     # App mode is decided once, here, and reused for the PAT prompt and the
     # broker/caller-workflow steps (issue #1025).
     app_mode = _app_mode(args, context, target)
+    if not app_mode and not args.assume_pat:
+        # Not a deliberate PAT run: point the client at the App install first.
+        _print_err(APP_MISSING_MESSAGE)
+        return EXIT_USAGE
     # One read-only probe, reused for both the PAT and the provider key.
     existing = frozenset() if args.force else context.host.existing_secrets(target)
     skipped = _report_existing(context.host, target, existing, ("GH_PAT",), app_mode)
@@ -185,7 +200,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     outcome = run_init(answers, context.source, context.host, prompter)
     if outcome.code == EXIT_OK:
-        _setup_app_mode(context, app_mode, args)
+        _setup_app_mode(context, args)
         print(next_steps_message(outcome.pr_url, target.slug))
     return outcome.code
 
@@ -226,15 +241,11 @@ def _github_transport() -> Any:
     return GitHubTransport()
 
 
-def _setup_app_mode(context: SetupContext, app_mode: bool, args: argparse.Namespace) -> None:
-    """Write the broker repo variable and the caller workflow (issue #1025)."""
-    if context.variable_writer is not None:
-        context.variable_writer.set(BROKER_VARIABLE, context.broker_url)
+def _setup_app_mode(context: SetupContext, args: argparse.Namespace) -> None:
+    """Write the caller workflow (issue #1025)."""
     if context.workflow_writer is not None:
         result = context.workflow_writer.write(update=True, dry_run=args.dry_run)
         print(f"Caller workflow: {result.value} ({context.workflow_writer.target})")
-    if app_mode:
-        print("Nebuko App detected: the workflow mints its token from the OIDC broker.")
 
 
 def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTarget:
@@ -380,8 +391,8 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="broker_url",
         default=None,
         help=(
-            "OIDC token broker written to the "
-            f"{BROKER_VARIABLE} repository variable (default: {DEFAULT_BROKER_URL})"
+            "legacy OIDC token broker override; the workflow already falls back "
+            "to the published broker when the variable is unset"
         ),
     )
     parser.add_argument(
@@ -391,6 +402,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="treat the Nebuko App as installed without probing GitHub (offline)",
     )
     parser.add_argument(
+        "--pat",
         "--assume-pat",
         dest="assume_pat",
         action="store_true",

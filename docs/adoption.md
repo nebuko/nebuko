@@ -99,12 +99,12 @@ secrets. Pass `--force` to rewrite them.
 
 **App detection.** Before writing anything, `init` probes the Nebuko App
 installation for the target repository: an installation means App mode — no PAT
-prompt — while a `404` (or `--assume-pat`) selects the PAT fallback, which
-prompts for `GH_PAT` (fallback mode only). In App mode `init` also upserts the
-`NEBUKO_BROKER_URL`
-repository variable (default `https://token-broker.nebuko.dev`, override with
-`--broker-url`); the generated workflow exchanges a GitHub OIDC token for a
-short-lived installation token at that URL. See
+prompt — while a `404` (without `--pat`) makes `init` stop and print the App
+install link (`https://github.com/apps/nebuko/installations/new`); pass
+`--pat` (alias `--assume-pat`) to select the PAT fallback, which prompts for
+`GH_PAT` (fallback mode only). In App mode `init` writes the caller workflow;
+the workflow reads the broker endpoint from the optional `NEBUKO_BROKER_URL`
+repository variable and falls back to the published broker when it is unset. See
 [nebuko-init.md](./nebuko-init.md).
 
 It uses **your own `gh` authentication** to create the branch, the pull request
