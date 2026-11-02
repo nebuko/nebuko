@@ -10,40 +10,33 @@ Each test below names its given/when/then scenario per the architect's
 Object Design Contract. They are expected to FAIL against the stubs.
 """
 
-import os
-import sys
 import unittest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for _root in (REPO_ROOT, os.path.join(REPO_ROOT, "src"), os.path.join(REPO_ROOT, "src", "nebuko", "engine", "lib")):
-    if _root not in sys.path:
-        sys.path.insert(0, _root)
-
-from answer_footer import (  # noqa: E402
+from nebuko.engine.lib.answer_footer import (  # noqa: E402
     AnswerFooter,
     FooterStatus,
     StepLinkResolver,
     format_answer_footer,
 )
-from workflow_state.sub_domains.gate_lock.gate_lock import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import (  # noqa: E402
     GateLock,
     GateStatus,
 )
-from workflow_state.sub_domains.history_entry.history_entry import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import (  # noqa: E402
     HistoryEntry,
 )
-from workflow_state.sub_domains.thread_record.thread_record import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.thread_record.thread_record import (  # noqa: E402
     ThreadRecord,
     ThreadRecordKind,
 )
-from workflow_state.sub_domains.turn_outcome.turn_outcome import (  # noqa: E402
+from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (  # noqa: E402
     Appreciation,
     HoldKind,
     IncompleteReason,
     TurnOutcome,
     TurnStatus,
 )
-from workflow_state.workflow_state import WorkflowState  # noqa: E402
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState  # noqa: E402
 
 
 def _outcome(
