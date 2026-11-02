@@ -452,35 +452,7 @@ def _base_conflict_paths(branch: str, base: str) -> list[str]:
     cross-boundary import of ``engine.lib.git`` from the agent-script runtime
     is unconfirmed. Never mutates the worktree.
     """
-    # ``origin/<base>`` may not exist in a probe checkout: fall back to the
-    # local ``<base>`` ref when the tracking ref is unresolvable.
-    base_ref = f"origin/{base}"
-    try:
-        _run_git(["rev-parse", "--verify", base_ref])
-    except RuntimeError:
-        try:
-            _run_git(["rev-parse", "--verify", base])
-            base_ref = base
-        except RuntimeError:
-            return []
-    result = subprocess.run(
-        ["git", "-C", _repo_root(), "merge-tree", "--write-tree", "--name-only",
-         "--no-messages", base_ref, branch],
-        capture_output=True,
-        text=True,
-        timeout=DEFAULT_TIMEOUT,
-    )
-    # git exits 0 on a clean merge (stdout: tree oid only) and 1 on a
-    # conflict (stdout: tree oid, then the conflicted paths). Anything else
-    # is an infrastructure failure the caller cannot act on.
-    if result.returncode not in (0, 1):
-        return []
-    lines = [line for line in result.stdout.splitlines() if line]
-    return lines[1:]
-
-
-# Removed per issue #1242: the publish-time base sync (#1219) is gone —
-# the publish flow pushes plainly and never merges the base.
+    raise NotImplementedError
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
@@ -764,6 +736,17 @@ def _ensure_pr_impl(
     # may only carry ``origin/main``); ``compare_ref`` is the
     # branch-comparison anchor.
     base = _default_base(transport=transport)
+    if branch == base:
+        # Publishing the base would push the session's work straight to it
+        # (or fail on branch protection with an opaque error): the session
+        # must be on its scaffolded branch (issue #1268).
+        return EnsurePrResult(
+            error=True,
+            message=(
+                f"error: refusing to publish from the base branch {base!r}: "
+                "the session is not on its feature branch"
+            ),
+        )
     patch_base = _resolve_base_ref(base, remote)
     try:
         compare_ref = _run_git(["rev-parse", "--abbrev-ref", "@{u}"]).strip() or patch_base
@@ -837,28 +820,11 @@ def _ensure_pr_impl(
     pushed = False
 
     if not no_push:
-        # Conflict-only base sync (issue #1242): the base is never merged at
-        # publish time. On a conflicting advance the push still happens (the
-        # agent's work is never blocked by main moving) and a comment asks a
-        # human to re-call the agent on the conflict.
-        conflict_paths = _base_conflict_paths(branch, base)
+        # Conflict-only flow (issue #1242): the publish pushes plainly and
+        # never merges the base; the scaffold owns the conflict merge.
         _push_branch(branch, remote, force=split.republished)
         pushed = True
         logger.info(f"ensure_pr: pushed branch '{branch}' to {remote}")
-        if conflict_paths:
-            listed = "\n".join(f"- `{path}`" for path in conflict_paths)
-            body = (
-                "**Base conflict (main moved).** Merging `origin/%s` into this "
-                "branch conflicts in:\n\n%s\n\n"
-                "The branch was pushed as-is — main was **not** merged into it. "
-                "Please re-call the agent on this issue so it can resolve the "
-                "conflict (issue #1242 policy: conflict-only base sync)."
-                % (base, listed)
-            )
-            try:
-                _post_patch_comment(body, pr_url="", transport=transport)
-            except (RuntimeError, TimeoutExpired) as exc:
-                logger.warning(f"ensure_pr: base-conflict comment failed: {exc}")
 
     commit_hash = commit_hash or _run_git(["rev-parse", "HEAD"])
 
@@ -970,6 +936,17 @@ def ensure_pr(
     try:
         return _ensure_pr_impl(dry_run, issue_title, interrupted)
     except Exception as e:
-        logger.error(f"ensure_pr failed: {e}")
-        return EnsurePrResult(error=True, message=f"error: {e}")
+        detail = format_failure_detail(e)
+        logger.exception("ensure_pr failed: %s", detail)
+        return EnsurePrResult(error=True, message=f"error: {detail}")
+
+
+def format_failure_detail(exc: BaseException) -> str:
+    """``<ExcType>: <message>``, never empty (issue #1268).
+
+    A bare ``str(exc)`` is empty for an exception raised without a message,
+    which left the run log with an undiagnosable ``ensure_pr failed: ``.
+    """
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 

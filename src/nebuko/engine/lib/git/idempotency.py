@@ -5,17 +5,15 @@ base already contained in the feature branch? When it is, the merge is
 skipped and the run reports the branch as *already up to date*, which tells
 the prompt that the previous rounds' work is present.
 
-Most other engine git actions need no guard: a ``git push`` of an up-to-date
-branch, a commit with nothing staged (checked by the caller) and a PR lookup
-before creation are already safe to repeat. A workflow patch whose change the
-base already carries diffs empty and is never delivered.
-
 Like the rest of the git layer, the check never raises for an expected "no".
 """
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable, Sequence
+
+from .branch_scaffold import git_subprocess_env
 
 
 class GitIdempotency:
@@ -34,10 +32,32 @@ class GitIdempotency:
         self._repo_root = repo_root
         self._run_git = run_git
 
-    def has_base_conflict(self, branch: str, base: str) -> list[str]:  # @stub-protected
+    def _branch_ref(self, branch: str) -> str:
+        """The ref that names ``branch``: local first, else remote-tracking.
+
+        A previous round's branch on a fresh runner exists only as
+        ``refs/remotes/origin/<branch>``: the bare name does not resolve, and
+        the probes then answered "not merged" / "clean" for any branch
+        (issue #1268).
+        """
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            try:
+                self._run_git(["rev-parse", "--verify", "-q", ref])
+                return ref
+            except RuntimeError:
+                continue
+        return branch
+
+    def has_base_conflict(
+        self, branch: str, base: str
+    ) -> list[str] | None:  # @stub-protected
         """Dry-run ``git merge-tree --write-tree`` (base first, branch second);
         return the list of conflicted paths (empty list = clean merge). Never
         mutates the worktree.
+
+        ``None`` when the probe itself fails (unresolvable ref, unrelated
+        histories, corrupt repo): "no conflict" must never be guessed from a
+        probe that could not run.
         """
         # ``origin/<base>`` needs a remote-tracking ref, which a probe
         # checkout may not have: fall back to the local ``<base>`` ref when
@@ -52,42 +72,54 @@ class GitIdempotency:
             except RuntimeError:
                 pass
         try:
-            out = self._run_git(
-                [
-                    "merge-tree",
-                    "--write-tree",
-                    "--name-only",
-                    "--no-messages",
-                    base_ref,
-                    branch,
-                ]
-            )
-        except RuntimeError as exc:
-            # A merge-level failure (git exit 1, a conflict) writes the tree
-            # oid and the conflicted paths to stdout, which ``run_git`` drops
-            # when it raises: re-read them directly below. Anything else is an
-            # infrastructure "no".
-            if " failed (1)" not in str(exc) and "merge-tree" not in str(exc):
-                return []
-            out = self._merge_tree_stdout(base_ref, branch)
-        lines = [line for line in out.splitlines() if line]
-        # Line 1 is the written tree oid (present even on conflict); the rest
-        # are the conflicted paths.
-        return lines[1:] if lines else []
+            return self._merge_tree_paths(base_ref, self._branch_ref(branch))
+        except RuntimeError:
+            # Not a conflict: an unresolvable ref, unrelated histories, a
+            # corrupt repo — the probe cannot say the merge is clean, so the
+            # caller falls back to the unguarded merge.
+            return None
 
-    def _merge_tree_stdout(self, base_ref: str, branch: str) -> str:
-        """Raw stdout of the probe, keeping a conflict's rc-1 output readable
-        even though ``run_git`` raises instead of returning stdout."""
-        import subprocess
+    def _merge_tree_paths(self, base_ref: str, branch: str) -> list[str] | None:
+        """Conflicted paths out of a read-only ``merge-tree`` probe.
 
+        ``[]`` = clean merge. Git 2.56 emits conflicted paths on stdout on
+        rc 1, after the tree oid and before the informational merge messages.
+        """
         result = subprocess.run(
             ["git", "-C", self._repo_root,
              "merge-tree", "--write-tree", "--name-only", "--no-messages",
              base_ref, branch],
             capture_output=True,
             text=True,
+            env=git_subprocess_env({}),
         )
-        return result.stdout.strip()
+        if result.returncode not in (0, 1):
+            # Not a conflict: an unresolvable ref, unrelated histories, a
+            # corrupt repo — the probe cannot answer, so the caller falls
+            # back to the unguarded merge instead of trusting a clean read.
+            raise RuntimeError(
+                f"git merge-tree {base_ref} {branch} failed: "
+                f"{(result.stderr or result.stdout).strip()}"
+            )
+        if result.returncode == 1 and not result.stdout.strip():
+            # An unresolvable ref also exits 1 ("not something we can
+            # merge"), with nothing on stdout: that is a failed probe, never
+            # a clean merge (issue #1268).
+            raise RuntimeError(
+                f"git merge-tree {base_ref} {branch} failed: "
+                f"{result.stderr.strip()}"
+            )
+        if result.returncode == 1:
+            # Exit 1 means a conflict; the rc-1 stdout carries the tree oid,
+            # the conflicted paths, then the informational merge messages.
+            # ``--no-messages`` drops the informational section (its
+            # "Auto-merging …" lines were read as paths): line 1 is the
+            # written tree oid, the conflicted paths follow.
+            lines = result.stdout.splitlines()
+            if "" in lines:
+                lines = lines[: lines.index("")]
+            return [line for line in lines[1:] if line]
+        return []
 
     def base_already_merged(self, branch: str, base: str) -> bool:  # @stub-protected
         """Whether ``branch`` already contains ``origin/<base>``.
@@ -96,7 +128,7 @@ class GitIdempotency:
         of the branch — the merge would be a no-op and must not run.
         """
         try:
-            self._run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
+            self._run_git(["merge-base", "--is-ancestor", f"origin/{base}", self._branch_ref(branch)])
         except RuntimeError:
             return False
         return True

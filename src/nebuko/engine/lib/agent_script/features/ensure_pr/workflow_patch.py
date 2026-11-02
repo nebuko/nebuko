@@ -218,7 +218,7 @@ def revert_workflow_changes(
     paths = [
         path for path in workflow_paths if path not in set(workflow_matches_base)
     ]
-    if not paths:
+    if not paths:  # pragma: no cover — dead until the stub body is implemented
         return
     try:
         run_git(["restore", "--source", base_ref, "--staged", "--worktree", "--"] + paths)

@@ -98,8 +98,7 @@ def issue_title_from_payload(payload: object) -> str:
     return ""
 
 
-# @stub-protected
-def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
+def git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
     """Bounded env for git subprocesses: ambient env plus git/credential keys.
 
     The session env carries unbounded JSON payloads (CONTEXT_BODIES,
@@ -115,7 +114,16 @@ def _git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
         or "TOKEN" in key
         or "CREDENTIAL" in key
     }
-    return {**os.environ, **overlay, "GIT_TERMINAL_PROMPT": "0"}
+    # CONTEXT_BODIES carries the session payload: it counts toward the
+    # kernel's E2BIG argv+env limit and must not reach the subprocess.
+    bounded = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("CONTEXT_BODIES", "STEP_INPUT_RESULTS")
+    }
+    bounded.pop("CONTEXT_BODIES", None)
+    bounded.pop("STEP_INPUT_RESULTS", None)
+    return {**bounded, **overlay, "GIT_TERMINAL_PROMPT": "0"}
 
 
 class BranchScaffold:
@@ -198,6 +206,19 @@ class BranchScaffold:
             return ScaffoldResult(ok=False, detail=unshallow_problem)
         result = self._prepare_branch(branch, base)
         if result.ok and result.branch:
+            # Fail closed before the agent starts: a scaffold that reports a
+            # branch it did not check out sends the session to the base, and
+            # only finalize noticed — after the work was committed there
+            # (issue #1268).
+            current = self._git("rev-parse", "--abbrev-ref", "HEAD")
+            if current != result.branch:
+                return ScaffoldResult(
+                    ok=False,
+                    detail=(
+                        f"scaffold prepared {result.branch} but HEAD is on "
+                        f"{current!r}"
+                    ),
+                )
             self._install_workflow_hook()
         return result
 
@@ -263,8 +284,27 @@ class BranchScaffold:
         An existing branch — local, or remote-only from a previous round —
         must be merged onto the base, never reset: ``checkout -B`` would
         orphan the prior round's commits (issue #1138 round 8).
+
+        Conflict-only (issue #1242): an existing branch is probed with a
+        read-only merge-tree first; a clean probe leaves the branch as-is so
+        the base's changes never enter the PR routinely, and a conflicted
+        probe performs the merge to surface the conflicted paths.
         """
         if self._branch_exists(branch):
+            # The probe is read-only: sync origin/<base> here so it sees
+            # main's latest state. Offline, fall back to the stale ref.
+            self._fetch_base(base)
+            if self._idempotency.base_already_merged(branch, base):
+                return self._continue_as_is(
+                    branch, f"{branch} already contains origin/{base}: up to date"
+                )
+            conflicts = self._idempotency.has_base_conflict(branch, base)
+            if conflicts == []:
+                # Clean probe: leave the branch as-is, main's changes must
+                # not enter the PR routinely (issue #1242).
+                return self._continue_as_is(
+                    branch, f"no conflicts merging origin/{base} into {branch}"
+                )
             return self._merge_origin(branch, base)
         return self._create_branch(branch, base)
 
@@ -313,39 +353,57 @@ class BranchScaffold:
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(ok=True, detail=detail, branch=branch)
 
+    def _checkout_existing(self, branch: str) -> str:
+        """Check out an existing branch; return a problem, or ``""``.
+
+        A remote-only branch from a previous round is fetched but not
+        checked out yet (the runner's checkout sits on the base, or is
+        detached at a pinned SHA): every path that continues the branch must
+        land on it, or the agent works on the base (issue #1268). It is
+        created from the remote ref explicitly: ``git checkout <branch>``
+        only guesses through the configured fetch refspec, which a
+        single-branch (shallow) clone limits to the base.
+        """
+        try:
+            if self._has_local_branch(branch):
+                self._git("checkout", branch)
+            else:
+                self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
+        except RuntimeError as exc:
+            return f"could not check out {branch}: {exc}"
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD")
+        if current != branch:
+            return f"checked out {branch} but HEAD is on {current!r}"
+        return ""
+
+    def _continue_as_is(self, branch: str, detail: str) -> ScaffoldResult:
+        """Continue an existing branch without merging the base."""
+        problem = self._checkout_existing(branch)
+        if problem:
+            return ScaffoldResult(ok=False, detail=problem)
+        logger.info("branch scaffold: %s", detail)
+        return ScaffoldResult(
+            ok=True, already_up_to_date=True, detail=detail, branch=branch
+        )
+
     def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected
         """Conflict-only base merge (issue #1242): probe with a read-only
         merge-tree first; merge `origin/<base>` only on a real conflict and
         hand the conflicted paths to the agent. A clean probe leaves the
         branch as-is — main's changes must never enter the PR routinely.
         """
-        try:
-            # A remote-only branch from a previous round is fetched but not
-            # checked out yet (a pinned-SHA checkout is detached): the merge
-            # must happen on the branch, never on the detached HEAD. It is
-            # created from the remote ref explicitly: ``git checkout <branch>``
-            # only guesses through the configured fetch refspec, which a
-            # single-branch (shallow) clone limits to the base.
-            if self._has_local_branch(branch):
-                self._git("checkout", branch)
-            else:
-                self._git("checkout", "-b", branch, f"refs/remotes/origin/{branch}")
-        except RuntimeError as exc:
-            return ScaffoldResult(ok=False, detail=f"could not check out {branch}: {exc}")
-        conflicted = self._idempotency.has_base_conflict(branch, base)
-        if not conflicted:
-            detail = f"{branch} vs origin/{base}: no conflicts — left as-is"
-            logger.info("branch scaffold: %s", detail)
-            return ScaffoldResult(
-                ok=True, already_up_to_date=True, detail=detail, branch=branch
-            )
+        # The merge must happen on the branch, never on the base or a
+        # detached HEAD.
+        problem = self._checkout_existing(branch)
+        if problem:
+            return ScaffoldResult(ok=False, detail=problem)
         try:
             # The identity is passed inline: the preflight that writes the
             # repo-local identity may not have run yet, and a runner without a
             # global one cannot create the merge commit.
             self._git(*self._identity_args(), "merge", "--no-edit", f"origin/{base}")
         except RuntimeError as exc:
-            paths = self._conflicted_files()
+            conflicted = self._conflicted_files()
             if not conflicted:
                 # Not a conflict (unrelated histories, a dirty tree, …): the
                 # agent cannot fix it, so the run must fail instead.
@@ -443,7 +501,7 @@ class BranchScaffold:
             cwd=self.repo_root,
             capture_output=True,
             text=True,
-            env=_git_subprocess_env(self.env),
+            env=git_subprocess_env(self.env),
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
