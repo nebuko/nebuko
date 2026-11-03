@@ -7,11 +7,10 @@ commits, pushes and opens PRs, so the agent never has to (and cannot push).
   1. Refuse to publish while merge conflicts remain unresolved.
   2. Split the delta by path — ``.github/workflows/*`` is patch-only.
   3. Commit everything else the agent left (if any), named after the issue.
-  4. Merge ``origin/<base>`` into the branch, skipped when the base is
-     already contained; a conflict refuses the publish.
-  5. Push the current branch to origin.
-  6. Open a PR if none exists for the branch (idempotent).
-  7. Deliver the workflow delta as a patch: committed on the branch and
+  4. Push the current branch to origin. The base is never merged here
+     (issue #1242): the turn-start scaffold owns the conflict merge.
+  5. Open a PR if none exists for the branch (idempotent).
+  6. Deliver the workflow delta as a patch: committed on the branch and
      commented on the PR (issue #1080).
 
 The split (steps 2/6) exists because the agent's token has no ``workflow``
@@ -560,36 +559,6 @@ def _needs_push(split: PublishSplit) -> bool:
     return bool(
         split.plain_paths or split.committed_plain_paths or split.republished
     )
-
-
-# @stub-protected: signature defined by architect — do not modify
-def _base_already_in_branch(branch: str, base: str) -> bool:
-    """True when ``origin/<base>`` is already an ancestor of ``branch``
-    (``git merge-base --is-ancestor``): the publish-time merge is a no-op
-    and must be skipped (the #1194 ancestry guard). An "is not an ancestor"
-    answer (git exits 1) returns False so the sync is attempted; any other
-    git failure (broken repo, unknown ref) is an infrastructure error and
-    propagates — the caller refuses the publish instead of attempting a
-    doomed fetch+merge.
-    """
-    try:
-        _run_git(["merge-base", "--is-ancestor", f"origin/{base}", branch])
-    except RuntimeError as exc:
-        if " failed (1)" in str(exc):
-            # Exit code 1 is git's "no, not an ancestor" answer.
-            return False
-        raise
-    return True
-
-
-# @stub-protected: signature defined by architect — do not modify
-def _base_conflict_paths(branch: str, base: str) -> list[str]:
-    """Read-only merge-tree check (issue #1242): return the conflicted paths
-    a base merge would produce (empty list = clean). Kept local because a
-    cross-boundary import of ``engine.lib.git`` from the agent-script runtime
-    is unconfirmed. Never mutates the worktree.
-    """
-    raise NotImplementedError
 
 
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:

@@ -39,18 +39,17 @@ it never silently reverts.
 | Point | Before | After |
 |---|---|---|
 | Turn start, existing branch | `BranchScaffold._merge_origin` always merged `origin/<base>` | Dry-runs `git merge-tree --write-tree`; merges only on conflict |
-| Publish | `ensure_pr._sync_base_before_push` fetched + merged the base before pushing | Function removed; plain push + read-only `merge-tree` check + PR comment on conflict |
+| Publish | `ensure_pr._sync_base_before_push` fetched + merged the base before pushing | Function removed; plain push. (A publish-time conflict check + PR comment was planned but never implemented; a conflict surfaces at the next turn-start scaffold.) |
 | Workflow revert | `revert_workflow_changes` restored every workflow path from the branch's previous content | Workflow paths whose tree content equals `origin/<base>:` are excluded from the revert set |
 
 - `src/nebuko/engine/lib/git/idempotency.py` — `GitIdempotency.has_base_conflict(branch, base)`:
   read-only `git merge-tree --write-tree origin/<base> <branch>`, returns the
-  conflicted paths (empty list = clean). `base_already_merged` is removed.
+  conflicted paths (empty list = clean). `base_already_merged` still
+  short-circuits the probe when the branch already contains the base.
 - `src/nebuko/engine/lib/git/branch_scaffold.py` — `_merge_origin` probes
   first, merges only on conflict; `_prepare_branch` routing is unchanged.
 - `src/nebuko/engine/lib/agent_script/features/ensure_pr/ensure_pr.py` —
-  `_base_conflict_paths(branch, base)` (local read-only merge-tree helper,
-  same output contract) plus the plain-push publish flow;
-  `_sync_base_before_push` / `_base_already_in_branch` are removed.
+  the plain-push publish flow; `_sync_base_before_push` is removed.
 
 ## Why (invariants)
 
