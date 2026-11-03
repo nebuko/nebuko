@@ -1,8 +1,10 @@
-"""Red tests for the engine's git lifecycle state wiring (issue #1153).
+"""The engine's persisted branch record through a full ``engine.run()``.
 
-The engine records every git action it takes — branch create/rebase/conflict,
-the PR it opens, and the dirty-tree auto-commit — in the persisted state's
-``git`` sub-domain, next to the legacy ``current_context["dev_branch"]``.
+The scaffolded branch lands in ``current_context["dev_branch"]``. (Issue #1153
+also sketched a typed ``state.git`` lifecycle record — create/rebase/conflict,
+PR number, dirty auto-commit; only its model, ``workflow_state.sub_domains.
+git_info``, was built. It is not wired into ``WorkflowState``, so its red
+wiring tests were removed.)
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ import pytest
 
 from nebuko.engine.lib.git import branch_scaffold, git_session, pr_finalize
 from nebuko.engine.lib.git.git_session import GuardResult
-from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitActionStatus
 
 from tests.engine.test_run_loop import (
     _agent_result,
@@ -73,91 +74,11 @@ def root(tmp_path):
     return path
 
 
-class TestScaffoldBranchRecorded:
-    def test_a_created_branch_is_recorded_as_create(
-        self, tmp_path, monkeypatch, root
-    ):
-        engine = _stub_flow(
-            monkeypatch,
-            root,
-            scaffold=branch_scaffold.ScaffoldResult(
-                ok=True, created=True, branch="feature/590-fix-it"
-            ),
-        )
-
-        state = engine.adapter.load_state()
-        assert state.git.branch_name == "feature/590-fix-it"
-        assert GitActionStatus.CREATE in [e.status for e in state.git.history]
-
-    def test_a_rebased_branch_is_recorded_as_rebase(
-        self, tmp_path, monkeypatch, root
-    ):
-        engine = _stub_flow(
-            monkeypatch,
-            root,
-            scaffold=branch_scaffold.ScaffoldResult(
-                ok=True, created=False, branch="feature/590-fix-it"
-            ),
-        )
-
-        state = engine.adapter.load_state()
-        assert state.git.branch_name == "feature/590-fix-it"
-        assert GitActionStatus.REBASE in [e.status for e in state.git.history]
-
-    def test_a_conflict_is_recorded_as_conflict(self, tmp_path, monkeypatch, root):
-        engine = _stub_flow(
-            monkeypatch,
-            root,
-            scaffold=branch_scaffold.ScaffoldResult(
-                ok=True,
-                conflict=True,
-                branch="feature/590-fix-it",
-                detail="rebase has conflicts in: base.txt",
-                note="Resolve them as your FIRST action",
-            ),
-        )
-
-        state = engine.adapter.load_state()
-        assert state.git.branch_name == "feature/590-fix-it"
-        assert GitActionStatus.CONFLICT in [e.status for e in state.git.history]
-
-    def test_the_legacy_dev_branch_context_is_still_written(
+class TestDevBranchRecorded:
+    def test_the_scaffolded_branch_is_written_to_dev_branch(
         self, tmp_path, monkeypatch, root
     ):
         engine = _stub_flow(monkeypatch, root)
 
         state = engine.adapter.load_state()
         assert state.current_context.get("dev_branch") == "feature/590-fix-it"
-
-
-class TestPullRequestRecorded:
-    def test_the_pr_number_lands_in_the_git_block(self, tmp_path, monkeypatch, root):
-        engine = _stub_flow(monkeypatch, root)
-
-        state = engine.adapter.load_state()
-        assert state.git.pr_number == 42
-        assert GitActionStatus.PR in [e.status for e in state.git.history]
-
-
-class TestDirtyFinalizeRecorded:
-    def test_an_auto_commit_is_recorded_as_dirty_with_its_sha(
-        self, tmp_path, monkeypatch, root
-    ):
-        engine = _stub_flow(
-            monkeypatch,
-            root,
-            finalize=GuardResult(ok=True, detail="committed abc1234"),
-        )
-
-        state = engine.adapter.load_state()
-        dirty = [e for e in state.git.history if e.status is GitActionStatus.DIRTY]
-        assert len(dirty) == 1
-        assert dirty[0].commit_id == "abc1234"
-
-    def test_a_clean_finalize_records_no_dirty_entry(
-        self, tmp_path, monkeypatch, root
-    ):
-        engine = _stub_flow(monkeypatch, root)
-
-        state = engine.adapter.load_state()
-        assert not [e for e in state.git.history if e.status is GitActionStatus.DIRTY]
