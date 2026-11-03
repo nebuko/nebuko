@@ -182,11 +182,33 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     # @stub-protected
     def capabilities(self) -> PosterCapabilities:
         """The local journal is plain markdown with no platform markup."""
-        return PosterCapabilities()
+        return PosterCapabilities(edit_comment=True)
 
     # @stub-protected
     def edit_comment(self, comment_id: str, body: str) -> PostedComment:
-        raise NotImplementedError("edit_comment not supported by this adapter")
+        """Replace a journal entry's body in place (issue #1288).
+
+        The engine uses this to neutralize the continue token on an answer
+        posted before a post-publish crash. The journal is a plain append-only
+        file, so the entry's stored body is rewritten in place; an unknown id
+        is a no-op that still reports success (idempotent cleanup).
+        """
+        journal = self._run_dir / JOURNAL_FILE
+        if not journal.is_file():
+            return PostedComment(comment_id=comment_id, author="nebuko-local")
+        entries = self._read_journal()
+        index = int(comment_id) - 1
+        if 0 <= index < len(entries):
+            entries[index] = self._ensure_terminal_marker(body)
+            separator = "\n\n"
+            journal.write_text(
+                separator.join(
+                    f"<!-- journal-entry @ {_utc_now_iso()} -->\n{entry}"
+                    for entry in entries
+                ),
+                encoding="utf-8",
+            )
+        return PostedComment(comment_id=comment_id, author="nebuko-local")
 
     # @stub-protected
     def add_reaction(self, comment_id: str, emoji: str) -> None:

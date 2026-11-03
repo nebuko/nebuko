@@ -1,0 +1,313 @@
+"""A run that crashes *after* publishing must not advance the workflow (#1288).
+
+Seen on #1286 (caused by the #1287 ``persist()`` crash): the answer comment
+was posted with its ``<!-- workflow-continue -->`` token, then ``persist``
+crashed; the run exited 1 but the token re-triggered the workflow gate, so the
+next step started from an answer whose commits were never pushed.
+
+Three invariants are pinned here:
+
+* a post-publish crash neutralizes the posted continue token, records the
+  engine-side failure facts on the persisted state, and posts a failure
+  notice pinging the workflow starter;
+* the #766 contract survives: a crash *during* publish (nothing posted)
+  still advances state and routing;
+* an answer whose declared output sections are all empty is not a valid step
+  result (R5): it fails validation and never routes.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from nebuko.adapters.local import LocalAdapter
+from nebuko.engine.models import ExitCode
+from nebuko.engine.run_loop import Engine
+from nebuko.engine.lib.workflow_state import IncompleteReason
+
+CONTINUE_TOKEN = "<!-- workflow-continue -->"
+BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+
+def _trigger(number: int = 1288):
+    from nebuko.engine.models import Trigger
+
+    return Trigger(
+        author="olivier-norture",
+        body="@@dev do it",
+        type="issue_comment",
+        number=number,
+        issue_body="",
+    )
+
+
+def _engine(tmp_path: Path, trigger=None) -> Engine:
+    trigger = trigger or _trigger()
+    return Engine(
+        adapter=LocalAdapter(tmp_path / "runs" / "run-1", trigger=trigger),
+        repo_root=tmp_path,
+        env={
+            "CIRCUIT_BREAKER_THRESHOLD": "3",
+            "GITHUB_REPOSITORY": "olivier-norture/nebuko",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_RUN_ID": "41540909805",
+            "TRIGGER_AUTHOR": "olivier-norture",
+        },
+    )
+
+
+def _agent_result(answer: str = "## headline\n\nDid the work.") -> dict:
+    from nebuko.engine.lib.workflow_state import WorkflowState
+
+    return {
+        "answer": answer,
+        "turn_outcome": {"appreciation": "approved"},
+        "state": WorkflowState(
+            workflow="spec-tdd",
+            step="spec",
+            agent="po",
+            position=[{"workflow": "spec-tdd", "step": "spec"}],
+        ),
+    }
+
+
+@pytest.fixture(autouse=True)
+def _quiet_git(monkeypatch):
+    """Keep the git-bound phases inert: this test exercises the crash paths."""
+    from nebuko.engine.lib.git import branch_scaffold, git_session
+    from nebuko.engine.lib.git import pr_finalize
+
+    monkeypatch.setattr(
+        Engine,
+        "_git_session_preflight",
+        lambda self: git_session.GuardResult(ok=True, skipped=True),
+    )
+    monkeypatch.setattr(
+        Engine,
+        "_branch_scaffold",
+        lambda self: branch_scaffold.ScaffoldResult(ok=True, skipped=True),
+    )
+    monkeypatch.setattr(
+        Engine,
+        "_git_session_finalize",
+        lambda self: git_session.GuardResult(ok=True, skipped=True),
+    )
+    monkeypatch.setattr(
+        pr_finalize.PrFinalizer,
+        "finalize",
+        lambda self: pr_finalize.PrFinalizeResult(ok=True, skipped=True),
+    )
+
+
+def _stub_resolved(monkeypatch, resolved: dict) -> None:
+    import sys
+
+    import nebuko.engine.lib.resolve_config  # noqa: F401
+
+    monkeypatch.setattr(
+        sys.modules["nebuko.engine.lib.resolve_config.resolve_config"],
+        "resolve_config",
+        lambda **_: resolved,
+    )
+
+
+_RESOLVED = {
+    "SKIP_AGENT": "false",
+    "TASK": "dev",
+    "WORKFLOW_NAME": "spec-tdd",
+    "WORKFLOW_STEP": "spec",
+}
+
+
+class TestPostPublishCrash:
+    def test_the_workflow_does_not_advance(self, tmp_path, monkeypatch):
+        """A persist() crash after publish ends ERROR with a FAILURE outcome."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            raise AttributeError("'StepOutput' object has no attribute 'field'")
+
+        monkeypatch.setattr(Engine, "persist", boom)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+
+    def test_the_posted_continue_token_is_neutralized(self, tmp_path, monkeypatch):
+        """The already-posted answer must not re-trigger the workflow gate."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            raise RuntimeError("persist exploded")
+
+        monkeypatch.setattr(Engine, "persist", boom)
+        outcome = engine.run()
+
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
+            encoding="utf-8"
+        )
+        # The answer was posted (with the token), then edited: the surviving
+        # body must not carry a live continue token.
+        assert CONTINUE_TOKEN not in journal
+        assert BOT_MARKER in journal
+        assert "Did the work." in journal
+        assert outcome.exit_code == ExitCode.ERROR
+
+    def test_a_failure_notice_is_posted_with_the_run_url(self, tmp_path, monkeypatch):
+        """The notice names step, run URL, phase and error, and pings the starter."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            raise RuntimeError("persist exploded")
+
+        monkeypatch.setattr(Engine, "persist", boom)
+        engine.run()
+
+        journal = (
+            (tmp_path / "runs" / "run-1" / "journal.md")
+            .read_text(encoding="utf-8")
+        )
+        assert "<!-- bot-engine-failure -->" in journal
+        assert "@olivier-norture" in journal
+        assert "https://github.com/olivier-norture/nebuko/actions/runs/41540909805" in journal
+        assert "persist exploded" in journal
+        assert "branch pushed: no" in journal
+
+    def test_the_engine_failure_facts_reach_the_state(self, tmp_path, monkeypatch):
+        """The next agent reads `engine_failure` through current_context.
+
+        The crash is placed after ``persist`` (in ``_record_scaffold_branch``)
+        so a state file actually exists to stamp.
+        """
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            state = Engine.persist(self, agent_result)
+            if state is not None:
+                raise RuntimeError("pr finalize exploded")
+            raise RuntimeError("no state")
+
+        monkeypatch.setattr(Engine, "_record_scaffold_branch", boom)
+        engine.run()
+
+        saved = json.loads(
+            (tmp_path / "runs" / "run-1" / "state.json").read_text()
+        )
+        facts = saved["current_context"]["engine_failure"]
+        assert facts["ok"] is False
+        assert facts["step"] == "spec"
+        assert facts["pushed"] is False
+        assert "pr finalize exploded" in facts["error"]
+
+
+class TestPublishCrashStillRoutes:
+    def test_a_publish_crash_keeps_the_766_contract(self, tmp_path, monkeypatch):
+        """A crash *during* publish (nothing posted) still advances (#766)."""
+        from nebuko.engine.lib.workflow_state import TurnStatus
+
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def failing_post(self, body):
+            raise RuntimeError("comment write failed")
+
+        monkeypatch.setattr(LocalAdapter, "post", failing_post)
+        outcome = engine.run()
+
+        assert "state" in outcome.phases
+        assert "route" in outcome.phases
+        assert outcome.turn_outcome.status is TurnStatus.COMPLETED
+
+
+class TestEmptyAnswerRejected:
+    def test_an_all_empty_report_is_not_a_valid_step_result(
+        self, tmp_path, monkeypatch
+    ):
+        """R5: only boilerplate ("Finalize complete…") fails validation."""
+        engine = _engine(tmp_path)
+        resolved = dict(_RESOLVED)
+        import json as _json
+
+        from nebuko.engine.lib.config import StepOutput
+
+        resolved["STEP_OUTPUT"] = StepOutput(
+            fields=[
+                {
+                    "name": "headline",
+                    "title": True,
+                    "description": "One-line summary",
+                },
+                {
+                    "name": "changes",
+                    "description": "What changed",
+                },
+            ]
+        ).model_dump_json()
+        _stub_resolved(monkeypatch, resolved)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result(
+                "Finalize complete — the deliverable report is posted."
+            ),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        assert "empty" in (outcome.turn_outcome.note or "")
+
+    def test_a_real_report_still_passes(self, tmp_path, monkeypatch):
+        engine = _engine(tmp_path)
+        resolved = dict(_RESOLVED)
+        from nebuko.engine.lib.config import StepOutput
+
+        resolved["STEP_OUTPUT"] = StepOutput(
+            fields=[
+                {
+                    "name": "headline",
+                    "title": True,
+                    "description": "One-line summary",
+                },
+                {
+                    "name": "changes",
+                    "description": "What changed",
+                },
+            ]
+        ).model_dump_json()
+        _stub_resolved(monkeypatch, resolved)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: _agent_result(
+                "# The headline\n\n## changes\n\nSomething changed."
+            ),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code != ExitCode.ERROR
