@@ -1,8 +1,10 @@
 ## Dev environment
 Python library (requires Python >= 3.12). Pick one, from the repo root:
-- **uv (preferred):** `uv sync`. The default `dev` dependency group in
-  `pyproject.toml` installs `pytest` + `pytest-mock`, so this is the *only*
-  setup step. Run everything with `uv run ...`.
+- **uv (preferred):** `uv sync --extra runtime`. The default `dev` dependency
+  group in `pyproject.toml` installs `pytest` + `pytest-mock`; the `runtime`
+  extra installs the OpenHands SDK + litellm, which most engine tests import
+  (a plain `uv sync` fails collection with `ModuleNotFoundError: openhands`).
+  This is the *only* setup step. Run everything with `uv run ...`.
 - **nix:** `nix develop`.
 
 Do not install test tooling ad hoc (`pip install pytest`, ...): it is declared in
@@ -22,9 +24,30 @@ uv run pytest src/nebuko/engine/lib        # runtime engine/lib unit tests
 uv run pytest tests src/nebuko/engine/lib  # everything
 ```
 
-Both suites are green on `main` (they only need `defaults/` in the checkout), so a
-failure is a real regression - do not spend turns proving a failure is "pre-existing"
-without first diffing against `origin/main`.
+`main` is expected to be green on both suites (they only need `defaults/` in the
+checkout). **No CI job runs pytest**, though, so drift can land on `main`
+unnoticed. If a test fails:
+- Check it once against `origin/main`. If it fails there too, it is still a
+  bug: fix it, or report it explicitly in your output. Never write it off as
+  "N pre-existing failures" and move on; a red suite hides real regressions
+  (an entire finalize-salvage test class sat broken for a week this way).
+- Never point tests at a stale venv (e.g. `.nebuko-engine/.venv`); use the
+  repo's `uv run`.
+
+Test-writing pitfalls that have broken `main` before:
+- Import the runtime modules by package path (`nebuko.engine.lib.<mod>`),
+  including string targets for `mock.patch` / `importlib.import_module`. The
+  bare `agent_script` / `workflow_state` / `resolve_config` names stopped
+  resolving when `engine/lib` became a real package (#1165).
+- When a production signature gains a parameter, update every test double that
+  stands in for it (e.g. `_run_agent` stubs, after `context_bodies` landed in
+  #748).
+- A subprocess started with an explicit, minimal `env` must still carry
+  `PATH`; `/bin/sh`'s fallback PATH has no coreutils on Nix hosts.
+- The sandbox runs as root, so "this path is not writable" cases must use a
+  path *under a regular file*, not a missing top-level directory.
+- Red spec tests (`# @stub-protected`) must not be merged to `main` without
+  their implementation; if the feature is dropped, delete the tests.
 
 ## Where workflows live
 Workflow definitions ship in `defaults/workflows/` (e.g. `default.yaml`); per-repo
@@ -49,8 +72,6 @@ directory is **never** consulted — untracked scaffolding there cannot shadow
 shipped defaults. To override a shipped workflow in a checkout, place a file
 with the same filename under `.nebuko/workflows/` (or set `WORKFLOWS_DIR` /
 `LOCAL_WORKFLOWS_DIR` as documented in `default_paths.py`).
-`uv run pytest tests src/nebuko/engine/lib` is fully green; red means a real
-regression — no baseline-diffing required.
 
 ## Thinking/reasoning config plumbing (issue #941)
 `thinking_enabled`/`preserve_thinking`/`reasoning_effort` live on `LLMConfig`

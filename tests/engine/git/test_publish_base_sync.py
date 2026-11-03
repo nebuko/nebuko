@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from agent_script.features.ensure_pr.ensure_pr import (
+from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import (
     EnsurePrResult,
     _ensure_pr_impl,
     ensure_pr,
@@ -71,7 +71,7 @@ def publish_repo(tmp_path: Path, monkeypatch) -> Path:
 
 def _stub_gh(monkeypatch) -> list[list[str]]:
     """Stub the gh seam so no PR is opened: returns the gh argv recorded."""
-    import agent_script.features.ensure_pr.ensure_pr as ep
+    import nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr as ep
 
     calls: list[list[str]] = []
     def _fake_gh(args, **kw):
@@ -127,7 +127,7 @@ def test_publish_refuses_to_push_when_the_working_tree_is_dirty(
 ) -> None:
     # given: the agent left an uncommitted tracked change behind; the guard
     # must refuse the sync merge before touching the index
-    import agent_script.features.ensure_pr.ensure_pr as ep
+    import nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr as ep
 
     _stub_gh(monkeypatch)
     (publish_repo / "leftover.txt").write_text("wip\n", encoding="utf-8")
@@ -145,7 +145,7 @@ def test_publish_refuses_to_push_when_the_base_fetch_fails(
     publish_repo: Path, monkeypatch
 ) -> None:
     # given: fetching origin fails (broken remote URL)
-    import agent_script.features.ensure_pr.ensure_pr as ep
+    import nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr as ep
 
     real = ep._run_git
 
@@ -202,7 +202,7 @@ def test_publish_refuses_to_push_when_the_base_ref_is_unresolvable(
     # given: the ancestry check hits a git infrastructure error (a corrupted
     # ref, not git's "not an ancestor" exit 1) — it must propagate instead of
     # being read as "needs sync"
-    import agent_script.features.ensure_pr.ensure_pr as ep
+    import nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr as ep
 
     real = ep._run_git
 
