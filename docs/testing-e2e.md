@@ -6,7 +6,7 @@
 instead of one seam. The first one runs a complete dev step — all ten phases of
 `Engine.run()` — over a real git checkout with a scripted LLM, and it exists to
 catch roughly 90% of the bugs that would otherwise only surface on a real run
-(branch not created, merge skipped, nothing pushed, a malformed `finalize` that
+(branch not created, base merged routinely, nothing pushed, a malformed `finalize` that
 the engine fails to retry).
 
 The point is fidelity: the engine's own git machinery, its own finalize
@@ -43,7 +43,7 @@ really runs, against a local **bare remote** in `tmp_path`:
   (`GITHUB_WORKSPACE`), on `main` tracking `origin`.
 
 Because the effects are real, the test can assert both the *order* of the git
-calls and their *result* (the remote ref, the merge commit).
+calls and their *result* (the remote ref, the absence of a merge commit).
 
 ### 2. A scripted pipeline instead of an LLM
 
@@ -82,11 +82,13 @@ through `GitSessionGuard.finalize` against the bare remote.
 
 - **Run outcome** — the run completed (`ExitCode.ADVANCE`) with an `approved`
   turn outcome, and every phase in `PHASES` ran.
-- **Branch create → merge → push order** — a `checkout -b feature/…` line comes
-  before a `merge --no-edit origin/main` line, which comes before a
+- **Conflict-only base sync (issue #1242)** — the base advanced without
+  overlapping the branch, so a read-only `merge-tree` probe runs, no
+  `merge --no-edit origin/main` runs, and both the probe and the
+  `checkout -b feature/…` line come before the
   `push origin HEAD:refs/heads/feature/…` line.
 - **Real effects** — the bare remote's `feature/…` ref equals the session HEAD,
-  and `origin/main` is an ancestor of it (the base was really merged).
+  which still carries the previous round's work and has no merge commit.
 - **Finalize retry** — exactly one rejection was recorded and it mentions
   `finalize rejected`; the second turn's finalize was accepted.
 - **Run artefacts** — the `LocalAdapter` run directory holds `journal.md`,

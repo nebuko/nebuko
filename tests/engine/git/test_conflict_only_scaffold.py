@@ -1,4 +1,4 @@
-"""Red tests for the conflict-only turn-start scaffold (issue #1242).
+"""Tests for the conflict-only turn-start scaffold (issue #1242).
 
 Real git against a local bare remote (same harness as test_branch_scaffold.py):
 an existing branch must be probed with a read-only merge-tree first and merged
@@ -77,6 +77,9 @@ class TestHasBaseConflict:
         _git(seed, "checkout", "-q", "main")
         _commit(seed, "base.txt", "main\n", "main changes base.txt")
         _git(seed, "push", "-q", "origin", "main")
+        # The scaffold fetches origin/<base> before it probes
+        # (BranchScaffold._prepare_branch); the probe itself never fetches.
+        _git(checkout, "fetch", "-q", "origin", "main")
 
         # when: the read-only conflict probe runs
         guard = BranchScaffold(

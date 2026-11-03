@@ -1,9 +1,9 @@
 """Tests for the engine-owned branch scaffold (issue #1138).
 
 Real git against a local bare remote: the scaffold must create the feature
-branch from the fetched base, merge an existing one onto the base, return a
-merge conflict as data (fix-first note, branch restored), skip benignly and
-fail closed. Also covers the bounded git subprocess env (oversized session
+branch from the fetched base, leave an existing one as-is when the base merges
+cleanly and merge only on a conflict (issue #1242), return a merge conflict as
+data (fix-first note, branch restored), skip benignly and fail closed. Also covers the bounded git subprocess env (oversized session
 env must not reach the subprocess, E2BIG regression).
 """
 
@@ -136,10 +136,13 @@ class TestScaffold:
             checkout, "rev-parse", "origin/main"
         )
 
-    def test_merges_an_existing_branch(self, checkout):
+    def test_an_existing_branch_is_left_as_is_on_a_clean_base_advance(self, checkout):
+        """Issue #1242: a base that merges cleanly is never merged routinely,
+        so main's changes stay out of the PR diff."""
         _git(checkout, "checkout", "-q", "-b", BRANCH)
         _commit(checkout, "work.txt", "work\n", "work")
-        # The base moves on after the branch was cut.
+        head_before = _git(checkout, "rev-parse", "HEAD")
+        # The base moves on after the branch was cut, without overlapping.
         seed = checkout.parent / "seed"
         _commit(seed, "base.txt", "base\nmore\n", "base moves")
         _git(seed, "push", "-q", "origin", "main")
@@ -147,14 +150,11 @@ class TestScaffold:
         result = _scaffold(checkout)
 
         assert result.ok and not result.conflict
-        assert f"merged origin/main" in result.detail
-        # The merge commit makes the base an ancestor of the merged HEAD.
-        _git(checkout, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+        assert "no conflicts merging origin/main" in result.detail
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
-        # The merge is a real merge commit: round 1's commit survives.
-        assert _git(checkout, "rev-parse", "HEAD^1") != _git(
-            checkout, "rev-parse", "HEAD^2"
-        )
+        # No merge commit: the branch head is untouched.
+        assert _git(checkout, "rev-parse", "HEAD") == head_before
+        assert not _git(checkout, "log", "--merges", "--oneline")
 
     def test_an_up_to_date_branch_skips_the_merge(self, checkout):
         """Issue #1194: a branch that already contains the base must not be
@@ -223,8 +223,11 @@ class TestScaffold:
     def test_a_non_conflict_merge_failure_fails_the_scaffold(self, checkout):
         """A merge git refuses outright is not a conflict the agent can fix."""
         _git(checkout, "checkout", "-q", "-b", BRANCH)
-        _commit(checkout, "work.txt", "work\n", "work")
+        _commit(checkout, "base.txt", "branch version\n", "branch edit")
         seed = checkout.parent / "seed"
+        # A real conflict on base.txt makes the probe hand over to the merge
+        # (issue #1242: a clean probe would never attempt one) ...
+        _commit(seed, "base.txt", "main version\n", "main edit")
         _commit(seed, "new.txt", "from main\n", "main adds new.txt")
         _git(seed, "push", "-q", "origin", "main")
         # An untracked file the merge would overwrite: git aborts the merge
@@ -237,9 +240,10 @@ class TestScaffold:
         assert "merge of origin/main" in result.detail
         assert not (checkout / ".git" / "MERGE_HEAD").exists()
 
-    def test_merges_a_previous_round_from_a_shallow_checkout(self, tmp_path):
+    def test_continues_a_previous_round_from_a_shallow_checkout(self, tmp_path):
         """``actions/checkout`` clones at depth 1: without the unshallow the
-        merge of a previous round's branch fails with "unrelated histories"."""
+        base probe of a previous round's branch fails with "unrelated
+        histories"."""
         remote = tmp_path / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
         seed = tmp_path / "seed"
@@ -267,9 +271,12 @@ class TestScaffold:
         env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
         result = _scaffold(work, env=env)
 
+        # The read-only merge-tree probe needs the merge base, which a depth-1
+        # clone lacks: a clean answer proves the history was deepened first.
         assert result.ok and not result.conflict, result.detail
         assert result.branch == BRANCH
-        _git(work, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+        assert "no conflicts merging origin/main" in result.detail
+        assert _git(work, "rev-parse", "HEAD") == _git(work, "rev-parse", f"origin/{BRANCH}")
         assert (work / "work.txt").exists()
 
     def test_installs_a_hook_refusing_workflow_commits(self, checkout):

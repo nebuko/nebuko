@@ -1,9 +1,9 @@
 """End-to-end: one full dev step over real git with a scripted LLM (issue #1207).
 
 The test drives the whole ten-phase :meth:`Engine.run` for a dev step and locks
-the three things a real run depends on: the engine creates the feature branch,
-merges the base into it and pushes it (in that order, with real git effects on a
-local bare remote); the run completes; and a malformed ``finalize`` (missing
+the three things a real run depends on: the engine checks out the feature
+branch, leaves it un-merged when the base advanced cleanly (conflict-only base
+sync, issue #1242) and pushes it (with real git effects on a local bare remote); the run completes; and a malformed ``finalize`` (missing
 ``appreciation``) is rejected and retried until the second, correct call lands.
 
 Only the LLM (``agent_runner._load_pipeline``) and PR creation
@@ -41,12 +41,13 @@ class GitCommandRecorder:
 
     # @stub-protected: signature defined by architect — do not modify
     def install(self, monkeypatch) -> None:
-        """Wrap subprocess.run in git_session, branch_scaffold and ensure_pr:
+        """Wrap subprocess.run in git_session, branch_scaffold, idempotency (the
+        #1242 merge-tree base probe) and ensure_pr:
         record " ".join(args) when args[0] == "git", then delegate to the real run."""
         import importlib
         import subprocess
 
-        from nebuko.engine.lib.git import branch_scaffold, git_session
+        from nebuko.engine.lib.git import branch_scaffold, git_session, idempotency
 
         recorder = self
         real_run = subprocess.run
@@ -67,6 +68,7 @@ class GitCommandRecorder:
         for module in (
             git_session,
             branch_scaffold,
+            idempotency,
             importlib.import_module("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr"),
         ):
             monkeypatch.setattr(module, "subprocess", proxy)
@@ -220,8 +222,9 @@ def _dev_checkout(tmp_path) -> Path:
 
     The remote also carries a previous round's ``BRANCH`` and the base moves on
     after it was cut, so the scaffold takes its existing-branch path (checkout
-    the branch, merge the base) — what a second dev turn on the issue really
-    does.
+    the branch, probe the base, merge only on a conflict) — what a second dev
+    turn on the issue really does. The base change does not overlap the
+    branch, so the probe is clean and no merge happens.
     """
     import subprocess
 
@@ -327,7 +330,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
+def test_dev_step_e2e_branch_probe_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
     """The single red-then-green e2e test."""
     # given: a real checkout on a bare remote and a wrong-then-right scripted LLM
     root = _dev_checkout(tmp_path)
@@ -369,20 +372,26 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
     assert tuple(outcome.phases) == PHASES
 
-    # then: branch created, base merged, branch pushed — in that order
+    # then: base probed but NOT merged (clean probe, issue #1242), branch
+    # checked out, then pushed. The probe reads the remote-tracking ref, so it
+    # may run before the checkout; both must precede the push.
     created = recorder.matching(f"checkout -b {BRANCH}")
+    probed = recorder.matching("merge-tree")
     merged = recorder.matching("merge --no-edit origin/main")
     pushed = recorder.matching(f"push origin HEAD:refs/heads/{BRANCH}")
     assert created, recorder.commands
-    assert merged, recorder.commands
+    assert probed, recorder.commands
+    assert not merged, recorder.commands
     assert pushed, recorder.commands
-    assert recorder.commands.index(created[0]) < recorder.commands.index(merged[0])
-    assert recorder.commands.index(merged[0]) < recorder.commands.index(pushed[0])
+    assert recorder.commands.index(created[0]) < recorder.commands.index(pushed[0])
+    assert recorder.commands.index(probed[0]) < recorder.commands.index(pushed[0])
 
-    # then: the effects are real — the remote branch is the session HEAD, merged
+    # then: the effects are real — the remote branch is the session HEAD, which
+    # continues the previous round and does not carry main's later change
     remote_sha = _git(tmp_path / "origin.git", "rev-parse", f"refs/heads/{BRANCH}")
     assert remote_sha == _git(root, "rev-parse", "HEAD")
-    _git(root, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+    assert (root / "round.txt").is_file()
+    assert not _git(root, "log", "--merges", "--oneline")
 
     # then: the first finalize was rejected, the second was accepted
     rejections = conversation.rejection_texts()
