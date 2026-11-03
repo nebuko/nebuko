@@ -118,7 +118,8 @@ class TestOidcBrokerToken:
 
     def test_cross_repo_checkouts_of_public_engine_carry_no_token(self):
         for job, name in (
-            ("run-task", "Checkout nebuko engine (cross-repo caller)"),
+            # Always a separate checkout since #1199 (nebuko's own runs too).
+            ("run-task", "Checkout nebuko engine"),
             ("agent-metrics", "Checkout nebuko repo (reusable workflow mode)"),
         ):
             assert "token" not in _checkout_step(job, name)["with"]
@@ -130,6 +131,8 @@ class TestOidcBrokerToken:
         assert metrics["env"]["GITHUB_TOKEN"] == "${{ env.GH_TOKEN }}"
 
     def test_git_push_extraheader_uses_the_resolved_token(self):
-        step = next(s for s in _steps("run-task") if s.get("name") == "Install OpenHands dependencies")
+        # The locked `uv sync` (issue #982) fetches the git-pinned SDK, so it
+        # carries the extraheader.
+        step = next(s for s in _steps("run-task") if s.get("name") == "Sync locked dependencies")
         assert "secrets." not in step.get("env", {}).get("GH_TOKEN", "")
         assert "${GH_TOKEN}" in step["run"]
