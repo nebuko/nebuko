@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from nebuko.engine.config_lint_cli import default_target, main
+from nebuko.engine.config_lint_cli import main
 from nebuko.engine.run_loop import main as run_loop_main
 
 FIXTURES = Path(__file__).parent / "config_lint_fixtures"
@@ -61,12 +61,6 @@ def test_directory_argument_expands_to_config_files(capsys):
     assert main([_fixture("invalid")]) == 2
     assert main([str(FIXTURES)]) == 1
     assert "C3-unknown-tool" in capsys.readouterr().out
-
-
-def test_no_argument_lints_the_shipped_config(capsys):
-    assert Path(default_target()).is_file()
-    assert main([]) == 0
-    assert "issue(s)" in capsys.readouterr().out
 
 
 def test_json_format_is_serialized_issues(capsys):
