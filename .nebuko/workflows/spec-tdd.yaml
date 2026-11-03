@@ -12,7 +12,7 @@ steps:
       2. List the external facts each approach depends on (build vs buy,
          versions, capabilities, limits and pricing).
       3. Think in opposites: for the preferred approach, state what you would
-         expect to find if it were WRONG, and ask @@cort confirm or refute that.
+         expect to find if it were WRONG, and ask @@context to confirm or refute that.
       4. Keep only claims whose `if_wrong` would actually change the plan
          (max 3 at low complexity, 5 medium, 8 high; at least one third must
          be refuting claims).
@@ -36,6 +36,11 @@ steps:
         Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
       - Do not plan yet. The engine's closing turn asks only for this step's report (the context request): the delegate has not run yet, so there is nothing to plan from.
       - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
+    # The full Planning skill is injected on the role prompt's agent config; on
+    # this analysis step it is demoted to a catalog entry so the plan template
+    # cannot be mistaken for this step's artifact (issue #1054).
+    skill:
+      - discover: ["planning"]
     next: context
     output:
       fields:

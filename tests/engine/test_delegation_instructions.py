@@ -10,8 +10,10 @@ rejection as "context returned nothing" and planned on the analysis turn.
 These tests pin the shipped configuration:
 
 * no instruction shows the invalid ``finalize(route=…)`` shape;
-* every delegating analyze step names ``turn_outcome.agent_call``, so the
-  canonical call shape is the only one on offer;
+* every delegating analyze step shows the canonical
+  ``turn_outcome.agent_call`` hand-off to ``context``, so it is the only call
+  shape on offer (since #1142 it lives in the step prompts, not the
+  ``architect.md`` role prompt);
 * every analyze step demotes ``planning`` to ``discover`` — the plan template
   must not be injected on the turn that must not plan.
 """
@@ -43,6 +45,7 @@ ANALYZING_WORKFLOWS = (
     "defaults/workflows/plan-orchestration.yaml",
     ".nebuko/workflows/default-with-output.yaml",
     ".nebuko/workflows/plan-dev-review-cmd.yaml",
+    ".nebuko/workflows/spec-tdd.yaml",
 )
 
 
@@ -71,8 +74,8 @@ class TestUnambiguousCallShape:
 
         assert offenders == []
 
-    def test_every_delegating_step_names_agent_call(self):
-        """Each analyze/architect instruction spells out the typed hand-off."""
+    def test_every_delegating_step_shows_the_canonical_handoff(self):
+        """Each analyze/architect step prompt spells out the typed hand-off."""
         missing: list[str] = []
         for rel in ANALYZING_WORKFLOWS:
             definition = load_workflow(str(REPO_ROOT / rel))
@@ -80,18 +83,13 @@ class TestUnambiguousCallShape:
                 if step.name not in DELEGATING_STEPS:
                     continue
                 assert step.prompt, f"{rel}:{step.name} carries no prompt"
-                if "agent_call" not in step.prompt:
+                if (
+                    '"agent_call"' not in step.prompt
+                    or '"agent_name": "context"' not in step.prompt
+                ):
                     missing.append(f"{rel}:{step.name}")
 
         assert missing == []
-
-    def test_the_architect_prompt_shows_the_canonical_handoff(self):
-        text = (REPO_ROOT / "defaults" / "prompts" / "architect.md").read_text(
-            encoding="utf-8"
-        )
-
-        assert '"agent_call"' in text
-        assert '"agent_name": "context"' in text
 
 
 class TestPlanningIsScopedOutOfAnalyze:

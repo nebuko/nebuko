@@ -15,7 +15,7 @@ steps:
       2. List the external facts each approach depends on (build vs buy,
          versions, capabilities, limits and pricing).
       3. Think in opposites: for the preferred approach, state what you would
-         expect to find if it were WRONG, and ask @@cort confirm or refute that.
+         expect to find if it were WRONG, and ask @@context to confirm or refute that.
       4. Keep only claims whose `if_wrong` would actually change the plan
          (max 3 at low complexity, 5 medium, 8 high; at least one third must
          be refuting claims).
