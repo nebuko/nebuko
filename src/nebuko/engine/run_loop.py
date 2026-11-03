@@ -2730,10 +2730,11 @@ class Engine:
         body = scope.get("analyze")
         if not body:
             return None
-        contract = self._declared_outputs().get("analyze")
-        if contract is None or not any(
-            f.name == "requirements" for f in contract.fields
-        ):
+        declared = self._declared_outputs().get("analyze")
+        # _declared_outputs() hands back the raw StepOutput model; the
+        # renderer takes an OutputContract (issue #1287).
+        contract = OutputContract.from_step_output(declared) if declared else None
+        if contract is None or not any(f.name == "requirements" for f in contract.fields):
             return None
         return self._extract_declared_section(body, contract, "requirements")
 
@@ -2827,7 +2828,7 @@ class Engine:
         if state is None:
             return None
         state = self._record_hook_failure(state)
-        state = self._record_ledger_metrics(state)
+        state = self._record_ledger_metrics_safe(state)
         state = self._backfill_step_output(state)
         if self._publish_state.get("failed") and not state.publish_failed:
             # The journal must record that this run's deliverable was lost
@@ -2908,6 +2909,17 @@ class Engine:
         context = dict(state.current_context)
         context["ledger_metrics"] = metrics.model_dump()
         return state.model_copy(update={"current_context": context})
+
+    def _record_ledger_metrics_safe(self, state: WorkflowState) -> WorkflowState:
+        """``_record_ledger_metrics`` with metric collection fail-open (#1287).
+
+        ADR-0016: metrics must never be able to crash ``persist()``.
+        """
+        try:
+            return self._record_ledger_metrics(state)
+        except Exception:  # noqa: BLE001 - metrics are best-effort
+            log.warning("ledger metric collection failed; skipped", exc_info=True)
+            return state
 
     def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
         """Point the running step's output locator at its just-posted comment.
