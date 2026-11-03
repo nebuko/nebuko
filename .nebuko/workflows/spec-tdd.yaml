@@ -12,12 +12,17 @@ steps:
       2. List the external facts each approach depends on (build vs buy,
          versions, capabilities, limits and pricing).
       3. Think in opposites: for the preferred approach, state what you would
-         expect to find if it were WRONG, and ask @@cort confirm or refute that.
+         expect to find if it were WRONG, and ask @@context to confirm or refute that.
       4. Keep only claims whose `if_wrong` would actually change the plan
          (max 3 at low complexity, 5 medium, 8 high; at least one third must
          be refuting claims).
       5. Treat every version, price and limit as unverified until @@context
          confirms it from a registry or the vendor's official page.
+      6. For performance or runtime-behaviour questions (slow, startup, memory,
+         "what runs when"), the context request must ask @@context to MEASURE:
+         name the experiment (profiler, timed run, cold vs warm, before/after a
+         candidate fix) and ask for the command and its output. A list of files
+         to read is not enough: reading code cannot show where time goes.
       - Attach these as `agent_call.verify` (list of {id: "C1", claim, kind:
         "support"|"refute", category: build_vs_buy|version|capability|
         limits_pricing|alternatives|compatibility, if_wrong}) on the hand-off.
@@ -72,6 +77,10 @@ steps:
       Collect what the analyze step's context request (agent_call.task) asks
       for, and return it as this step's report. The claims attached to the hand-off (agent_call.verify)
       are checked independently: cite a source for every claim in your report.
+      Follow the context-research Evidence rules: tag every finding and claim
+      verdict `measured`, `read` or `inferred`; measure timing and behaviour
+      claims instead of inferring them from code; and fill `### MEASUREMENTS`,
+      `### SURPRISES` and `### NOT VERIFIED`.
     next: plan
 
   - name: plan
@@ -87,6 +96,11 @@ steps:
           description: One-line summary of the plan.
         - name: decision
           description: The chosen approach and the key rulings.
+        - name: evidence
+          type: table
+          collapsed: true
+          columns: [fact, type, source, used_by]
+          description: Every number and runtime-behaviour fact the decision relies on, one row each. `type` is the context tag (measured/read/inferred); `source` is the command+output excerpt, path:line or URL; `used_by` names the decision item. Only `measured` rows may carry a timing or saving figure. Inferred facts belong in questions, not in the decision.
         - name: design
           collapsed: true
           description: The Object Design Contract (classes, fields, method signatures) — the spec step materializes this 1:1.
@@ -186,6 +200,10 @@ steps:
         most (library behaviour, version, platform limit, pricing, performance). Say whether
         it was verified, by what source, and whether the decision is one-way (dependency,
         schema, public API, vendor) or two-way.
+        Then RE-MEASURE: pick the measured fact the decision leans on most (the plan's
+        `evidence` table) and run that measurement yourself. Also run the cheapest check of
+        whether the chosen fix actually moves it (e.g. apply it in a scratch copy and time
+        again). Report both commands and their output under checks_run.
 
       5. PRE-MORTEM. Six months from now this feature failed or was reverted. Write the three
         most likely reasons, each tied to a specific section of the plan or file in the spec.
@@ -197,6 +215,10 @@ steps:
         - BLOCKING: an uncovered R/K, a violated NG, a contract that is not implementable or
           not type-correct, tests that do not exercise the requirement, an unverified one-way
           assumption that is likely false, or a materially simpler design that meets all R/K.
+          Also BLOCKING: a timing/saving figure in the decision with no `measured` evidence
+          row, a decision resting on an `inferred` fact, a re-measurement that contradicts
+          the plan, or a fix that moves only a metric or shifts the same cost later in the
+          run instead of improving the user's outcome.
         - SHOULD-FIX: real risk or gap that does not invalidate the plan.
         - NIT: everything else. Keep at most three.
       Each finding states: where (plan section or file:line), what is wrong, why it matters,

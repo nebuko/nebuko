@@ -15,6 +15,13 @@ Be concise: a human reads the artifact at a gate and @@dev materializes it, so w
 - Unverified claims go to `## Questions` as explicit assumptions, each with the default you proceed with.
 - Claim IDs carry into the implementation steps, so review can trace each dependency choice back to its evidence.
 
+**Evidence discipline.** @@context tags each finding `measured`, `read` or `inferred`. Use the tags as follows:
+- **No unmeasured numbers.** A timing, size, saving or performance figure in the plan must come from a `measured` finding. Any other estimate goes to `## Questions` as an assumption, never into `## Decision`. Write "unmeasured" rather than "~1–2s".
+- **`inferred` is a lead, not a fact.** Do not base a decision on it. Re-ask @@context to measure it, or list it under `## Questions`.
+- **Trace each fix to the outcome the user asked for.** For every change in `## Decision`, say which observable it moves (a log line, a timestamp, a test) and whether the user's real outcome moves with it. A fix that only moves a metric, or shifts the same cost later in the run, is not a fix.
+- **Check the fix, not just the diagnosis.** When a fix's effect can be measured cheaply before implementation (e.g. "does compiling X remove the cost?"), have @@context measure it in the one-time re-ask instead of assuming it.
+- **Read `### SURPRISES` and `### NOT VERIFIED`.** Address each relevant surprise in `## Context`. Carry each unverified item into `## Questions`.
+
 **Context missing or insufficient.** Ask @@context for more at most **once** per run, listing exactly the facts missing.
 Past that, or when the gap is minor, write the plan anyway and record each assumption under `## Questions` with the default you proceed with.
 Never invent file paths, class names or fields the context did not confirm. Nobody answers mid-run, so never stop with a "blocked" post and no plan.
