@@ -220,6 +220,64 @@ class TestPostPublishCrash:
         assert "pr finalize exploded" in facts["error"]
 
 
+class TestPublishLastOrdering:
+    def test_persist_crash_publishes_no_comment(self, tmp_path, monkeypatch):
+        """With publish-last ordering, a persist() crash posts no answer."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            raise RuntimeError("persist exploded")
+
+        monkeypatch.setattr(Engine, "persist", boom)
+        outcome = engine.run()
+
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
+            encoding="utf-8"
+        )
+        # Publish-last: nothing was published, so no continue token exists
+        # anywhere and the workflow cannot advance.
+        assert CONTINUE_TOKEN not in journal
+        assert "Did the work." not in journal
+        # R2: the failure notice still names the failure and pings the starter.
+        assert "<!-- bot-engine-failure -->" in journal
+        assert "@olivier-norture" in journal
+        assert "persist exploded" in journal
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+
+    def test_publish_crash_after_persist_routes_on_dispatch(
+        self, tmp_path, monkeypatch
+    ):
+        """K2: a crash during publish, after persist+git succeeded, routes."""
+        from nebuko.engine.lib.workflow_state import TurnStatus
+
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def failing_post(self, body):
+            raise RuntimeError("comment write failed")
+
+        monkeypatch.setattr(LocalAdapter, "post", failing_post)
+        outcome = engine.run()
+
+        # persist and git finalize ran before the publish crash, so the
+        # engine facts record a pushed branch.
+        saved = json.loads(
+            (tmp_path / "runs" / "run-1" / "state.json").read_text()
+        )
+        assert saved["current_context"]["engine_failure"]["pushed"] is True
+        # #766: routing proceeds on the agent's dispatch.
+        assert "route" in outcome.phases
+        assert outcome.turn_outcome.status is TurnStatus.COMPLETED
+
+
 class TestPublishCrashStillRoutes:
     def test_a_publish_crash_keeps_the_766_contract(self, tmp_path, monkeypatch):
         """A crash *during* publish (nothing posted) still advances (#766)."""
