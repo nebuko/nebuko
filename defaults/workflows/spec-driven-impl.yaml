@@ -50,6 +50,12 @@ steps:
 
   - name: stub_review
     agent: review
+    prompt: |
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry, a missing diff or missing commits are an ENGINE
+      failure (the run crashed after publishing; the branch was never pushed),
+      not agent fabrication — report it as such and do not route it to `plan`;
+      ask for the step to be re-run instead.
     next: stub_approval
 
   - name: stub_approval

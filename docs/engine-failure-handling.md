@@ -44,8 +44,10 @@ The engine stamps an `engine_failure` entry into the step's
 guessing: whether the previous step's run succeeded, whether the branch was
 pushed, the branch HEAD SHA vs base, and the PR URL.
 
-Rule for critique and review steps (enforced in the workflow prompts, e.g.
-`.nebuko/workflows/spec-tdd.yaml`): check the `engine_failure` facts **before**
+Rule for critique and review steps (enforced in the workflow prompts of all
+shipped workflows with a review/critique step — `default`,
+`dev-review-loop`, `plan-orchestration`, `review-only`,
+`spec-driven-impl`, `spec-tdd`): check the `engine_failure` facts **before**
 judging a missing diff. A missing diff plus an engine failure is reported as
 an *engine failure* — never as agent fabrication, and never routed to
 `plan` (the architect cannot fix a push failure).

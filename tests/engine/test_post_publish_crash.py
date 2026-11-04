@@ -371,17 +371,27 @@ class TestPublishLastOrdering:
         monkeypatch.setattr(Engine, "persist", boom)
         outcome = engine.run()
 
-        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
-            encoding="utf-8"
+        # Assert on *posted comments* only — the journal legitimately contains
+        # the agent transcript via run-log staging, so journal-text assertions
+        # are unsatisfiable. With publish-last ordering, nothing is posted:
+        # no answer comment, no continue token anywhere posted.
+        _, posted = engine.adapter.load_raw_thread()
+        # Assert on posted-comment records only (never raw journal text —
+        # run-log staging makes that unsatisfiable). With publish-last
+        # ordering no answer comment exists: nothing posted carries the
+        # continue token or the agent's answer, so the workflow cannot
+        # advance over the failed run.
+        for comment in posted:
+            assert CONTINUE_TOKEN not in comment["body"]
+            assert "Did the work." not in comment["body"]
+        # R2: the failure notice is posted, naming the failure and pinging
+        # the starter.
+        assert any(
+            "<!-- bot-engine-failure -->" in c["body"]
+            and "@olivier-norture" in c["body"]
+            and "persist exploded" in c["body"]
+            for c in posted
         )
-        # Publish-last: nothing was published, so no continue token exists
-        # anywhere and the workflow cannot advance.
-        assert CONTINUE_TOKEN not in journal
-        assert "Did the work." not in journal
-        # R2: the failure notice still names the failure and pings the starter.
-        assert "<!-- bot-engine-failure -->" in journal
-        assert "@olivier-norture" in journal
-        assert "persist exploded" in journal
         assert outcome.exit_code == ExitCode.ERROR
         assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
 
@@ -409,9 +419,43 @@ class TestPublishLastOrdering:
             (tmp_path / "runs" / "run-1" / "state.json").read_text()
         )
         assert saved["current_context"]["engine_failure"]["pushed"] is True
+        assert saved["current_context"]["engine_failure"]["phase"] == "publish"
         # #766: routing proceeds on the agent's dispatch.
         assert "route" in outcome.phases
         assert outcome.turn_outcome.status is TurnStatus.COMPLETED
+
+    def test_scaffold_crash_reports_not_pushed(self, tmp_path, monkeypatch):
+        """A crash in _record_scaffold_branch (before git finalize) reports
+        pushed=False: the branch was never pushed."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            raise RuntimeError("scaffold exploded")
+
+        monkeypatch.setattr(Engine, "_record_scaffold_branch", boom)
+        outcome = engine.run()
+
+        saved = json.loads(
+            (tmp_path / "runs" / "run-1" / "state.json").read_text()
+        )
+        facts = saved["current_context"]["engine_failure"]
+        assert facts["pushed"] is False
+        # The engine records the phase the crash surfaced in ("state": the
+        # persist/record-scaffold stage, before git finalize ran).
+        assert facts["phase"] == "state"
+        assert "scaffold exploded" in facts["error"]
+        # The failure notice states the branch was not pushed, and no
+        # continue token was posted (publish-last).
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
+            encoding="utf-8"
+        )
+        assert "branch pushed: no" in journal
+        assert CONTINUE_TOKEN not in journal
+        assert outcome.exit_code == ExitCode.ERROR
 
 
 class TestPublishCrashStillRoutes:
