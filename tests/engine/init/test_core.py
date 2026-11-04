@@ -13,8 +13,25 @@ from nebuko.engine.init.core import (
     execute_init,
     plan_init,
 )
+from nebuko.engine.init.manifest import Manifest, ProviderSpec
 
 PROVIDER_SECRETS = ("OPENROUTER_API_KEY",)
+
+
+def _manifest() -> Manifest:
+    return Manifest(
+        schema_version=1,
+        workflow_filename="nebuko.yaml",
+        caller_workflow_template="nebuko-caller.yaml",
+        providers={
+            "openrouter": ProviderSpec(
+                name="openrouter",
+                description="OpenRouter (default)",
+                secret_names=PROVIDER_SECRETS,
+                template_path="defaults/agents/agent-config-openrouter.yaml",
+            )
+        },
+    )
 
 
 def _request(pat_mode: bool = False, force: bool = False, scope: str = "repo") -> InitRequest:
@@ -31,7 +48,7 @@ def _request(pat_mode: bool = False, force: bool = False, scope: str = "repo") -
 def _plan(existing_secrets=frozenset(), existing_files=None, request=None, force=False):
     return plan_init(
         request=request or _request(force=force),
-        manifest=None,
+        manifest=_manifest(),
         caller_template="workflow-body",
         agent_config="agent-config-body",
         existing_files=existing_files or {},
@@ -50,7 +67,7 @@ def test_plan_init_fresh_repo_all_create():
 def test_plan_init_includes_gh_pat_only_in_pat_mode():
     plan = plan_init(
         request=_request(pat_mode=True),
-        manifest=None,
+        manifest=_manifest(),
         caller_template="workflow-body",
         agent_config="agent-config-body",
         existing_files={},
@@ -87,7 +104,7 @@ def test_plan_init_rejects_org_scope_without_org():
     with pytest.raises(ValueError):
         plan_init(
             request=request,
-            manifest=None,
+            manifest=_manifest(),
             caller_template="workflow-body",
             agent_config="agent-config-body",
             existing_files={},
@@ -134,7 +151,7 @@ def test_execute_init_passes_plaintext_in_pat_mode():
     client = FakeClient()
     plan = plan_init(
         request=_request(pat_mode=True),
-        manifest=None,
+        manifest=_manifest(),
         caller_template="workflow-body",
         agent_config="agent-config-body",
         existing_files={},
@@ -143,3 +160,65 @@ def test_execute_init_passes_plaintext_in_pat_mode():
     execute_init(plan, client, secrets={"OPENROUTER_API_KEY": "sk-or-plain", "GH_PAT": "ghp_x"})
     assert ("OPENROUTER_API_KEY", "sk-or-plain") in client.put_calls
     assert ("GH_PAT", "ghp_x") in client.put_calls
+
+
+# Given a plan that renders both files, when planned, then the rendered map
+# carries the agent config and the workflow at their documented paths
+# Given a plan that renders both files, when planned, then the rendered map
+# carries the agent config verbatim and the workflow at its documented path
+def test_plan_init_renders_workflow_and_agent_config():
+    plan = _plan()
+    assert set(plan.rendered) == {
+        "defaults/agents/agent-config-openrouter.yaml",
+        ".github/workflows/nebuko.yaml",
+    }
+    assert plan.rendered["defaults/agents/agent-config-openrouter.yaml"] == "agent-config-body"
+    assert plan.rendered[".github/workflows/nebuko.yaml"] == "workflow-body"
+
+
+# Given a plan that renders both files, when planned, then the workflow carries
+# the pin, the config path and the runner label from the render inputs
+def test_plan_init_renders_the_workflow_placeholders():
+    plan = plan_init(
+        request=_request(),
+        manifest=_manifest(),
+        caller_template=(
+            "pin=${pin_ref} path=${agent_config_path} runs=${runs_on}\n${secrets_block}"
+        ),
+        agent_config="agent-config-body",
+        existing_files={},
+        existing_secrets=frozenset(),
+    )
+    workflow = plan.rendered[".github/workflows/nebuko.yaml"]
+    assert "pin=v1.2.3" in workflow
+    assert "path=defaults/agents/agent-config-openrouter.yaml" in workflow
+    assert 'runs_on="ubuntu-latest"' not in workflow
+    assert "runs=ubuntu-latest" in workflow
+    assert "      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
+
+
+# Given a secret whose put_secret fails, when executed, then the secret is
+# recorded as failed with the error detail and success is False
+
+class FailingClient(FakeClient):
+    def put_secret(self, target, name, value):
+        raise RuntimeError("gh secret set failed: boom")
+
+
+def test_execute_init_records_failed_secret():
+    plan = _plan()
+    outcome = execute_init(plan, FailingClient(), secrets={"OPENROUTER_API_KEY": "sk-or"})
+    assert not outcome.success
+    assert outcome.secrets[0].name == "OPENROUTER_API_KEY"
+    assert outcome.secrets[0].status == "failed"
+    assert "boom" in outcome.secrets[0].detail
+
+
+# Given a secret with no value provided, when executed, then it is recorded as
+# failed with a clear detail (never a KeyError, never the bare name as detail)
+def test_execute_init_records_missing_secret_value_as_failed():
+    plan = _plan()
+    outcome = execute_init(plan, FakeClient(), secrets={})
+    assert not outcome.success
+    assert outcome.secrets[0].status == "failed"
+    assert "no value provided" in outcome.secrets[0].detail

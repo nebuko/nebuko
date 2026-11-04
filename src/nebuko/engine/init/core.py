@@ -111,7 +111,7 @@ def plan_init(
     # @stub-protected: module-level, pure
     if request.target.scope == "org" and not request.target.org:
         raise ValueError("org-scope targets require an org name")
-    provider = _provider_spec(request.provider, manifest)
+    provider = manifest.providers[request.provider]
     names = (*provider.secret_names, "GH_PAT") if request.pat_mode else provider.secret_names
     secret_actions: dict[str, Literal["create", "update", "skip_existing"]] = {}
     for name in names:
@@ -124,7 +124,7 @@ def plan_init(
     )
     rendered = {
         provider.template_path: agent_config,
-        WORKFLOW_PATH: _render_workflow(caller_template, request, names),
+        WORKFLOW_PATH: _render_workflow(caller_template, request, provider, names),
     }
     return InitPlan(
         request=request,
@@ -148,6 +148,9 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
         if action == "skip_existing":
             statuses.append(SecretStatus(name=name, status="skipped_existing", detail="already present; use --force to update"))
             continue
+        if name not in secrets or not secrets[name]:
+            statuses.append(SecretStatus(name=name, status="failed", detail="no value provided"))
+            continue
         try:
             client.put_secret(target, name, secrets[name])
         except Exception as err:  # noqa: BLE001 - per-secret failures never abort the run
@@ -165,21 +168,11 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
     )
 
 
-def _provider_spec(name: str, manifest: "Manifest | None"):
-    # The red tests pass ``manifest=None``; fall back to the packaged profiles
-    # so planning stays testable without a manifest.
-    if manifest is not None:
-        return manifest.providers[name]
-    from nebuko.engine.init.providers import provider_by_name
-
-    return provider_by_name(name)
-
-
-def _render_workflow(caller_template: str, request: InitRequest, names: tuple[str, ...]) -> str:
+def _render_workflow(caller_template: str, request: InitRequest, provider, names: tuple[str, ...]) -> str:
     secrets_block = "\n".join(f"      {name}: ${{{{ secrets.{name} }}}}" for name in names)
     return (
         caller_template.replace("${pin_ref}", request.render.pin_ref)
-        .replace("${agent_config_path}", _provider_spec(request.provider, None).template_path)
+        .replace("${agent_config_path}", provider.template_path)
         .replace("${runs_on}", request.render.runs_on)
         .replace("${secrets_block}", secrets_block)
     )

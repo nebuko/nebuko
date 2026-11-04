@@ -1,6 +1,6 @@
 """``nebuko init`` — the command surface (issue #991).
 
-Reached as ``nebuko init`` (dispatched by ``run_loop.main``). Interactive by
+Reached as ``nebuko init`` (dispatched by ``run_loop.py``). Interactive by
 default; ``--non-interactive`` takes every answer from flags and
 ``NEBUKO_SECRET_<NAME>`` environment variables. Exit codes follow the
 ``lint-config`` contract: ``0`` success, ``1`` failure, ``2`` usage/preflight.
@@ -14,16 +14,13 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Collection, Sequence
+from typing import Callable, Sequence
 
-from nebuko.engine.init.app_installation import DEFAULT_APP_SLUG, AppInstallationResolver
-from nebuko.engine.init.caller_workflow import CallerWorkflowWriter
-from nebuko.engine.init.github_host import GitHubHost
+from nebuko.engine.init.core import SecretTarget
 from nebuko.engine.init.ports import (
     InitAnswers,
-    ProviderProfile,
+    PreflightReport,
     SetupError,
-    SetupHost,
     SetupTarget,
     UsageError,
 )
@@ -32,9 +29,7 @@ from nebuko.engine.init.providers import (
     PROVIDER_PROFILES,
     provider_by_name,
 )
-from nebuko.engine.init.repo_variables import RepoVariableWriter
 from nebuko.engine.init.setup import (
-    BROKER_VARIABLE,
     EXIT_ERRORS,
     EXIT_OK,
     EXIT_USAGE,
@@ -43,9 +38,7 @@ from nebuko.engine.init.setup import (
     next_steps_message,
     preflight_message,
     run_init,
-    secret_names,
 )
-
 DEFAULT_RUNS_ON = "ubuntu-latest"
 SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
 SECRET_SCOPE_REPOSITORY = "repository"
@@ -57,7 +50,7 @@ WORDMARK = """
 ██╔██╗ ██║█████╗  ██████╔╝██║   ██║█████╔╝ ██║   ██║
 ██║╚██╗██║██╔══╝  ██╔══██╗██║   ██║██╔═██╗ ██║   ██║
 ██║ ╚████║███████╗██████╔╝╚██████╔╝██║  ██╗╚██████╔╝
-╚═╝  ╚═══╝╚══════╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝
+╚═╝  ╚═══╝╚═════╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝
 """
 GH_MISSING_MESSAGE = """\
 nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
@@ -126,10 +119,6 @@ def _no_input(prompt: str) -> str:
     raise SetupError("no interactive input available (use --non-interactive with flags)")
 
 
-def _print_err(message: str) -> None:
-    print(message, file=sys.stderr)
-
-
 class NonInteractivePrompter(InitPrompter):
     """No TTY: never confirm an overwrite, and fail loudly on any prompt."""
 
@@ -161,46 +150,46 @@ def _run(args: argparse.Namespace) -> int:
         pin_ref=args.pin_ref,
         template_dir=Path(args.template_dir) if args.template_dir else None,
     )
-    if not context.host.gh_available():
+    host = context.host
+    if host is None or not host.gh_available():
         # Fail before any prompt: without `gh` nothing else can work.
         print(GH_MISSING_MESSAGE, file=sys.stderr)
         return EXIT_USAGE
     prompter: InitPrompter = NonInteractivePrompter() if args.non_interactive else InitPrompter()
     target = _resolve_target(args, prompter)
-    report = context.host.preflight(target)
+    report = host.preflight(target)
     if not report.ok:
         # Check the token before asking for any secret value: the client can
         # refresh the scope and re-run without re-entering the values.
         print(preflight_message(report), file=sys.stderr)
         return EXIT_USAGE
     target = _resolve_secret_scope(args, prompter, target)
-    context = _with_app_collaborators(context, target, args)
-    # App mode is decided once, here, and reused for the PAT prompt and the
-    # broker/caller-workflow steps (issue #1025).
     app_mode = _app_mode(args, context, target)
     if not app_mode and not args.assume_pat:
         # Not a deliberate PAT run: point the client at the App install first.
-        _print_err(APP_MISSING_MESSAGE)
+        print(APP_MISSING_MESSAGE, file=sys.stderr)
         return EXIT_USAGE
-    # One read-only probe, reused for both the PAT and the provider key.
-    existing = frozenset() if args.force else context.host.existing_secrets(target)
-    skipped = _report_existing(context.host, target, existing, ("GH_PAT",), app_mode)
+    # The secret listing lives on the client seam (the same adapter that will
+    # write them); --force makes the probe pointless.
+    client = context.client if context.client is not None else host
+    existing = frozenset() if args.force else client.existing_secrets(target)
+    # GH_PAT is reported before the provider prompt so the skip note lands
+    # right after the scope selection.
+    skipped = _report_existing(existing, ("GH_PAT",), target, app_mode)
     provider = _resolve_provider(args, prompter)
-    skipped |= _report_existing(context.host, target, existing, provider.secret_names, app_mode)
+    skipped |= _report_existing(existing, provider.secret_names, target, app_mode)
     answers = InitAnswers(
         target=target,
         provider=provider,
         runs_on=_resolve_runs_on(args, prompter),
-        pin_ref=args.pin_ref or context.refs.latest(),
-        secrets=_collect_secrets(
-            args, prompter, context.host, target, provider, skipped, app_mode=app_mode
-        ),
+        pin_ref=args.pin_ref or (context.refs.latest() if context.refs else ""),
+        secrets=_collect_secrets(args, prompter, provider, skipped, app_mode=app_mode),
         force=args.force,
         skipped=skipped,
     )
-    outcome = run_init(answers, context.source, context.host, prompter)
+    pat_mode = bool(args.assume_pat)
+    outcome = run_init(answers, context.source, client, prompter, pat_mode=pat_mode)
     if outcome.code == EXIT_OK:
-        _setup_app_mode(context, args)
         print(next_steps_message(outcome.pr_url, target.slug))
     return outcome.code
 
@@ -213,39 +202,9 @@ def _app_mode(args: argparse.Namespace, context: SetupContext, target: SetupTarg
         return False
     if context.resolver is not None:
         return context.resolver.is_installed()
-    return context.host.app_installed(target)
-
-
-def _with_app_collaborators(
-    context: SetupContext, target: SetupTarget, args: argparse.Namespace
-) -> SetupContext:
-    """Bind the App-aware collaborators to the resolved target (issue #1025)."""
-    if context.resolver is not None or not isinstance(context.host, GitHubHost):
-        # Already injected (tests, or a caller-provided context): only the
-        # per-invocation broker override still applies.
-        return replace(context, broker_url=args.broker_url or context.broker_url)
-    client = _github_transport()
-    return replace(
-        context,
-        resolver=AppInstallationResolver(client, target.owner, target.repo, DEFAULT_APP_SLUG),
-        variable_writer=RepoVariableWriter(client, target.owner, target.repo),
-        workflow_writer=CallerWorkflowWriter(broker_variable=BROKER_VARIABLE),
-        broker_url=args.broker_url or context.broker_url,
-    )
-
-
-def _github_transport() -> Any:
-    """The ``gh``-backed transport, imported lazily like the GitHub adapter."""
-    from nebuko.engine.lib.github_client import GitHubTransport
-
-    return GitHubTransport()
-
-
-def _setup_app_mode(context: SetupContext, args: argparse.Namespace) -> None:
-    """Write the caller workflow (issue #1025)."""
-    if context.workflow_writer is not None:
-        result = context.workflow_writer.write(update=True, dry_run=args.dry_run)
-        print(f"Caller workflow: {result.value} ({context.workflow_writer.target})")
+    if hasattr(context.host, "app_installed"):
+        return context.host.app_installed(target)
+    return False
 
 
 def _resolve_target(args: argparse.Namespace, prompter: InitPrompter) -> SetupTarget:
@@ -279,10 +238,9 @@ def _resolve_secret_scope(
 
 
 def _report_existing(
-    host: SetupHost,
-    target: SetupTarget,
     existing: frozenset[str],
     names: Sequence[str],
+    target: SetupTarget,
     app_mode: bool = False,
 ) -> frozenset[str]:
     """Print the skip note for the ``names`` already stored at the target scope."""
@@ -298,7 +256,7 @@ def _report_existing(
     return frozenset(skipped)
 
 
-def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter) -> ProviderProfile:
+def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter):
     if args.provider:
         return provider_by_name(args.provider)
     if args.non_interactive:
@@ -318,17 +276,14 @@ def _resolve_runs_on(args: argparse.Namespace, prompter: InitPrompter) -> str:
 def _collect_secrets(
     args: argparse.Namespace,
     prompter: InitPrompter,
-    host: SetupHost,
-    target: SetupTarget,
-    provider: ProviderProfile,
-    skip: Collection[str] = (),
+    provider,
+    skip,
     *,
     app_mode: bool | None = None,
 ) -> dict[str, str]:
     """Ask for (or read from the environment) the values to store as secrets."""
-    names = list(secret_names(provider, pat_mode=True))
-    installed = host.app_installed(target) if app_mode is None else app_mode
-    if installed:
+    names = list((*provider.secret_names, "GH_PAT"))
+    if app_mode:
         names.remove("GH_PAT")
     secrets: dict[str, str] = {}
     for name in names:
@@ -387,15 +342,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="take every answer from flags and NEBUKO_SECRET_* environment variables",
     )
     parser.add_argument(
-        "--broker-url",
-        dest="broker_url",
-        default=None,
-        help=(
-            "legacy OIDC token broker override; the workflow already falls back "
-            "to the published broker when the variable is unset"
-        ),
-    )
-    parser.add_argument(
         "--assume-app",
         dest="assume_app",
         action="store_true",
@@ -407,12 +353,6 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="assume_pat",
         action="store_true",
         help="force PAT mode even when the App is installed (offline)",
-    )
-    parser.add_argument(
-        "--dry-run",
-        dest="dry_run",
-        action="store_true",
-        help="print what would be written without writing the caller workflow",
     )
     parser.add_argument(
         "--force",

@@ -2,25 +2,20 @@
 
 Two paths live here:
 
-- ``_run_via_client`` — the new flow: prompts informed by
+- ``_run_via_client`` — the production flow: prompts informed by
   ``existing_secrets``, then the pure ``plan_init`` and the I/O-only
   ``execute_init``. Every rendered file goes to the ``nebuko/init`` branch
   through the ``GitHubInitClient``; nothing is written to the local checkout.
-- ``_run_via_host`` — the legacy ``SetupHost`` flow, still driven by
-  ``cli.py`` and its test suite until the CLI is rewired onto the client.
-
-The legacy broker symbols are re-exported for ``cli.py`` with their names
-assembled at runtime: this module carries no broker identifiers (PR 1 removes
-the broker path; the identifiers survive only until the CLI rewiring lands).
+- ``_run_via_host`` — the legacy ``SetupHost`` flow, kept only for the
+  transition; the CLI no longer dispatches to it.
 """
 
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
 
 from nebuko.engine.init.app_installation import AppInstallationResolver
 from nebuko.engine.init.core import (
@@ -35,6 +30,7 @@ from nebuko.engine.init.core import (
     plan_init,
 )
 from nebuko.engine.init.github_host import GitHubHost
+from nebuko.engine.init.github_init_client import GhInitClient
 from nebuko.engine.init.manifest import load_packaged_manifest
 from nebuko.engine.init.ports import (
     GeneratedFiles,
@@ -70,40 +66,16 @@ Next steps
 
 Let's build something with Nebuko's agent teams 🤝"""
 
-# Legacy broker endpoint/identifiers, re-exported for cli.py until the CLI is
-# rewired onto GitHubInitClient (PR 1). Built at runtime so this module's
-# source carries no broker identifiers.
-_LEGACY_BROKER_ENDPOINT = "https://token-broker.nebuko.dev/token"
-_BROKER_FIELD = "broker" + "_url"
-_BROKER_VAR_NAME = "NEBUKO" + "_BROKER_URL"
 
+@dataclass(frozen=True)
+class SetupContext:
+    """The wired collaborators for one ``nebuko init`` invocation."""
 
-def _setup_context_type() -> type:
-    """The frozen context dataclass, with the legacy endpoint field."""
-    annotations: dict[str, str] = {
-        "source": "TemplateSource | None",
-        "refs": "ReleaseRefResolver | None",
-        "host": "SetupHost | None",
-        "resolver": "AppInstallationResolver | None",
-        "variable_writer": "object | None",
-        "workflow_writer": "object | None",
-        _BROKER_FIELD: "str",
-    }
-    namespace: dict[str, Any] = {
-        "__annotations__": annotations,
-        "__module__": __name__,
-        "__qualname__": "SetupContext",
-        "resolver": None,
-        "variable_writer": None,
-        "workflow_writer": None,
-        _BROKER_FIELD: _LEGACY_BROKER_ENDPOINT,
-    }
-    return dataclass(frozen=True)(type("SetupContext", (), namespace))
-
-
-SetupContext = _setup_context_type()
-globals()["DEFAULT_" + "BROKER" + "_URL"] = _LEGACY_BROKER_ENDPOINT
-globals()["BROKER" + "_VARIABLE"] = _BROKER_VAR_NAME
+    source: TemplateSource | None
+    refs: ReleaseRefResolver | None
+    host: SetupHost | None
+    client: GitHubInitClient | None = None  # the write path; defaults to GhInitClient
+    resolver: AppInstallationResolver | None = None
 
 
 @dataclass(frozen=True)
@@ -124,7 +96,7 @@ def build_setup(
     """Wire the adapters: local checkout when given, HTTPS otherwise."""
     source: TemplateSource = FileTemplateSource(template_dir) if template_dir else HttpTemplateSource()
     refs: ReleaseRefResolver = StaticRefResolver(pin_ref) if pin_ref else GitTagRefResolver(repo=repo)
-    return SetupContext(source=source, refs=refs, host=GitHubHost())
+    return SetupContext(source=source, refs=refs, host=GitHubHost(), client=GhInitClient())
 
 
 # @stub-protected
@@ -193,7 +165,7 @@ def _run_via_client(
         pat_mode=pat_mode,
         force=answers.force,
     )
-    paths = sorted({provider.template_path, WORKFLOW_PATH})
+    paths = sorted({AGENT_CONFIG_PATH, WORKFLOW_PATH})
     plan: InitPlan = plan_init(
         request=request,
         manifest=manifest,
@@ -202,13 +174,23 @@ def _run_via_client(
         existing_files=host.get_existing_files(target, paths),
         existing_secrets=existing_secrets,
     )
+    if plan.conflicts and not request.force:
+        if not prompter.confirm(
+            f"{', '.join(plan.conflicts)} already exist(s) in {answers.target.slug}; overwrite?",
+            default=False,
+        ):
+            listed = ", ".join(plan.conflicts)
+            print(f"Aborted: {listed} left untouched (pass --force to overwrite).", file=sys.stderr)
+            return SetupOutcome(EXIT_ERRORS)
     secrets: dict[str, SecretValue] = {}
     for name, action in plan.secret_actions.items():
-        if action == "skip_existing" and not answers.force:
+        if action == "skip_existing":
             continue  # already stored; the skip note was printed when it was probed
-        value = answers.secrets.get(name) or prompter.ask_secret(name)  # type: ignore[attr-defined]
+        value = answers.secrets.get(name) or prompter.ask_secret(name)
         if value:
             secrets[name] = value
+        else:
+            print(f"Secret {name} not set (no value provided).")
     outcome: InitOutcome = execute_init(plan, host, secrets)
     if outcome.success:
         return SetupOutcome(EXIT_OK, outcome.pr_url or "")
@@ -225,7 +207,7 @@ def _run_via_host(
     host: SetupHost,
     prompter: Prompter,
 ) -> SetupOutcome:
-    """The legacy flow, still driven by cli.py until the client rewiring."""
+    """The legacy flow, kept only for the transition off ``SetupHost``."""
     generated = render_files(answers, source)
     existing = host.existing_paths(
         answers.target, (generated.agent_config_path, generated.workflow_path)
