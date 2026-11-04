@@ -258,6 +258,8 @@ def _soft_kill_comment_body() -> str:
 
 class TestPhaseVocabulary:
     def test_phases_are_the_ten_documented_phases_in_order(self):
+        # Publish-last ordering (issue #1288): the state phase persists before
+        # the publish phase, which runs last before routing.
         assert PHASES == (
             "normalize",
             "resolve_config",
@@ -266,8 +268,8 @@ class TestPhaseVocabulary:
             "prompt",
             "agent",
             "validate",
-            "publish",
             "state",
+            "publish",
             "route",
         )
 

@@ -1177,6 +1177,10 @@ class Engine:
                         state=state,
                     )
 
+            # The publish-dependent annotations (#756/#805) are stamped only
+            # now that the publish phase has run — see the method contract.
+            state = self._merge_post_publish_state(state)
+
             self._enter(phases, "route")
             turn_outcome = self.route(
                 agent_result, observed=self._observed_status(agent_result)
@@ -3086,14 +3090,37 @@ class Engine:
             return None
         state = self._record_hook_failure(state)
         state = self._record_ledger_metrics_safe(state)
-        state = self._backfill_step_output(state)
-        if self._publish_state.get("failed") and not state.publish_failed:
+        # Publish-last ordering (issue #1288): the answer does not exist yet,
+        # so the two publish-dependent annotations — the step-output locator
+        # (issue #756, ADR-0013) and the honest-journal ``publish_failed``
+        # flag (issue #805) — are folded in by ``_merge_post_publish_state``
+        # after the publish phase, not here.
+        self.adapter.save_state(state)
+        return state
+
+    def _merge_post_publish_state(
+        self, state: WorkflowState | None
+    ) -> WorkflowState | None:
+        """Fold the publish-phase facts into the persisted state (#1288).
+
+        Under publish-last ordering ``persist`` runs before the answer exists,
+        so the step-output locator (issue #756, ADR-0013) and the
+        ``publish_failed`` journal flag (issue #805) — both read
+        ``_publish_state`` — can only be stamped once the publish phase has
+        run. The merged state is re-saved before routing so the next step's
+        thread read resolves this run's output comment.
+        """
+        if state is None:
+            return None
+        merged = self._backfill_step_output(state)
+        if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
             # published one.
-            state = state.model_copy(update={"publish_failed": True})
-        self.adapter.save_state(state)
-        return state
+            merged = merged.model_copy(update={"publish_failed": True})
+        if merged != state:
+            self.adapter.save_state(merged)
+        return merged
 
     @staticmethod
     def _annotate_state_with_hook_failure(agent_result: Any, note: str) -> None:
