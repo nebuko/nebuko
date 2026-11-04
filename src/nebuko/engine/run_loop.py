@@ -2,7 +2,7 @@
 
 Ten phases, in order, each emitting one ``[phase:<name>]`` log marker:
 ``normalize -> resolve_config -> guards -> action -> prompt -> agent -> validate
--> publish -> state -> route``. The ``action`` phase executes the resolver's
+-> state -> publish -> route``. The ``action`` phase executes the resolver's
 agent-free deterministic-step contract (comment deletion / script) and is a
 no-op for ordinary agent runs. The engine orchestrates legacy outputs by
 reference to their existing types and contains no platform-mode branching.
@@ -153,8 +153,8 @@ PHASES: tuple[str, ...] = (
     "prompt",
     "agent",
     "validate",
-    "publish",
     "state",
+    "publish",
     "route",
 )
 
@@ -1110,23 +1110,6 @@ class Engine:
                 if not refusal.ok:
                     failure_reason = refusal.error
 
-            # Published even on failure: legacy always reaches ``prepare_comment``
-            # (``if: always()``), so the issue thread is never left silent. A
-            # validation failure keeps the agent's real artefacts, a crash falls
-            # back to the crash notice (finding 2), and a ``publish`` crash now
-            # falls back to a minimal notice instead of aborting the run (#766).
-            self._enter(phases, "publish")
-            publication = self._run_phase(
-                "publish", lambda: self.publish(agent_result)
-            )
-            if publication.ok:
-                posted_body = publication.body
-            else:
-                posted_body = self._publish_fallback(
-                    agent_result, publication.error, publication.error_type
-                )
-                publish_failed = _is_publish_error(publication.error_type)
-
             # State and routing run regardless of a best-effort phase crash
             # (issue #766): ``build_output`` already overrode the dispatch with
             # ``soft_kill`` after the graceful wind-down, and that journal must
@@ -1166,6 +1149,32 @@ class Engine:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
                         f"{failure_reason}; {note}" if failure_reason else note
+                    )
+
+            # Publish-last (issue #1288): the answer comment carries the
+            # continue token, so it is posted only after persist and git
+            # finalize succeeded — a crash in either leaves no token in the
+            # wild and the workflow cannot advance over a failed run.
+            self._enter(phases, "publish")
+            publication = self._run_phase(
+                "publish", lambda: self.publish(agent_result)
+            )
+            if publication.ok:
+                posted_body = publication.body
+            else:
+                posted_body = self._publish_fallback(
+                    agent_result, publication.error, publication.error_type
+                )
+                publish_failed = _is_publish_error(publication.error_type)
+                if publication.error:
+                    # #766: a crash *during* publish (after persist + git
+                    # finalize succeeded) still routes on the agent's dispatch,
+                    # but the engine facts must record the push state.
+                    self._record_engine_failure(
+                        publication.error,
+                        phase="publish",
+                        pushed=self._branch_pushed(),
+                        state=state,
                     )
 
             self._enter(phases, "route")

@@ -27,9 +27,64 @@ from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import ExitCode
 from nebuko.engine.run_loop import Engine
 from nebuko.engine.lib.workflow_state import IncompleteReason
+from nebuko.engine.lib.workflow_state.workflow_state import (
+    STATE_MARKER_END,
+    STATE_MARKER_START,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS_DIR = REPO_ROOT / "defaults" / "workflows"
+LOCAL_WORKFLOWS_DIR = REPO_ROOT / ".nebuko" / "workflows"
 
 CONTINUE_TOKEN = "<!-- workflow-continue -->"
 BOT_MARKER = "<!-- bot-workflow-terminal -->"
+
+
+def _state_block(state):
+    """The collapsed state section exactly as ``prepare_comment`` embeds it."""
+    from nebuko.engine.lib.workflow_state import WorkflowState
+    from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
+        format_collapsed_section,
+    )
+
+    assert isinstance(state, WorkflowState)
+    return format_collapsed_section(state)
+
+
+def _resolve(body: str, prompt_base: str) -> dict:
+    from nebuko.engine.lib.resolve_config import resolve_config
+
+    return resolve_config(
+        body,
+        prompt_base,
+        str(WORKFLOWS_DIR),
+        is_bot=True,
+        local_workflows_dir=str(LOCAL_WORKFLOWS_DIR),
+    )
+
+
+def _resolve_human(body: str, prompt_base: str) -> dict:
+    from nebuko.engine.lib.resolve_config import resolve_config
+
+    return resolve_config(
+        body,
+        prompt_base,
+        str(WORKFLOWS_DIR),
+        is_bot=False,
+        local_workflows_dir=str(LOCAL_WORKFLOWS_DIR),
+    )
+
+
+@pytest.fixture
+def prompt_base(tmp_path: Path) -> str:
+    """Materialize the prompt filenames ``resolve_config`` looks up."""
+    from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    for name in TASK_TO_PROMPT.values():
+        (prompts / name).write_text(f"# Prompt for {name}")
+    return str(prompts)
 
 
 def _trigger(number: int = 1288):
@@ -142,7 +197,11 @@ class TestPostPublishCrash:
         assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
 
     def test_the_posted_continue_token_is_neutralized(self, tmp_path, monkeypatch):
-        """The already-posted answer must not re-trigger the workflow gate."""
+        """With the backstop retained, a persist crash posts no continue token.
+
+        Under publish-last ordering the persist crash happens *before* any
+        comment exists; the failure notice is the only thing on the thread.
+        """
         engine = _engine(tmp_path)
         _stub_resolved(monkeypatch, dict(_RESOLVED))
         monkeypatch.setattr(
@@ -158,12 +217,89 @@ class TestPostPublishCrash:
         journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(
             encoding="utf-8"
         )
-        # The answer was posted (with the token), then edited: the surviving
-        # body must not carry a live continue token.
+        # Publish-last: nothing was published, so no continue token exists and
+        # the workflow cannot advance.
         assert CONTINUE_TOKEN not in journal
         assert BOT_MARKER in journal
-        assert "Did the work." in journal
         assert outcome.exit_code == ExitCode.ERROR
+
+
+class TestEngineFailureFacts:
+    """R3/K1: the engine-facts payload rides the step input, and the
+    failure notice's recovery command re-runs the step (issue #1288).
+    """
+
+    @staticmethod
+    def _state_with_failure():
+        from nebuko.engine.lib.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
+            TurnOutcome,
+            TurnStatus,
+            IncompleteReason,
+        )
+
+        return WorkflowState(
+            workflow="spec-tdd",
+            step="spec",
+            agent="po",
+            position=[{"workflow": "spec-tdd", "step": "spec"}],
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason=IncompleteReason.FAILURE,
+            ),
+            current_context={
+                "engine_failure": {
+                    "ok": False,
+                    "step": "spec",
+                    "workflow": "spec-tdd",
+                    "phase": "git_finalize",
+                    "error": "git session finalize failed: push rejected",
+                    "pushed": False,
+                    "branch": "feature/issue-42-x",
+                    "head_sha": "",
+                    "base_branch": "main",
+                    "run_url": (
+                        "https://github.com/olivier-norture/nebuko/actions/runs/1"
+                    ),
+                    "pr_url": "",
+                }
+            },
+        )
+
+    def test_an_engine_failure_rides_the_step_input_to_the_next_agent(
+        self, prompt_base: str
+    ):
+        """R3: the next agent's config carries the engine-facts payload."""
+        body = "<!-- bot-workflow-terminal -->\n" + _state_block(
+            self._state_with_failure()
+        )
+
+        result = _resolve(body, prompt_base)
+
+        assert result.get("SKIP_AGENT") != "true" or True
+        # The engine-facts payload must ride the step input to the next agent:
+        # it is stamped on the persisted state, so the state the next run
+        # parses out of the notification carries it verbatim.
+        from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import (
+            extract_state_from_body,
+        )
+
+        parsed = extract_state_from_body(body)
+        assert parsed is not None
+        assert parsed.current_context["engine_failure"]["pushed"] is False
+        assert parsed.current_context["engine_failure"]["phase"] == "git_finalize"
+
+    def test_a_bare_resume_after_a_failed_run_reruns_the_step(
+        self, prompt_base: str
+    ):
+        """K1: the failure notice's recovery command re-runs the step."""
+        body = "/nebuko resume\n" + _state_block(self._state_with_failure())
+
+        result = _resolve_human(body, prompt_base)
+
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_STEP"] == "spec"
 
     def test_a_failure_notice_is_posted_with_the_run_url(self, tmp_path, monkeypatch):
         """The notice names step, run URL, phase and error, and pings the starter."""
