@@ -1189,14 +1189,20 @@ class Engine:
             # *created*, GitHub fires on created, so an edit cannot retract it.
             state = self._merge_post_publish_state(state)
             if failure_reason is not None and not publish_failed:
-                state = self._fail_after_publish(
-                    phases[-1] if phases else "run",
-                    failure_reason,
-                    state=state,
-                ) or state
-                created = self._publish_state.get("created")
-                if created is not None and state is not None:
-                    created["state"] = state
+                # The failure facts and the notice were already stamped/posted
+                # at publish time (the embedded state is framed there), so only
+                # the run-state merge is left here (#1288).
+                if self._publish_state.get("failed_state") is not None:
+                    state = self._publish_state["failed_state"]
+                else:
+                    state = self._fail_after_publish(
+                        phases[-1] if phases else "run",
+                        failure_reason,
+                        state=state,
+                    ) or state
+                    created = self._publish_state.get("created")
+                    if created is not None and state is not None:
+                        created["state"] = state
 
             self._enter(phases, "route")
             turn_outcome = self.route(
@@ -3064,15 +3070,22 @@ class Engine:
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
         # The run's own failure verdicts known *at this point* (PR finalize,
-        # publish) drop the continue token from line 1 (issue #1288): GitHub
-        # fires on the comment as created, so a failure must never be framed
-        # as a live turn in the first place. A git-finalize failure is caught
-        # by the post-publish re-frame in ``run`` (the comment payload is
-        # re-framed there, before the next run reads it).
+        # git finalize, publish) drop the continue token from line 1 and stamp
+        # the failure facts onto the embedded state (issue #1288): GitHub fires
+        # on the comment as created, so a failure must never be framed as a
+        # live turn — an edit-after-post cannot retract the token.
+        publish_state = self._explicit_state(agent_result) or self._previous_state()
         engine_failed = self._engine_failed(
-            self._explicit_state(agent_result) or self._previous_state(),
+            publish_state,
             self._publish_state.get("failure_reason"),
         )
+        if engine_failed and publish_state is not None:
+            publish_state = self._record_engine_failure(
+                self._publish_state.get("failure_reason") or "engine failure",
+                phase="publish",
+                pushed=self._branch_pushed(),
+                state=publish_state,
+            ) or publish_state
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3081,7 +3094,7 @@ class Engine:
             has_console_log=bool(console_log),
             trigger_author=self._trigger_author(),
             role_name=self._role_of(agent_result),
-            state=self._explicit_state(agent_result),
+            state=publish_state,
             engine_failed=engine_failed,
         )
         # Every continuation part must carry the bot marker too, or the ledger
@@ -3100,7 +3113,7 @@ class Engine:
         # later failure re-frames the run as failed, the created comment's
         # payload is replaced here so the next run's header has no token.
         self._publish_state["created"] = {
-            "state": self._explicit_state(agent_result),
+            "state": publish_state,
             "engine_failed": engine_failed,
         }
         # The part ids the adapter accepted, in order, so the state journal can
