@@ -1152,9 +1152,12 @@ class Engine:
                     )
 
             # Publish-last (issue #1288): the answer comment carries the
-            # continue token, so it is posted only after persist and git
+            # continue token, so it is created only after persist and git
             # finalize succeeded — a crash in either leaves no token in the
-            # wild and the workflow cannot advance over a failed run.
+            # wild and the workflow cannot advance over a failed run. The
+            # verdict so far is published with the comment: a failed run's
+            # comment is a notification (no continue token) from creation.
+            self._publish_state["failure_reason"] = failure_reason
             self._enter(phases, "publish")
             publication = self._run_phase(
                 "publish", lambda: self.publish(agent_result)
@@ -1179,7 +1182,21 @@ class Engine:
 
             # The publish-dependent annotations (#756/#805) are stamped only
             # now that the publish phase has run — see the method contract.
+            # The re-frame (issue #1288) runs after that: when the run failed
+            # (PR finalize, git finalize, publish) the posted comment's
+            # embedded state is replaced with the failed-state payload, whose
+            # header carries no continue token — before any comment is
+            # *created*, GitHub fires on created, so an edit cannot retract it.
             state = self._merge_post_publish_state(state)
+            if failure_reason is not None and not publish_failed:
+                state = self._fail_after_publish(
+                    phases[-1] if phases else "run",
+                    failure_reason,
+                    state=state,
+                ) or state
+                created = self._publish_state.get("created")
+                if created is not None and state is not None:
+                    created["state"] = state
 
             self._enter(phases, "route")
             turn_outcome = self.route(
@@ -1188,11 +1205,14 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - the driver never crashes the host
             log.exception("[phase:error] %s", exc)
             # A crash *after* publish must not advance the workflow (issue
-            # #1288): the posted answer still carries the continue token, so
-            # neutralize it and record the engine-side facts before returning.
-            self._fail_after_publish(
-                phases, str(exc), state=state, exc=exc
-            )
+            # #1288): record the engine-side facts and re-frame the posted
+            # comment's embedded state as a notification, so the next run's
+            # header carries no continue token.
+            state = self._fail_after_publish(
+                phases[-1] if phases else "unknown",
+                str(exc),
+                state=state,
+            ) or state
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
@@ -1209,14 +1229,16 @@ class Engine:
         # passed, so the run routes on the dispatch the agent produced.
         if failure_reason is not None:
             # A failure after the answer was published must not advance the
-            # workflow (issue #1288): neutralize the posted continue token and
-            # record the engine-side facts. A publish-failure-only run keeps
-            # the #766/#805 semantics — nothing was posted, so nothing to
-            # neutralize — and stays resumable.
+            # workflow (issue #1288): record the engine-side facts and re-frame
+            # the posted comment's embedded state as a notification. A
+            # publish-failure-only run keeps the #766/#805 semantics — nothing
+            # was posted, so nothing to re-frame — and stays resumable.
             if "publish" in phases and not publish_failed:
-                self._fail_after_publish(
-                    phases, failure_reason, state=state, exc=None
-                )
+                state = self._fail_after_publish(
+                    phases[-1] if phases else "unknown",
+                    failure_reason,
+                    state=state,
+                ) or state
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
@@ -1353,44 +1375,68 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - staging is best-effort
             log.warning("[phase:publish] could not stage undelivered comment: %s", exc)
 
+    # @stub-protected
+    def _engine_failed(
+        self, state: WorkflowState | None, failure_reason: str | None
+    ) -> bool:
+        """The engine's own verdict on this run, for the header (#1288).
+
+        The header is framed *before* the final failures are known, so this is
+        decided at publish time from what has already happened: a failure
+        recorded earlier (PR finalize, publish) or a state whose
+        ``engine_failure`` marks a failed run. The git-finalize verdict cannot
+        exist yet at publish time — see ``_fail_after_publish`` for that case.
+        """
+        if failure_reason:
+            return True
+        if self._publish_state.get("failed"):
+            return True
+        return bool(
+            state is not None
+            and (state.current_context or {}).get("engine_failure", {}).get("ok", True)
+            is False
+        )
+
     def _fail_after_publish(
         self,
-        phases: list[str],
+        phase: str,
         error: str,
         *,
         state: WorkflowState | None,
-        exc: BaseException | None,
-    ) -> None:
+    ) -> WorkflowState | None:
         """Handle a run that failed *after* its answer was published (#1288).
 
-        The posted answer carries the ``<!-- workflow-continue -->`` token, so
-        without this the workflow gate re-fires and the next step starts as if
-        the step had succeeded — even though ``persist`` and/or the git
-        finalize never ran. Three things happen, all best-effort (the run is
-        already failed; these must not mask it):
+        The posted answer carried the ``<!-- workflow-continue -->`` token when
+        the run was green so far, so without this the workflow gate re-fires
+        and the next step starts as if the step had succeeded — even though
+        the git finalize (or the route) never ran. Three things happen, all
+        best-effort (the run is already failed; these must not mask it):
 
-        1. the posted answer's continue token is neutralized (a crash-after-
-           publish is a different case from #766's crash-*during*-publish);
-        2. the engine-side facts (pushed? HEAD vs base? PR?) are stamped onto
-           the persisted state's ``current_context`` for the next agent;
-        3. a failure notice naming step, run URL, phase, error and push state
+        1. the engine-side facts (pushed? HEAD? PR?) are stamped onto the
+           state — including the state the *posted* comment embeds, so the
+           next run's header comes out notification-shaped (no continue
+           token) and the next agent sees the failure;
+        2. a failure notice naming step, run URL, phase, error and push state
            is posted, pinging the workflow starter like the human-action
            notice does.
+
+        Returns the state carrying the facts (or ``None``).
         """
-        phase = phases[-1] if phases else "unknown"
         pushed = self._branch_pushed()
-        self._neutralize_continue_token()
-        self._record_engine_failure(
+        failed_state = self._record_engine_failure(
             error, phase=phase, pushed=pushed, state=state
         )
         self._post_failure_notice(error, phase=phase, pushed=pushed)
+        return failed_state
 
+    # @stub-protected
     def _branch_pushed(self) -> bool:
         """Whether this session's branch was pushed (best-effort, #1288).
 
         The git-session finalize already verified a clean, pushed tree when it
         ran; a run failing after that point pushed, one failing before it did
-        not. Falls back to comparing the local HEAD with the remote ref.
+        not. Falls back to comparing the local HEAD with the remote ref —
+        fetched first, so a stale local ``origin/<branch>`` cannot pass (#1288).
         """
         result = self._scaffold_state.get("finalize_result")
         if isinstance(result, git_session.GuardResult) and result.ok:
@@ -1408,46 +1454,17 @@ class Engine:
             head = guard.head_sha()
             if not head:
                 return False
-            remote = guard._run_git(["rev-parse", f"origin/{branch}"]).strip()
+            # Fetch first: a stale local origin/<branch> ref would pass (or
+            # fail) against a remote that has since moved (#1288 review).
+            guard._run_git(["fetch", guard.remote, branch, "--quiet"])
+            remote = guard._run_git(
+                ["rev-parse", f"{guard.remote}/{branch}"]
+            ).strip()
             return head == remote
         except Exception:  # noqa: BLE001 - a probe failure must not mask the run error
             return False
 
-    def _neutralize_continue_token(self) -> None:
-        """Strip the continue token from the already-posted answer (#1288).
-
-        The workflow gate matches the token on line 1 of the posted body; a
-        crashed run's answer must be a notification, not a dispatch (the same
-        policy the #978 header logic applies at publish time — which cannot
-        know here about a later persist/git failure). Best-effort on hosts
-        whose adapter cannot edit comments: the failure notice then carries
-        the warning for a human.
-        """
-        comment_id = self._publish_state.get("comment_id")
-        body = self._publish_state.get("body")
-        if not comment_id or not body:
-            return
-        try:
-            if not self.adapter.capabilities().edit_comment:
-                log.warning(
-                    "[phase:error] cannot neutralize the posted continue token: "
-                    "the adapter cannot edit comments"
-                )
-                return
-            token = _load_bridge_module("prepare_comment").CONTINUE_TOKEN
-            if token not in body:
-                return
-            self.adapter.edit_comment(
-                str(comment_id), body.replace(token, "", 1)
-            )
-            log.info("[phase:error] neutralized the posted continue token")
-        except Exception as exc:  # noqa: BLE001 - best-effort
-            log.warning(
-                "[phase:error] could not neutralize the posted continue "
-                "token: %s",
-                exc,
-            )
-
+    # @stub-protected
     def _record_engine_failure(
         self,
         error: str,
@@ -1455,19 +1472,22 @@ class Engine:
         phase: str,
         pushed: bool,
         state: WorkflowState | None = None,
-    ) -> None:
+    ) -> WorkflowState | None:
         """Stamp the engine-side failure facts onto the persisted state (#1288).
 
         The next step's agent reads them through the existing step-input
         mechanism (``current_context``), so a critique can tell "the engine
-        failed to push" from "the agent made no change". Best-effort: a state
-        write hiccup must not mask the run error that caused it.
+        failed to push" from "the agent made no change". The failed state is
+        also stashed on ``_publish_state`` so the caller can re-frame the
+        posted comment's embedded payload — the next run reads its state from
+        the posted comment, not from the runner-local hand-off file.
+        Best-effort: a state write hiccup must not mask the run error.
         """
         base = state if state is not None else self._previous_state()
         if base is None:
             # A run with no prior state (and a persist crash) has nothing to
             # attach the facts to; the failure notice still carries them.
-            return
+            return None
         try:
             trigger = self._active_trigger()
             scaffold = self._scaffold_state.get("result")
@@ -1499,11 +1519,13 @@ class Engine:
             }
             context = dict(base.current_context)
             context["engine_failure"] = facts
-            self.adapter.save_state(
-                base.model_copy(update={"current_context": context})
-            )
+            failed_state = base.model_copy(update={"current_context": context})
+            self.adapter.save_state(failed_state)
+            self._publish_state["failed_state"] = failed_state
+            return failed_state
         except Exception as exc:  # noqa: BLE001 - best-effort
             log.warning("[phase:error] could not record the engine failure facts: %s", exc)
+            return None
 
     def _resolved_config(self) -> Any:
         """This run's resolver output, or ``None`` when it never resolved."""
@@ -3041,6 +3063,16 @@ class Engine:
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
+        # The run's own failure verdicts known *at this point* (PR finalize,
+        # publish) drop the continue token from line 1 (issue #1288): GitHub
+        # fires on the comment as created, so a failure must never be framed
+        # as a live turn in the first place. A git-finalize failure is caught
+        # by the post-publish re-frame in ``run`` (the comment payload is
+        # re-framed there, before the next run reads it).
+        engine_failed = self._engine_failed(
+            self._explicit_state(agent_result) or self._previous_state(),
+            self._publish_state.get("failure_reason"),
+        )
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3050,6 +3082,7 @@ class Engine:
             trigger_author=self._trigger_author(),
             role_name=self._role_of(agent_result),
             state=self._explicit_state(agent_result),
+            engine_failed=engine_failed,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).
@@ -3063,6 +3096,13 @@ class Engine:
         # equivalent to escaping each part, since the escape is per token.
         escaped = bridge.escape_agent_triggers(header + body)
         self._publish_state["body"] = escaped
+        # The payload the next run reads its state from (issue #1288): when a
+        # later failure re-frames the run as failed, the created comment's
+        # payload is replaced here so the next run's header has no token.
+        self._publish_state["created"] = {
+            "state": self._explicit_state(agent_result),
+            "engine_failed": engine_failed,
+        }
         # The part ids the adapter accepted, in order, so the state journal can
         # record every comment the answer was posted as (issue #913).
         self._publish_state["comment_ids"] = [
