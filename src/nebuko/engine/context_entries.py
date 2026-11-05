@@ -138,10 +138,19 @@ def _output_identity(body: str) -> tuple[str | None, int | None]:
         if candidate == answerer or any(node.step == candidate for node in history) or any(
             record.step == candidate for record in records
         ):
-            return candidate, 1 + sum(
-                1 for node in history if node.step == candidate
-            )
+            occurrences = sum(1 for node in history if node.step == candidate)
+            # An answer's state already records its own run as the last node.
+            own_run_recorded = bool(history) and history[-1].step == candidate
+            return candidate, occurrences if own_run_recorded else 1 + occurrences
     return None, None
+
+
+def _is_failed_answer(state: Any) -> bool:
+    """Whether a comment's state marks its run as failed (a crash notice)."""
+    from nebuko.engine.lib.workflow_state import IncompleteReason
+
+    outcome = getattr(state, "turn_outcome", None)
+    return getattr(outcome, "incomplete_reason", None) is IncompleteReason.FAILURE
 
 
 def _author_of(body: str) -> str:
@@ -481,6 +490,7 @@ def entries_from_raw_thread(  # @stub-protected
                     trigger_login=trigger_login,
                 ),
                 parts=None if len(parts) < 2 else tuple(parts),
+                failed=_is_failed_answer(entry_state),
             )
         )
     return entries
