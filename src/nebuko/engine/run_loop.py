@@ -3199,18 +3199,25 @@ class Engine:
         # the failure facts onto the embedded state (issue #1288): GitHub fires
         # on the comment as created, so a failure must never be framed as a
         # live turn — an edit-after-post cannot retract the token.
-        publish_state = self._explicit_state(agent_result) or self._previous_state()
+        # The verdict is about *this* run only: a previous run's INCOMPLETE/
+        # FAILURE state must not frame a green run as failed (#1288 review).
+        # The previous state is used as the failure-facts base only when the
+        # run really failed; otherwise the agent's explicit state (or none)
+        # frames the header, as on main.
+        explicit_state = self._explicit_state(agent_result)
         engine_failed = self._engine_failed(
-            publish_state,
+            explicit_state,
             self._publish_state.get("failure_reason"),
         )
-        if engine_failed and publish_state is not None:
+        if engine_failed:
             publish_state = self._record_engine_failure(
                 self._publish_state.get("failure_reason") or "engine failure",
                 phase="publish",
                 pushed=self._branch_pushed(),
-                state=publish_state,
-            ) or publish_state
+                state=explicit_state,
+            ) or explicit_state
+        else:
+            publish_state = explicit_state
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,

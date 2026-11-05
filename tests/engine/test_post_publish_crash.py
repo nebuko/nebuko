@@ -635,6 +635,107 @@ class TestPostPublishRouteCrash:
         )
 
 
+class TestPreviousFailureDoesNotFailAGreenRun:
+    """Round-5 regression: ``publish()`` fell back to the previous state when
+    the agent returned none, so a previous INCOMPLETE/FAILURE state framed a
+    healthy run as failed — no continue token, a stamped ``engine_failure``,
+    no notice. The verdict must come from *this* run only.
+    """
+
+    @staticmethod
+    def _seed_previous_failure(engine):
+        from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
+            TurnOutcome,
+            TurnStatus,
+        )
+
+        engine.adapter.save_state(
+            WorkflowState(
+                workflow="spec-tdd",
+                step="spec",
+                agent="po",
+                position=[{"workflow": "spec-tdd", "step": "spec"}],
+                turn_outcome=TurnOutcome(
+                    status=TurnStatus.INCOMPLETE,
+                    incomplete_reason=IncompleteReason.FAILURE,
+                ),
+                current_context={
+                    "engine_failure": {
+                        "ok": False,
+                        "step": "spec",
+                        "workflow": "spec-tdd",
+                        "phase": "git_finalize",
+                        "error": "git session finalize failed: push rejected",
+                        "pushed": False,
+                        "branch": "feature/x",
+                        "head_sha": "",
+                        "base_branch": "main",
+                        "run_url": "",
+                        "pr_url": "",
+                    }
+                },
+            )
+        )
+
+    def test_a_green_run_after_a_failure_keeps_the_token(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        self._seed_previous_failure(engine)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        outcome = engine.run()
+
+        # ``is`` on purpose: ``==`` on ExitCode is always true (#1310).
+        assert outcome.exit_code is ExitCode.ADVANCE
+        _, posted = engine.adapter.load_raw_thread()
+        answers = [
+            c for c in posted if "Did the work." in c["body"]
+        ]
+        assert answers
+        assert CONTINUE_TOKEN in answers[-1]["body"].splitlines()[0]
+        assert "engine_failure" not in answers[-1]["body"]
+
+    def test_a_git_finalize_failure_after_a_failure_is_still_a_failure(
+        self, tmp_path, monkeypatch
+    ):
+        from nebuko.engine.lib.git import git_session
+
+        engine = _engine(tmp_path)
+        self._seed_previous_failure(engine)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: git_session.GuardResult(
+                ok=False, skipped=False, detail="push rejected"
+            ),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code is not ExitCode.ADVANCE
+        _, posted = engine.adapter.load_raw_thread()
+        answers = [
+            c for c in posted if "Did the work." in c["body"]
+        ]
+        assert answers
+        assert CONTINUE_TOKEN not in answers[-1]["body"].splitlines()[0]
+        assert "push rejected" in answers[-1]["body"]
+        saved = json.loads(
+            (tmp_path / "runs" / "run-1" / "state.json").read_text()
+        )
+        facts = saved["current_context"]["engine_failure"]
+        assert facts["phase"] == "git_finalize"
+        assert "push rejected" in facts["error"]
+
+
 class TestEngineStatusReachesThePrompt:
     def test_the_next_prompt_carries_the_engine_facts(
         self, tmp_path, monkeypatch
