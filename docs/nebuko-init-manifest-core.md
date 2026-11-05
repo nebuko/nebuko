@@ -1,6 +1,6 @@
-# `nebuko init` — manifest + core refactor (issue #1272)
+# `nebuko init` — manifest + core (issue #1272, rev 17)
 
-How the `nebuko init` command is used after the refactor, and how the new
+How to use `nebuko init` after the client-based refactor, and how the new
 `manifest` and `core` modules work. This replaces the broker-based flow
 described in `docs/nebuko-init.md`.
 
@@ -42,6 +42,11 @@ asks before overwriting.
   whole `RepoVariableWriter` path are **removed**.
 - `GH_PAT` is set **only in PAT mode** — never in web mode.
 - Org-scope targets **require `--org`**; a missing org is a hard error.
+- `--force` at org scope **stops with exit 2** before any secret prompt or
+  write (org secret updates move to a later issue).
+- A skip at org scope prints
+  `Skipped: <name>: already exists in <org>; access from this repo not checked`
+  — org-scope access checks are not performed yet.
 
 ## Manifest schema
 
@@ -62,19 +67,14 @@ fields or an empty `providers` map. Path resolution rules:
   (`nebuko-caller.yaml`) live in `src/nebuko/engine/init/defaults/` — the repo
   file *is* the packaged copy. The CLI resolves both through
   `importlib.resources.files("nebuko.engine.init.defaults")`; the Worker
-  fetches `src/nebuko/engine/init/defaults/nebuko-init.json` at the resolved
-  release tag and resolves the template as a sibling at the same ref. On 404
-  (any tag cut before PR 1 merged) the Worker returns a clear error naming the
-  resolved tag — never a silent fallback. **PR 2 gate:** the first release tag
-  containing `defaults/` must exist before PR 2 step 10 ships.
+  fetches the same relative path from the repo checkout at the resolved
+  release tag.
 - `template_path` stays **repo-root-relative** (e.g.
   `defaults/agents/agent-config-openrouter.yaml`) because it is always fetched
   at `pin_ref` — never packaged.
 
 The manifest is a static, committed file (not generated from `providers.py` at
-build time): the Worker fetches raw JSON at runtime with no Python in its
-build, and a generated manifest would still need an equality check in CI. The
-drift guard
+build time). The drift guard
 `tests/engine/init/test_manifest.py::test_providers_match_providers_py`
 imports `PROVIDER_PROFILES` and fails on any divergence, and stays in force
 until `providers.py` is deleted (at which point the manifest becomes the sole
@@ -90,9 +90,10 @@ The engine splits planning from I/O:
   `secret_actions` (exactly the chosen provider's `secret_names`, plus
   `GH_PAT` only when `pat_mode=True`), and records `conflicts` for target
   files that already exist when `force=False`. Per-name action:
-  `skip_existing` if the name is in `existing_secrets`, else `create`;
-  upgraded to `update` for existing names when `force=True`. Raises
-  `ValueError` for an org-scope target without an org.
+  `create` if the name is absent from `existing_secrets`, `skip_existing` if
+  present without `--force`, `update` if present with `--force`. Raises
+  `ValueError` for an org-scope target without an org, and (defensively) for
+  `--force` at org scope or an org not matching the repo owner.
 - **`execute_init(plan, client, secrets)`** — module-level, takes the
   `GitHubInitClient` as an argument, never prompts or prints. It force-updates
   branch `nebuko/init`, reuses the open PR (or opens one), and calls
@@ -111,3 +112,22 @@ Per-secret statuses in the outcome are `created`, `updated`,
 **`setup.py`** stays the thin interactive wrapper: prompts informed by
 `existing_secrets`, delegates to `plan_init` / `execute_init`, asks for
 `GH_PAT` only in PAT mode, and contains no broker/variable-writing path.
+
+## Messages
+
+After `execute_init`, one message per secret (a skipped secret gets no extra
+line):
+
+| Status | Stream | Message |
+|---|---|---|
+| created | stdout | `Created: <name>` |
+| updated | stdout | `Updated: <name>` |
+| skipped_existing (repo) | stdout | `Skipped: <name>: already exists; use --force to update` |
+| skipped_existing (org) | stdout | `Skipped: <name>: already exists in <org>; access from this repo not checked (see #1315)` |
+| failed | stderr | `Failed: <name>: <detail>` |
+
+An empty interactive answer prints `No value for <name>; skipping.` and asks
+once only; the secret ends as `failed` with detail `no value provided`.
+In non-interactive mode every planned secret must come from
+`NEBUKO_SECRET_<NAME>` — an empty or missing variable is a `UsageError`
+(exit 2) raised **before** `execute_init` writes anything.

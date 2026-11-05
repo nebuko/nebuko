@@ -10,14 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from nebuko.engine.init.core import AGENT_CONFIG_PATH, WORKFLOW_PATH
 from nebuko.engine.init.ports import InitAnswers, SetupTarget
 from nebuko.engine.init.providers import PROVIDER_PROFILES, provider_by_name
-from nebuko.engine.init.setup import (
-    AGENT_CONFIG_PATH,
-    WORKFLOW_PATH,
-    next_steps_message,
-    render_files,
-)
+from nebuko.engine.init.setup import next_steps_message
 from nebuko.engine.init.sources import FileTemplateSource
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -34,7 +30,38 @@ def _answers(provider_name: str, runs_on: str = "ubuntu-latest") -> InitAnswers:
 
 
 def _render(provider_name: str, runs_on: str = "ubuntu-latest"):
-    return render_files(_answers(provider_name, runs_on), FileTemplateSource(REPO_ROOT))
+    """Render through the pure ``plan_init`` core, as the client flow does."""
+    from nebuko.engine.init.core import InitRequest, RenderInputs, SecretTarget, plan_init
+    from nebuko.engine.init.manifest import load_packaged_manifest
+
+    manifest = load_packaged_manifest()
+    provider = manifest.providers[provider_name]
+    agent_config = FileTemplateSource(REPO_ROOT).fetch(provider.template_path, "v1.2.3")
+    caller_template = (
+        REPO_ROOT / "src/nebuko/engine/init/defaults/nebuko-caller.yaml"
+    ).read_text(encoding="utf-8")
+    plan = plan_init(
+        request=InitRequest(
+            target=SecretTarget(scope="repo", repo="acme/widgets"),
+            provider=provider_name,
+            render=RenderInputs(pin_ref="v1.2.3", runs_on=runs_on),
+            pat_mode=True,
+            force=False,
+        ),
+        manifest=manifest,
+        caller_template=caller_template,
+        agent_config=agent_config,
+        existing_files={},
+        existing_secrets=frozenset(),
+    )
+
+    class _Files:
+        agent_config_path = AGENT_CONFIG_PATH
+        workflow_path = WORKFLOW_PATH
+        agent_config = plan.rendered[AGENT_CONFIG_PATH]
+        workflow = plan.rendered[WORKFLOW_PATH]
+
+    return _Files()
 
 
 def test_paths_are_the_documented_ones():

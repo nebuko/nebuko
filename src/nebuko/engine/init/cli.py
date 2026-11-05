@@ -33,6 +33,8 @@ from nebuko.engine.init.setup import (
     EXIT_ERRORS,
     EXIT_OK,
     EXIT_USAGE,
+    PAT_INSTRUCTIONS,
+    SECRET_ENV_PREFIX,
     SetupContext,
     build_setup,
     next_steps_message,
@@ -40,7 +42,6 @@ from nebuko.engine.init.setup import (
     run_init,
 )
 DEFAULT_RUNS_ON = "ubuntu-latest"
-SECRET_ENV_PREFIX = "NEBUKO_SECRET_"
 SECRET_SCOPE_REPOSITORY = "repository"
 SECRET_SCOPE_ORGANIZATION = "organization"
 SECRET_EXISTS_MESSAGE = "{name} already setup in {scope} [ skipping, use --force to update value ]"
@@ -55,11 +56,6 @@ WORDMARK = """
 GH_MISSING_MESSAGE = """\
 nebuko init: the GitHub CLI (gh) is required but was not found on PATH.
 Install it from https://cli.github.com and run `gh auth login`."""
-PAT_INSTRUCTIONS = """\
-A GitHub Personal Access Token is required (fine-grained, with Contents,
-Pull requests and Issues read/write on the target repository). Create one at
-https://github.com/settings/personal-access-tokens/new
-"""
 APP_INSTALL_URL = "https://github.com/apps/nebuko/installations/new"
 APP_MISSING_MESSAGE = f"""
 The Nebuko GitHub App is not installed on the target repository.
@@ -164,31 +160,42 @@ def _run(args: argparse.Namespace) -> int:
         print(preflight_message(report), file=sys.stderr)
         return EXIT_USAGE
     target = _resolve_secret_scope(args, prompter, target)
+    # Org-scope checks run before any secret prompt or write (D3): --force at
+    # org scope and an org not matching the repo owner are both hard stops.
+    if target.org:
+        if args.force:
+            raise UsageError(
+                "--force cannot update org secrets yet; org secret updates are not "
+                "supported in this version (see #1315)"
+            )
+        if target.org.lower() != target.owner.lower():
+            raise UsageError(
+                f"organization {target.org!r} does not match the repository owner "
+                f"{target.owner!r}; org secrets can only be written for the owner's org"
+            )
     app_mode = _app_mode(args, context, target)
     if not app_mode and not args.assume_pat:
         # Not a deliberate PAT run: point the client at the App install first.
         print(APP_MISSING_MESSAGE, file=sys.stderr)
         return EXIT_USAGE
-    # The secret listing lives on the client seam (the same adapter that will
-    # write them); --force makes the probe pointless.
     client = context.client if context.client is not None else host
-    existing = frozenset() if args.force else client.existing_secrets(target)
-    # GH_PAT is reported before the provider prompt so the skip note lands
-    # right after the scope selection.
-    skipped = _report_existing(existing, ("GH_PAT",), target, app_mode)
     provider = _resolve_provider(args, prompter)
-    skipped |= _report_existing(existing, provider.secret_names, target, app_mode)
     answers = InitAnswers(
         target=target,
         provider=provider,
         runs_on=_resolve_runs_on(args, prompter),
         pin_ref=args.pin_ref or (context.refs.latest() if context.refs else ""),
-        secrets=_collect_secrets(args, prompter, provider, skipped, app_mode=app_mode),
         force=args.force,
-        skipped=skipped,
     )
     pat_mode = bool(args.assume_pat)
-    outcome = run_init(answers, context.source, client, prompter, pat_mode=pat_mode)
+    outcome = run_init(
+        answers,
+        context.source,
+        client,
+        prompter,
+        pat_mode=pat_mode,
+        non_interactive=args.non_interactive,
+    )
     if outcome.code == EXIT_OK:
         print(next_steps_message(outcome.pr_url, target.slug))
     return outcome.code
@@ -237,25 +244,6 @@ def _resolve_secret_scope(
     return replace(target, org=prompter.ask_text("Organization", target.owner))
 
 
-def _report_existing(
-    existing: frozenset[str],
-    names: Sequence[str],
-    target: SetupTarget,
-    app_mode: bool = False,
-) -> frozenset[str]:
-    """Print the skip note for the ``names`` already stored at the target scope."""
-    scope = target.org or target.slug
-    skipped = set()
-    for name in names:
-        if name not in existing:
-            continue
-        if name == "GH_PAT" and app_mode:
-            continue
-        print(SECRET_EXISTS_MESSAGE.format(name=name, scope=scope))
-        skipped.add(name)
-    return frozenset(skipped)
-
-
 def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter):
     if args.provider:
         return provider_by_name(args.provider)
@@ -271,39 +259,6 @@ def _resolve_runs_on(args: argparse.Namespace, prompter: InitPrompter) -> str:
     if args.non_interactive:
         return DEFAULT_RUNS_ON
     return prompter.ask_text("Runner labels", DEFAULT_RUNS_ON)
-
-
-def _collect_secrets(
-    args: argparse.Namespace,
-    prompter: InitPrompter,
-    provider,
-    skip,
-    *,
-    app_mode: bool | None = None,
-) -> dict[str, str]:
-    """Ask for (or read from the environment) the values to store as secrets."""
-    names = list((*provider.secret_names, "GH_PAT"))
-    if app_mode:
-        names.remove("GH_PAT")
-    secrets: dict[str, str] = {}
-    for name in names:
-        if name in skip:
-            continue
-        if args.non_interactive:
-            value = os.environ.get(f"{SECRET_ENV_PREFIX}{name}", "")
-            if not value:
-                raise UsageError(
-                    f"missing {SECRET_ENV_PREFIX}{name} (required in non-interactive mode)"
-                )
-        else:
-            if name == "GH_PAT":
-                print(PAT_INSTRUCTIONS)
-            value = prompter.ask_secret(name)
-            if not value:
-                print(f"No value for {name}; skipping.")
-                continue
-        secrets[name] = value
-    return secrets
 
 
 def _build_parser() -> argparse.ArgumentParser:

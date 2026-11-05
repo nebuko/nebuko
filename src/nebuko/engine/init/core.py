@@ -96,6 +96,7 @@ class GitHubInitClient(Protocol):  # I/O only — no planning/execution methods 
         ...
 
 
+AGENT_CONFIG_PATH = ".nebuko/agents/agent-config.yaml"  # single home (D7); setup.py imports it
 BRANCH = "nebuko/init"
 WORKFLOW_PATH = ".github/workflows/nebuko.yaml"
 
@@ -123,7 +124,7 @@ def plan_init(
         sorted(path for path, exists in existing_files.items() if exists and not request.force)
     )
     rendered = {
-        provider.template_path: agent_config,
+        AGENT_CONFIG_PATH: agent_config,
         WORKFLOW_PATH: _render_workflow(caller_template, request, provider, names),
     }
     return InitPlan(
@@ -172,7 +173,7 @@ def _render_workflow(caller_template: str, request: InitRequest, provider, names
     secrets_block = "\n".join(f"      {name}: ${{{{ secrets.{name} }}}}" for name in names)
     return (
         caller_template.replace("${pin_ref}", request.render.pin_ref)
-        .replace("${agent_config_path}", provider.template_path)
+        .replace("${agent_config_path}", AGENT_CONFIG_PATH)
         .replace("${runs_on}", request.render.runs_on)
         .replace("${secrets_block}", secrets_block)
     )

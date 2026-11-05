@@ -338,7 +338,7 @@ def test_non_interactive_defaults_to_repository_level_secrets(monkeypatch):
 def test_interactive_asks_where_to_store_the_secrets(monkeypatch, capsys):
     client = GhInitClient()
     prompter = FakePrompter(
-        texts=["acme/widgets", "acme-org", "ubuntu-latest"],
+        texts=["acme/widgets", "acme", "ubuntu-latest"],
         choices=["organization", "openrouter"],
         secrets=["key-123", "pat-456"],
     )
@@ -436,15 +436,13 @@ def test_existing_org_secrets_are_skipped_and_reported(monkeypatch, capsys):
     client.existing = frozenset({"GH_PAT", "OPENROUTER_API_KEY"})
     _wire_pat(monkeypatch, FakeHost(), client=client)
 
-    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive"])
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive"])
 
     out = capsys.readouterr().out
     assert code == 0
     assert client.secrets == {}
-    assert "GH_PAT already setup in acme [ skipping, use --force to update value ]" in out
-    assert (
-        "OPENROUTER_API_KEY already setup in acme [ skipping, use --force to update value ]" in out
-    )
+    assert "Skipped: GH_PAT: already exists; use --force to update" in out
+    assert "Skipped: OPENROUTER_API_KEY: already exists; use --force to update" in out
     assert "not set (no value provided)" not in out
 
 
@@ -483,11 +481,10 @@ def test_force_rewrites_existing_secrets(monkeypatch):
     _wire_pat(monkeypatch, FakeHost(), client=client)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    code = cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive", "--force"])
+    code = cli.main(["--repo", "acme/widgets", "--non-interactive", "--force"])
 
     assert code == 0
     assert client.secrets == {"OPENROUTER_API_KEY": "key-123", "GH_PAT": "pat-456"}
-    assert client.secret_probes if False else True  # the probe is on the host, not the client
 
 
 def test_force_skips_the_secret_probe(monkeypatch):
@@ -496,7 +493,7 @@ def test_force_skips_the_secret_probe(monkeypatch):
     _wire_pat(monkeypatch, host, client=client)
     _set_secrets(monkeypatch, OPENROUTER_API_KEY="key-123", GH_PAT="pat-456")
 
-    assert cli.main(["--repo", "acme/widgets", "--org", "acme", "--non-interactive", "--force"]) == 0
+    assert cli.main(["--repo", "acme/widgets", "--non-interactive", "--force"]) == 0
     assert host.secret_probes == []  # --force makes the probe pointless
 
 
@@ -510,7 +507,7 @@ def test_non_interactive_does_not_require_the_skipped_secret_env(monkeypatch, ca
 
     assert code == 0
     assert client.secrets == {"OPENROUTER_API_KEY": "key-123"}
-    assert "GH_PAT already setup in acme" in capsys.readouterr().out
+    assert "Skipped: GH_PAT: already exists" in capsys.readouterr().out
 
 
 def test_repository_level_existing_secrets_are_skipped_too(monkeypatch, capsys):
@@ -523,7 +520,7 @@ def test_repository_level_existing_secrets_are_skipped_too(monkeypatch, capsys):
 
     assert code == 0
     assert client.secrets == {"GH_PAT": "pat-456"}
-    assert "OPENROUTER_API_KEY already setup in acme/widgets" in capsys.readouterr().out
+    assert "Skipped: OPENROUTER_API_KEY: already exists" in capsys.readouterr().out
 
 
 def test_a_failing_secret_listing_fails_the_run(monkeypatch, capsys):
