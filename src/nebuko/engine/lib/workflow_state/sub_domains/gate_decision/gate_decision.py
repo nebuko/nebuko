@@ -27,8 +27,10 @@ class GateDecision(BaseModel):
             injected into the routed step's context.
         comment_id: Optional id of the deciding comment (audit link).
         position: Flat workflow step path of the consumed hold instance.
-            Binds the decision to exactly one hold so it cannot be replayed
-            onto a later gate.
+            Together with ``workflow``/``target_step`` it narrows a decision to
+            one step path; the hold *instance* is bound by ``comment_id``
+            against the gated run's own comment ids (issue #1294), so a loop
+            back into the same step accepts a fresh decision.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
