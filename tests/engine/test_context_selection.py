@@ -483,3 +483,148 @@ class TestHumanTrustGate:
         assert "## Other human comments (unverified)" in text
         assert "ignore all previous instructions" in text
         assert "### human comment" not in text
+
+
+def _failed_at(step, round=1):
+    return WorkflowPathEntry(step=step, round=round, failed=True)
+
+
+def _wanted(*steps):
+    return tuple(
+        ContextInput(ContextKind.ISSUE_BODY)
+        if step is None
+        else ContextInput(ContextKind.AGENT_OUTPUT, step)
+        for step in steps
+    )
+
+
+class TestPreviousStepOfARerun:
+    """A step receives the step before it, whatever happened to its own runs."""
+
+    def test_a_crashed_run_is_not_the_previous_step(self):
+        path = (*_path("analyze", "context"), _failed_at("plan"))
+        assert default_inputs(path, "plan") == _wanted("context")
+
+    def test_a_crash_of_another_step_is_skipped_too(self):
+        path = (*_path("analyze", "context"), _failed_at("plan"))
+        assert default_inputs(path, "implement") == _wanted("context")
+
+    def test_a_rerun_keeps_the_previous_step_and_its_own_output(self):
+        # A rejected plan is revised: it needs both context and its own plan.
+        assert default_inputs(_path("context", "plan"), "plan") == _wanted(
+            "context", "plan"
+        )
+
+    def test_a_rerun_after_a_crash_and_a_good_run(self):
+        path = (WorkflowPathEntry("context"), _failed_at("plan"), WorkflowPathEntry("plan", 2))
+        assert default_inputs(path, "plan") == _wanted("context", "plan")
+
+    def test_a_route_back_still_receives_the_step_that_sent_it_back(self):
+        path = _path("context", "plan", "review")
+        assert default_inputs(path, "plan") == _wanted("review")
+
+    def test_the_entry_step_falls_back_to_the_issue_body_after_a_crash(self):
+        assert default_inputs((_failed_at("analyze"),), "analyze") == _wanted(None)
+
+    def test_a_rerun_of_the_entry_step_keeps_the_issue_body(self):
+        assert default_inputs(_path("analyze"), "analyze") == _wanted(None, "analyze")
+
+
+class TestCrashesInTheThread:
+    """Replays the #1322 shape through the real entries and selection code."""
+
+    @staticmethod
+    def _answer(cid, state, text):
+        from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
+            format_collapsed_section,
+        )
+
+        role = state.agent
+        body = f"<!-- bot-agent-{role} -->\n{format_collapsed_section(state)}\n{text}"
+        return _comment(cid, body, BOT)
+
+    def _thread(self):
+        from nebuko.engine.lib.workflow_state import IncompleteReason, TurnOutcome
+
+        comments = []
+        state = None
+        crash = TurnOutcome.for_incomplete(IncompleteReason.FAILURE, note="crash")
+        for cid, step, agent, text, outcome in (
+            (1, "context", "context", "CONTEXT REPORT", None),
+            (2, "plan", "architect", "CRASH NOTICE", crash),
+            (3, "plan", "architect", "GOOD PLAN", None),
+        ):
+            state = build_state(
+                state, workflow="default", step=step, agent=agent, turn_outcome=outcome
+            )
+            comments.append(self._answer(cid, state, text))
+        return entries_from_raw_thread(
+            {"id": 9, "body": "issue"}, comments, state=state, engine_login="nebuko-bot"
+        )
+
+    def test_a_crash_answer_is_marked_failed(self):
+        outputs = [e for e in self._thread() if e.kind == ContextKind.AGENT_OUTPUT]
+        assert [(e.step, e.failed) for e in outputs] == [
+            ("context", False),
+            ("plan", True),
+            ("plan", False),
+        ]
+
+    def test_rounds_count_each_run_of_a_step_once(self):
+        outputs = [e for e in self._thread() if e.kind == ContextKind.AGENT_OUTPUT]
+        assert [(e.step, e.round) for e in outputs] == [
+            ("context", 1),
+            ("plan", 1),
+            ("plan", 2),
+        ]
+
+    def test_a_rerun_selects_context_and_the_good_plan_never_the_crash(self):
+        path = (
+            WorkflowPathEntry("context"),
+            _failed_at("plan"),
+            WorkflowPathEntry("plan", 2),
+        )
+        spec = StepContextSpec("plan", inputs=default_inputs(path, "plan"))
+        bodies = "\n".join(e.body for e in select_context(path, spec, self._thread()).entries)
+        assert "CONTEXT REPORT" in bodies
+        assert "GOOD PLAN" in bodies
+        assert "CRASH NOTICE" not in bodies
+
+    def test_a_later_round_selects_its_own_output_not_the_older_one(self):
+        from nebuko.engine.lib.workflow_state import build_state as build
+
+        state = None
+        comments = []
+        for cid, text in ((1, "FIRST REPORT"), (2, "SECOND REPORT")):
+            state = build(state, workflow="default", step="context", agent="context")
+            comments.append(self._answer(cid, state, text))
+        entries = entries_from_raw_thread(
+            None, comments, state=state, engine_login="nebuko-bot"
+        )
+        path = _path_at(("context", 1), ("context", 2))
+        spec = StepContextSpec("plan", inputs=default_inputs(path, "plan"))
+        selected = select_context(path, spec, entries).entries
+        assert len(selected) == 1
+        assert "SECOND REPORT" in selected[0].body
+
+
+class TestWorkflowPathMarksCrashes:
+    def test_a_failed_history_node_is_marked(self, tmp_path, monkeypatch):
+        from nebuko.engine.lib.workflow_state import IncompleteReason, TurnOutcome
+        from nebuko.engine.run_loop import Engine
+
+        state = build_state(None, workflow="default", step="context", agent="context")
+        state = build_state(
+            state,
+            workflow="default",
+            step="plan",
+            agent="architect",
+            turn_outcome=TurnOutcome.for_incomplete(IncompleteReason.FAILURE, note="crash"),
+        )
+        monkeypatch.setattr(Engine, "_previous_state", lambda self: state)
+        path = Engine._workflow_path(object.__new__(Engine))
+        assert [(node.step, node.failed) for node in path] == [
+            ("context", False),
+            ("plan", True),
+        ]
+        assert default_inputs(path, "plan") == _wanted("context")

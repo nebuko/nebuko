@@ -2034,7 +2034,15 @@ class Engine:
             if not step:
                 continue
             rounds[step] = rounds.get(step, 0) + 1
-            path.append(WorkflowPathEntry(step=step, round=rounds[step]))
+            outcome = getattr(node, "turn_outcome", None)
+            path.append(
+                WorkflowPathEntry(
+                    step=step,
+                    round=rounds[step],
+                    failed=getattr(outcome, "incomplete_reason", None)
+                    is IncompleteReason.FAILURE,
+                )
+            )
         return path
 
     def _previous_workflow(self) -> str:
