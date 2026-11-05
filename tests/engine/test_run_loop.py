@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -257,6 +258,8 @@ def _soft_kill_comment_body() -> str:
 
 class TestPhaseVocabulary:
     def test_phases_are_the_ten_documented_phases_in_order(self):
+        # Publish-last ordering (issue #1288): the state phase persists before
+        # the publish phase, which runs last before routing.
         assert PHASES == (
             "normalize",
             "resolve_config",
@@ -265,8 +268,8 @@ class TestPhaseVocabulary:
             "prompt",
             "agent",
             "validate",
-            "publish",
             "state",
+            "publish",
             "route",
         )
 
@@ -4394,7 +4397,11 @@ class TestStepHooks:
         root.mkdir()
         marker = tmp_path / "post-ran.txt"
         _write_hook_script(root, "scripts/post.sh", 'touch "$POST_MARKER"')
-        engine = _engine_at_root(tmp_path, root, env={"POST_MARKER": str(marker)})
+        engine = _engine_at_root(
+            tmp_path,
+            root,
+            env={"POST_MARKER": str(marker), "PATH": os.environ.get("PATH", "")},
+        )
         _stub_resolved(
             monkeypatch,
             _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),
