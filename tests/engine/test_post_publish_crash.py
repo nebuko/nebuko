@@ -683,9 +683,9 @@ class TestPreviousFailureDoesNotFailAGreenRun:
         engine = _engine(tmp_path)
         self._seed_previous_failure(engine)
         _stub_resolved(monkeypatch, dict(_RESOLVED))
-        monkeypatch.setattr(
-            Engine, "invoke_agent", lambda self, prompt: _agent_result()
-        )
+        result = _agent_result()
+        result.pop("state")
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
 
         outcome = engine.run()
 
@@ -707,9 +707,9 @@ class TestPreviousFailureDoesNotFailAGreenRun:
         engine = _engine(tmp_path)
         self._seed_previous_failure(engine)
         _stub_resolved(monkeypatch, dict(_RESOLVED))
-        monkeypatch.setattr(
-            Engine, "invoke_agent", lambda self, prompt: _agent_result()
-        )
+        result = _agent_result()
+        result.pop("state")
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
         monkeypatch.setattr(
             Engine,
             "_git_session_finalize",
