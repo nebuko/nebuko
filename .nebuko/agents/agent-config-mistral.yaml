@@ -9,7 +9,7 @@ providers:
     # the engine-stamped issue id (LLM_SESSION_ID) at runtime (issue #1068).
     cache_key_param: "prompt_cache_key"
   commandcode:
-    api_url: "https://api.commandcode.ai/provider/v1"
+    api_url: "https://api.commandcode.ai/provider"
     api_token_env: "COMMANDCODE_API_KEY"
 
 # ── LLMs: model paths referencing providers ──
