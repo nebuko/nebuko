@@ -88,11 +88,7 @@ steps:
   - name: plan
     agent: architect
     prompt: |
-      Planning turn. On a first pass, @@context has returned. If you were sent back by a critique, a spec rejection or a human, this is a re-plan:
-      - Start from your previous plan. Keep every ruling unless you explicitly withdraw it and say why. If you cannot see your previous plan or a ruling a finding refers to, say so under questions instead of reconstructing it.
-      - Answer each BLOCKING finding by its ID.
-      - Post the complete plan, not a delta: the spec step only receives this output.
-      Follow the Planning skill: emit the single planning artifact, then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn.
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact, then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn.
       Downstream is the spec step: your Object Design Contract section is the contract it will materialize 1:1 as stub classes and red tests, so make it complete and exact (file paths, fields with types, every method signature marked `# @stub-protected`). Also state where the user-facing doc goes (existing docs/ dir, or a new file) and what usage/behaviour sections it must contain.
     next: spec
     output:
@@ -143,12 +139,6 @@ steps:
       5. Commit, push, and open the PR as a DRAFT (or push to the existing PR's
          branch). Title it from the plan headline; body = doc summary + the red
          test list + the contract file paths.
-
-      Revision mode: if the branch already has an implementation, do not write
-      stubs or replace existing code. Write one test per change in this plan that
-      fails against the current branch, and report that output as red_evidence.
-      If a change cannot be made red, finish with appreciation 'rejected' and say
-      why. An all-green run is not red evidence.
     skill:
       - git-pr-workflow
       - stub-only
@@ -240,8 +230,9 @@ steps:
           row, a decision resting on an `inferred` fact, a re-measurement that contradicts
           the plan, or a fix that moves only a metric or shifts the same cost later in the
           run instead of improving the user's outcome.
-          Also BLOCKING: no failing-test output for this round's changes, or a test that
-          pins behaviour the plan or a human ruling says is wrong.
+          Also BLOCKING, unless `engine_failure` explains it: no failing-test output for
+          this round's changes. Also BLOCKING: a test that pins behaviour the plan or a
+          human ruling says is wrong.
         - SHOULD-FIX: real risk or gap that does not invalidate the plan.
         - NIT: everything else. Keep at most three.
       Each finding states: where (plan section or file:line), what is wrong, why it matters,
