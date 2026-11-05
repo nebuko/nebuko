@@ -827,3 +827,61 @@ class TestEmptyAnswerTightened:
         )
         outcome = self._run_with(monkeypatch, tmp_path, answer)
         assert outcome.exit_code == ExitCode.ERROR
+
+
+class TestEmptyReportReadsThePostedAnswer:
+    """Issue #1318: the check must read the report that gets posted.
+
+    A finalize turn leaves two texts: ``answer`` (``latest_answer.md``, usually
+    a short closing note) and ``deliverable`` (the report the comment shows).
+    Exit codes are compared with ``is`` because ``==`` cannot fail (#1310).
+    """
+
+    NOTE = "Report posted. The analysis is complete."
+
+    @staticmethod
+    def _run_with(monkeypatch, tmp_path, *, answer, deliverable):
+        from nebuko.engine.lib.config import StepOutput
+
+        engine = _engine(tmp_path)
+        resolved = dict(_RESOLVED)
+        resolved["STEP_OUTPUT"] = StepOutput(
+            fields=[
+                {"name": "headline", "title": True, "description": "Summary"},
+                {"name": "changes", "description": "What changed"},
+            ]
+        ).model_dump_json()
+        _stub_resolved(monkeypatch, resolved)
+        result = {**_agent_result(answer), "deliverable": deliverable}
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
+        return engine.run()
+
+    @staticmethod
+    def _report() -> str:
+        from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
+
+        return (
+            "# A real report\n\n"
+            + SECTION_OPEN.format(name="changes")
+            + "\nFixed the thing.\n"
+            + SECTION_CLOSE
+        )
+
+    def test_a_short_closing_note_does_not_fail_a_full_report(
+        self, tmp_path, monkeypatch
+    ):
+        outcome = self._run_with(
+            monkeypatch, tmp_path, answer=self.NOTE, deliverable=self._report()
+        )
+        assert outcome.exit_code is ExitCode.ADVANCE
+
+    def test_a_boilerplate_deliverable_is_rejected_despite_a_full_answer(
+        self, tmp_path, monkeypatch
+    ):
+        outcome = self._run_with(
+            monkeypatch,
+            tmp_path,
+            answer=self._report(),
+            deliverable="Finalize complete — the deliverable report is posted.",
+        )
+        assert outcome.exit_code is ExitCode.ERROR
