@@ -370,11 +370,12 @@ def _answer_of(agent_result: Any) -> str:
 def _posted_answer_of(agent_result: Any) -> str:
     """The body to post: the engine's captured deliverable when present.
 
-    Routing and validation keep reading :func:`_answer_of` (the legacy
+    Routing and output validation keep reading :func:`_answer_of` (the legacy
     ``latest_answer.md``), because they scan it for the ``AGENT_RUN_CONFIG``
-    sentinel; the capture only decides what the issue comment shows, so a
-    terminal routing note can never clobber the agent's real answer there
-    (issue #740).
+    sentinel; the capture decides what the issue comment shows, so a terminal
+    routing note can never clobber the agent's real answer there (issue #740).
+    The empty-report check reads this body too, because it judges the report
+    that gets posted (issue #1318).
     """
     if isinstance(agent_result, Mapping):
         value = agent_result.get("deliverable")
@@ -3069,7 +3070,7 @@ class Engine:
         result = bridge.validate_agent_output(answer, self._role_of(agent_result))
         if not result.is_valid:
             raise ValueError("agent output failed validation: " + "; ".join(result.errors))
-        self._reject_empty_report(answer)
+        self._reject_empty_report(_posted_answer_of(agent_result))
 
     def _reject_empty_report(self, answer: str) -> None:
         """Reject an answer whose declared output sections are all empty (#1288).
