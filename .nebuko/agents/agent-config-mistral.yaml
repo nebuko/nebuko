@@ -60,13 +60,13 @@ llms:
     thinking_enabled: true
     preserve_thinking: true
   claude-sonnet:
-    model_path: "anthropic/claude-sonnet-5-5"
+    model_path: "openai/anthropic/claude-sonnet-5-5"
     provider: "${providers.commandcode}"
     input_price: 2
     output_price: 10
     cache_read_price: 0.1
   claude-opus:
-    model_path: "anthropic/claude-opus-5-5"
+    model_path: "openai/anthropic/claude-opus-5-5"
     provider: "${providers.commandcode}"
     input_price: 4
     output_price: 20
