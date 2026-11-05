@@ -42,9 +42,6 @@ class FakeHost:
     def get_existing_files(self, target, paths):
         return {}
 
-    def existing_paths(self, target, paths):
-        return set()
-
 
 class FakeClient:
     """``GitHubInitClient`` double: records the committed files and secrets."""

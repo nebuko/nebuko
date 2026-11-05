@@ -1,4 +1,4 @@
-# `nebuko init` — manifest + core (issue #1272, rev 17)
+# `nebuko init` — manifest + core (issue #1272, rev 17 + rev 13 delta)
 
 How to use `nebuko init` after the client-based refactor, and how the new
 `manifest` and `core` modules work. This replaces the broker-based flow
@@ -32,6 +32,43 @@ The interactive flow asks, in order:
 `--force` rewrites files and secrets that already exist instead of skipping
 them; without it, existing target files are reported as conflicts and `init`
 asks before overwriting.
+
+### Org secrets are access-preserving (rev 13)
+
+At org scope, `init` never re-puts a secret blindly: overwriting an org secret
+with `--visibility selected --repos <target>` **replaces** the access list and
+cuts off other repos' CI. Before planning, the CLI reads per-secret access
+facts via `existing_secret_access(target, names)` and `plan_init` maps them:
+
+| Current access | Without `--force` | With `--force` |
+|---|---|---|
+| Target repo can read it | `skip_existing` — no value needed, no prompt | `update` — prompt for the value; keep existing visibility and repo list |
+| `selected`, target not listed | `add_repo_access` — no value, no prompt; single-repo endpoint only | `update` + add target repo: prompt for the value; keep the list, add the target repo |
+| `private`, public target repo | `report_inaccessible` — clear per-secret status; don't widen access, don't prompt | Same — `--force` cannot make a private secret readable by a public repo |
+
+- A **new** org secret is `create`, defaulting to `visibility="selected"` with
+  the target repo as the only entry.
+- `add_repo_access` calls the single-repo endpoint
+  (`PUT /orgs/{org}/actions/secrets/{secret_name}/repositories/{repository_id}`):
+  it never sends a value and never touches the repo list.
+- `update` on an existing org secret **keeps the existing visibility and full
+  existing repo list** — `put_secret` receives an explicit visibility/repo-set
+  from the plan; `gh` defaults are never used.
+- `report_inaccessible` is recorded as a per-secret status (detail
+  `org secret <name> is private; public repo <repo> cannot read it`), the run
+  ends with `success=False`; it is not raised.
+- `--force` prompts for every org secret's value; without `--force`,
+  `skip_existing` / `add_repo_access` / `report_inaccessible` prompt for
+  nothing. `--non-interactive` raises `SetupError` on any prompt.
+- An org that is not the target repo's owner fails fast with a `ValueError`
+  before any I/O; `visibility="selected"` with no selected repos raises
+  `ValueError` at `SecretTarget` construction (mirrors `gh`'s rejection).
+
+Legacy-path removals (rev 13): `run_init`'s client is **required** and typed
+`GitHubInitClient` — the `cli.py` non-client fallback (`client = ... else host`)
+and `setup.py`'s `hasattr`/`_run_via_host` dispatch, `render_files`,
+`secret_names()` and `_workflow_template` are deleted; `tests/engine/init/test_render.py`
+is gone (its surviving `next_steps_message` assertion moved to `test_setup.py`).
 
 ## Behaviour changes
 
@@ -85,15 +122,15 @@ source).
 The engine splits planning from I/O:
 
 - **`plan_init(request, manifest, caller_template, agent_config,
-  existing_files, existing_secrets)`** — a pure module-level function. It
-  renders the agent config and `.github/workflows/nebuko.yaml`, computes
-  `secret_actions` (exactly the chosen provider's `secret_names`, plus
-  `GH_PAT` only when `pat_mode=True`), and records `conflicts` for target
-  files that already exist when `force=False`. Per-name action:
-  `create` if the name is absent from `existing_secrets`, `skip_existing` if
-  present without `--force`, `update` if present with `--force`. Raises
-  `ValueError` for an org-scope target without an org, and (defensively) for
-  `--force` at org scope or an org not matching the repo owner.
+  existing_files, existing_secrets, secret_access=None)`** — a pure module-level
+  function. It renders the agent config at `AGENT_CONFIG_PATH`
+  (`.nebuko/agents/agent-config.yaml`) and `.github/workflows/nebuko.yaml`,
+  computes `secret_actions` (exactly the chosen provider's `secret_names`, plus
+  `GH_PAT` only when `pat_mode=True`), and records `conflicts` for target files
+  that already exist when `force=False`. `secret_access` is `None` at repo scope;
+  at org scope the Decision §1 table above maps access facts to actions. Raises
+  `ValueError` for an org-scope target without an org, for an org that is not
+  the repo owner, and (defensively) for `--force` at org scope.
 - **`execute_init(plan, client, secrets)`** — module-level, takes the
   `GitHubInitClient` as an argument, never prompts or prints. It force-updates
   branch `nebuko/init`, reuses the open PR (or opens one), and calls
@@ -102,12 +139,15 @@ The engine splits planning from I/O:
   in web mode.
 - **`GitHubInitClient`** is the I/O-only Protocol:
   `get_existing_files`, `existing_secrets` (raises on listing failure — never
-  a silent empty set), `upsert_branch_and_commit`,
+  a silent empty set), `existing_secret_access` (org scope only),
+  `add_repo_access`, `upsert_branch_and_commit`,
   `get_or_open_pull_request`, `put_secret`. Its `SecretTarget.scope` selects
   repo vs org endpoints.
 
 Per-secret statuses in the outcome are `created`, `updated`,
-`skipped_existing` or `failed`, each with a human-readable detail line.
+`skipped_existing`, `add_repo_access`, `report_inaccessible` or `failed`, each
+with a human-readable detail line. `success` is true only when there are zero
+`failed` **and** zero `report_inaccessible` statuses.
 
 **`setup.py`** stays the thin interactive wrapper: prompts informed by
 `existing_secrets`, delegates to `plan_init` / `execute_init`, asks for

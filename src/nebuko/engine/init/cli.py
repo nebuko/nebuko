@@ -178,7 +178,10 @@ def _run(args: argparse.Namespace) -> int:
         # Not a deliberate PAT run: point the client at the App install first.
         print(APP_MISSING_MESSAGE, file=sys.stderr)
         return EXIT_USAGE
-    client = context.client if context.client is not None else host
+    # N38: no fallback — run_init can never receive a non-client.
+    client = context.client
+    if client is None:
+        raise SetupError("no GitHubInitClient wired; build_setup must provide one")
     provider = _resolve_provider(args, prompter)
     answers = InitAnswers(
         target=target,
