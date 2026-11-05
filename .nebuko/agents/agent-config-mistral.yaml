@@ -11,6 +11,9 @@ providers:
   commandcode:
     api_url: "https://api.commandcode.ai/provider/v1"
     api_token_env: "COMMANDCODE_API_KEY"
+  cheaperinference:
+    api_url: "https://api.cheaperinference.com/v1"
+    api_token_env: "CHEAPERINFERENCE_API_KEY"
 
 # ── LLMs: model paths referencing providers ──
 llms:
@@ -60,17 +63,23 @@ llms:
     thinking_enabled: true
     preserve_thinking: true
   claude-sonnet:
-    model_path: "openai/anthropic/claude-sonnet-5-5"
-    provider: "${providers.commandcode}"
+    model_path: "openai/claude-sonnet-5-5"
+    provider: "${providers.cheaperinference}"
     input_price: 2
     output_price: 10
     cache_read_price: 0.1
   claude-opus:
-    model_path: "openai/anthropic/claude-opus-5-5"
-    provider: "${providers.commandcode}"
+    model_path: "openai/claude-opus-5-5"
+    provider: "${providers.cheaperinference}"
     input_price: 4
     output_price: 20
     cache_read_price: 0.2
+  openai-sol:
+    model_path: "openai/gpt-6.1-sol"
+    provider: "${providers.cheaperinference}"
+    input_price: 2
+    output_price: 10
+    cache_read_price: 0.1
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
 mcp_servers:
