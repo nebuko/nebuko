@@ -87,6 +87,10 @@ steps:
 
   - name: plan
     agent: architect
+    inputs:
+      requirements:
+        ref: analyze.requirements
+        required: false
     prompt: |
       Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact, then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn.
       Downstream is the spec step: your Object Design Contract section is the contract it will materialize 1:1 as stub classes and red tests, so make it complete and exact (file paths, fields with types, every method signature marked `# @stub-protected`). Also state where the user-facing doc goes (existing docs/ dir, or a new file) and what usage/behaviour sections it must contain.

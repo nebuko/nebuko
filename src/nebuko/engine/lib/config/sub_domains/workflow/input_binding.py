@@ -54,6 +54,10 @@ class InputBinding(BaseModel):
     exec_: Optional[list[str]] = Field(default=None, alias="exec")
     str_: Optional[str] = Field(default=None, alias="str")
     ref: Optional[str] = None
+    # ``false`` lets the step run without this value, with an "unavailable" note
+    # in its place (a ref to a step that never ran on this thread, say).
+    # Left unset it means required, and stays out of the serialized binding.
+    required: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
