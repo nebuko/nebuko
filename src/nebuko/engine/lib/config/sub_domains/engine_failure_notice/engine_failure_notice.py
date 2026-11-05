@@ -34,8 +34,19 @@ _LINE = (
     "{ping} workflow **{workflow}** failed at step `{step}` "
     "({phase} phase): {error}\n\n"
     "Run: {run_url} — branch pushed: {pushed}.\n"
-    "The workflow did **not** advance. Fix the failure, then re-run the step "
-    "with `/nebuko resume`."
+    "{aftermath}\n"
+    "Fix the failure, then re-run the step with `/nebuko resume`."
+)
+
+# The two aftermath wordings (#1288 round 4): a run that failed before its
+# answer was published did not advance the workflow; a run that failed
+# *after* the answer comment was created (post-publish merge, route) may
+# re-fire the workflow gate on the posted token — the notice must say so,
+# not claim the workflow stopped.
+_AFTERMATH_NOT_ADVANCED = "The workflow did **not** advance."
+_AFTERMATH_MAY_ADVANCE = (
+    "The answer comment was already posted; the workflow gate may re-fire on "
+    "it. If a next step starts, follow its run instead of resuming."
 )
 
 
@@ -50,6 +61,9 @@ class EngineFailureNotice(BaseModel):
         run_url: HTML URL of the failed workflow run.
         pushed: Whether the branch was pushed before the failure.
         target: Resolved human login to ping (the workflow starter).
+        posted: Whether the answer comment was already created when the
+            failure surfaced (a post-publish crash) — it selects the honest
+            aftermath wording (issue #1288 round 4).
     """
 
     step: str
@@ -59,6 +73,7 @@ class EngineFailureNotice(BaseModel):
     run_url: str = ""
     pushed: bool = False
     target: str
+    posted: bool = False
 
     # Frozen: a notice describes one already-failed run (functional-first
     # value object); nothing downstream may rewrite it.
@@ -84,6 +99,10 @@ class EngineFailureNotice(BaseModel):
                     error=self.error or "unknown error",
                     run_url=self.run_url or "(unavailable)",
                     pushed="yes" if self.pushed else "no",
+                    aftermath=(
+                        _AFTERMATH_MAY_ADVANCE if self.posted
+                        else _AFTERMATH_NOT_ADVANCED
+                    ),
                 ),
             ]
         )

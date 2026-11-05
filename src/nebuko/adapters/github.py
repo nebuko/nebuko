@@ -288,23 +288,6 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return PosterCapabilities(edit_comment=True, reactions=True, history_pagination=True)
 
     # @stub-protected
-    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
-        """Replace a comment's body via the REST API (issue #1288).
-
-        The engine uses this to neutralize the continue token on an answer
-        posted before a post-publish crash. Raises :class:`PublishError` when
-        the write cannot be delivered, mirroring :meth:`post`.
-        """
-        result = self._client_handle().update_comment(
-            self._require_repo(), int(comment_id), body
-        )
-        if not result:
-            raise PublishError(
-                f"comment {comment_id} update failed", None
-            )
-        return PostedComment(comment_id=str(comment_id))
-
-    # @stub-protected
     def add_reaction(self, comment_id: str, emoji: str) -> None:
         raise NotImplementedError("add_reaction not supported by this adapter")
 

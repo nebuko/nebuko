@@ -882,52 +882,6 @@ def post_comment(
     )
 
 
-def update_comment(
-    repo: str,
-    comment_id: int,
-    body: str,
-    token: Optional[str] = None,
-    dry_run: bool = False,
-    *,
-    transport: Optional[GitHubTransport] = None,
-) -> bool:
-    """Replace the body of an issue comment via the REST API (issue #1288).
-
-    Used by the engine to neutralize the continue token on an answer that was
-    posted before a post-publish crash; a comment the API can no longer see
-    (HTTP 404) counts as success so the cleanup stays idempotent.
-
-    Args:
-        repo: Repository in format owner/repo.
-        comment_id: Numeric id of the comment to update.
-        body: The new body text.
-        token: GitHub token (falls back to GH_TOKEN env var).
-        dry_run: If True, skip the API call.
-        transport: Injected transport (tests/unification).
-
-    Returns:
-        True when the update landed (or the comment is already gone).
-    """
-    if dry_run:
-        print(f"[DRY RUN] Would update comment {comment_id}", file=sys.stderr)
-        return True
-
-    transport = transport or _default_transport(token)
-    result = transport.call(
-        [
-            "api", "--method", "PATCH",
-            f"/repos/{repo}/issues/comments/{comment_id}",
-            "-f", f"body={body}",
-        ],
-        mutative=True,
-    )
-    if result.ok or result.error_kind == ApiErrorKind.NOT_FOUND:
-        return True
-
-    print(f"Error updating comment {comment_id}: {result.detail}", file=sys.stderr)
-    return False
-
-
 _MINIMIZE_QUERY = """
 mutation($subjectId: ID!) {
   minimizeComment(input: {subjectId: $subjectId, classifier: OUTDATED}) {

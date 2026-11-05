@@ -14,10 +14,13 @@ carries the `<!-- workflow-continue -->` token, so the workflow gate cannot
 fire and no next step starts. A stopped workflow means nothing was published.
 
 A residual failure *after* publication (for example a crash during the
-publish call itself) is handled by a backstop that neutralizes the posted
-continue token, so a failed run still cannot advance the workflow. A crash
-*during* publish — after validation passed, with commits already pushed —
-keeps the #766 contract: the run routes on the agent's own dispatch.
+publish call itself) is handled by the post-publish failure path: the engine
+records the failure facts on the persisted state (with a failed
+`turn_outcome`, so `/nebuko resume` re-runs the failed step) and posts a
+failure notice whose wording says honestly that the answer comment was
+already posted and the workflow gate may re-fire on it. A crash *during*
+publish — after validation passed, with commits already pushed — keeps the
+#766 contract: the run routes on the agent's own dispatch.
 
 ## The failure notice
 

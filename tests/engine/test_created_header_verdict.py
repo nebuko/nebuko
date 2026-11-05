@@ -187,17 +187,47 @@ class TestHeaderDropsTokenAtCreation:
         assert header.startswith(BOT_MARKER + CONTINUE_TOKEN)
 
     def test_a_state_carrying_a_failed_payload_frames_a_notification(self):
-        """A state whose ``engine_failure`` marks a failed run drops the token."""
+        """A state whose recorded outcome is a failed run drops the token.
+
+        The failed ``turn_outcome`` is what ``_record_engine_failure`` stamps;
+        a bare ``engine_failure`` context entry alone no longer decides the
+        header (a stale entry from an earlier failed run must not block a
+        later green run — issue #1288 round 4).
+        """
+        from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import (
+            IncompleteReason,
+            TurnOutcome,
+            TurnStatus,
+        )
+
         state = WorkflowState(
             workflow="spec-tdd",
             step="spec",
             agent="po",
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason=IncompleteReason.FAILURE,
+            ),
             current_context={"engine_failure": _failed_state_payload()},
         )
         assert _header_line(state) == BOT_MARKER
 
     def test_a_state_without_a_failure_keeps_the_token(self):
         state = WorkflowState(workflow="s", step="x", agent="dev")
+        assert _header_line(state) == BOT_MARKER + CONTINUE_TOKEN
+
+    def test_a_stale_engine_failure_entry_keeps_the_token(self):
+        """A green re-run over a stale ``engine_failure`` entry stays live.
+
+        The stale facts must not silently stop the workflow (issue #1288
+        round 4): the header reads the recorded outcome, not the context entry.
+        """
+        state = WorkflowState(
+            workflow="s",
+            step="x",
+            agent="dev",
+            current_context={"engine_failure": _failed_state_payload()},
+        )
         assert _header_line(state) == BOT_MARKER + CONTINUE_TOKEN
 
 
@@ -264,9 +294,10 @@ class TestEngineFactsRideThePostedComment:
         assert failed_state is not None
         facts = failed_state.current_context["engine_failure"]
         assert facts["ok"] is False
-        # The failure surfaced in the route phase (the git-finalize verdict
-        # was recorded before publish; the re-frame runs after it).
-        assert facts["phase"] == "route"
+        # The failure surfaced in the git-finalize phase; the notice names the
+        # phase the failure actually happened in, not the phase the re-frame
+        # runs in (issue #1288 round 4).
+        assert facts["phase"] == "git_finalize"
         assert facts["pushed"] is False
         # The facts are visible in a created comment's embedded state too.
         assert any("engine_failure" in body for body in capture)

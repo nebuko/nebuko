@@ -7,9 +7,9 @@ next step started from an answer whose commits were never pushed.
 
 Three invariants are pinned here:
 
-* a post-publish crash neutralizes the posted continue token, records the
-  engine-side failure facts on the persisted state, and posts a failure
-  notice pinging the workflow starter;
+* a post-publish crash records the engine-side failure facts on the persisted
+  state (with a failed ``turn_outcome``, so ``/nebuko resume`` re-runs the
+  failed step), and posts a failure notice pinging the workflow starter;
 * the #766 contract survives: a crash *during* publish (nothing posted)
   still advances state and routing;
 * an answer whose declared output sections are all empty is not a valid step
@@ -31,6 +31,7 @@ from nebuko.engine.lib.workflow_state.workflow_state import (
     STATE_MARKER_END,
     STATE_MARKER_START,
 )
+from nebuko.engine.lib.workflow_state import WorkflowState
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / "defaults" / "workflows"
@@ -197,7 +198,7 @@ class TestPostPublishCrash:
         assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
 
     def test_the_posted_continue_token_is_neutralized(self, tmp_path, monkeypatch):
-        """With the backstop retained, a persist crash posts no continue token.
+        """With publish-last ordering, a persist crash posts no continue token.
 
         Under publish-last ordering the persist crash happens *before* any
         comment exists; the failure notice is the only thing on the thread.
@@ -276,7 +277,10 @@ class TestEngineFailureFacts:
 
         result = _resolve(body, prompt_base)
 
-        assert result.get("SKIP_AGENT") != "true" or True
+        # A bot re-trigger on the failed notification parks (no dispatch); the
+        # recovery path is the human `/nebuko resume` command, tested below.
+        assert result.get("SKIP_AGENT") == "true"
+        assert "/nebuko resume" in (result.get("REASON") or "")
         # The engine-facts payload must ride the step input to the next agent:
         # it is stamped on the persisted state, so the state the next run
         # parses out of the notification carries it verbatim.
@@ -400,11 +404,19 @@ class TestPublishLastOrdering:
     ):
         """K2: a crash during publish, after persist+git succeeded, routes."""
         from nebuko.engine.lib.workflow_state import TurnStatus
+        from nebuko.engine.lib.git import git_session
 
         engine = _engine(tmp_path)
         _stub_resolved(monkeypatch, dict(_RESOLVED))
         monkeypatch.setattr(
             Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+        # A finalize that actually verified a pushed tree (ok, not skipped),
+        # so the facts record pushed=True — as a real run would.
+        monkeypatch.setattr(
+            Engine,
+            "_git_session_finalize",
+            lambda self: git_session.GuardResult(ok=True, skipped=False),
         )
 
         def failing_post(self, body):
@@ -549,3 +561,168 @@ class TestEmptyAnswerRejected:
         outcome = engine.run()
 
         assert outcome.exit_code != ExitCode.ERROR
+
+
+class TestResumeAfterRealFailure:
+    """K1: the state a failed run *really* posts re-runs the failed step."""
+
+    def test_a_bare_resume_after_a_real_failed_run_reruns_the_step(
+        self, tmp_path, monkeypatch, prompt_base
+    ):
+        """The posted state (not a hand-built one) drives the resume (#1288
+        round 4): ``_record_engine_failure`` stamps a FAILURE outcome, so
+        ``_is_resumable_outcome`` re-runs the step instead of skipping it."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+
+        def boom(self, agent_result):
+            state = Engine.persist(self, agent_result)
+            if state is not None:
+                raise RuntimeError("pr finalize exploded")
+            raise RuntimeError("no state")
+
+        monkeypatch.setattr(Engine, "_record_scaffold_branch", boom)
+        engine.run()
+
+        saved = engine.adapter.load_state()
+        assert saved is not None
+        assert saved.turn_outcome is not None
+        assert saved.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+
+        result = _resolve_human("/nebuko resume\n" + _state_block(saved), prompt_base)
+        assert result["SKIP_AGENT"] == "false"
+        assert result["TASK"] == "dev"
+        assert result["WORKFLOW_STEP"] == "spec"
+
+
+class TestPostPublishRouteCrash:
+    def test_a_route_crash_does_not_advance_and_says_so(
+        self, tmp_path, monkeypatch
+    ):
+        """A crash in `route` (after the comment was created) records the
+        failure, re-frames the posted payload, and the notice says the gate
+        may re-fire (issue #1288 round 4)."""
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result()
+        )
+        capture: list[str] = []
+        original_post = LocalAdapter.post
+
+        def post(self, body):
+            capture.append(body)
+            return original_post(self, body)
+
+        monkeypatch.setattr(LocalAdapter, "post", post)
+
+        def boom(self, agent_result, observed=None):
+            raise RuntimeError("route exploded")
+
+        monkeypatch.setattr(Engine, "route", boom)
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert outcome.turn_outcome.incomplete_reason is IncompleteReason.FAILURE
+        # The notice is honest: the answer was already posted, so the gate
+        # may re-fire on it.
+        assert any(
+            "<!-- bot-engine-failure -->" in body and "may re-fire" in body
+            for body in capture
+        )
+
+
+class TestEngineStatusReachesThePrompt:
+    def test_the_next_prompt_carries_the_engine_facts(
+        self, tmp_path, monkeypatch
+    ):
+        """R3/R4: the facts are rendered into the next agent's prompt — the
+        state block alone is stripped by ``_agent_facing_body``."""
+        engine = _engine(tmp_path)
+        failed = WorkflowState(
+            workflow="spec-tdd",
+            step="spec",
+            agent="po",
+            current_context={
+                "engine_failure": {
+                    "ok": False,
+                    "step": "spec",
+                    "phase": "git_finalize",
+                    "error": "push rejected",
+                    "pushed": False,
+                    "branch": "feature/x",
+                }
+            },
+        )
+        engine.adapter.save_state(failed)
+
+        prompt = engine.build_prompt(dict(_RESOLVED), [], [], None)
+
+        assert "## Engine status of the previous run" in prompt
+        assert "push rejected" in prompt
+        assert "pushed: False" in prompt
+
+    def test_a_green_run_renders_no_engine_status(
+        self, tmp_path, monkeypatch
+    ):
+        engine = _engine(tmp_path)
+        prompt = engine.build_prompt(dict(_RESOLVED), [], [], None)
+        assert "Engine status of the previous run" not in prompt
+
+
+class TestEmptyAnswerTightened:
+    """R5, round 4: the looser shapes the review found must fail too."""
+
+    @staticmethod
+    def _run_with(monkeypatch, tmp_path, answer):
+        engine = _engine(tmp_path)
+        resolved = dict(_RESOLVED)
+        from nebuko.engine.lib.config import StepOutput
+
+        resolved["STEP_OUTPUT"] = StepOutput(
+            fields=[
+                {"name": "headline", "title": True, "description": "Summary"},
+                {"name": "changes", "description": "What changed"},
+            ]
+        ).model_dump_json()
+        _stub_resolved(monkeypatch, resolved)
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result(answer)
+        )
+        return engine.run()
+
+    def test_a_boilerplate_line_under_a_title_is_rejected(
+        self, tmp_path, monkeypatch
+    ):
+        outcome = self._run_with(
+            monkeypatch,
+            tmp_path,
+            "# Finalize complete\n\nFinalize complete — the deliverable report is posted.",
+        )
+        assert outcome.exit_code == ExitCode.ERROR
+
+    def test_a_hash_inside_a_code_fence_is_not_a_title(
+        self, tmp_path, monkeypatch
+    ):
+        outcome = self._run_with(
+            monkeypatch,
+            tmp_path,
+            "```\n# not a title\n```\nSome prose, but no sections.\n",
+        )
+        assert outcome.exit_code == ExitCode.ERROR
+
+    def test_a_title_with_all_sections_empty_is_rejected(
+        self, tmp_path, monkeypatch
+    ):
+        from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
+
+        answer = (
+            "# A real title\n\n"
+            + SECTION_OPEN.format(name="changes")
+            + SECTION_CLOSE
+        )
+        outcome = self._run_with(monkeypatch, tmp_path, answer)
+        assert outcome.exit_code == ExitCode.ERROR

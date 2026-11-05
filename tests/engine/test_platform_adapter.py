@@ -20,7 +20,6 @@ PORT_METHODS = (
     "load_history",
     "post",
     "capabilities",
-    "edit_comment",
     "add_reaction",
     "load_history_page",
     "load_state",

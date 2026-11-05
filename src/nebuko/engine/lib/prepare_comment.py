@@ -436,20 +436,17 @@ def _header_line(state: WorkflowState | None, engine_failed: bool = False) -> st
     finalize or publish — never reaches that state, so the caller passes it
     explicitly. A failed run's comment is a notification, never a live turn,
     and must not carry the continue token: GitHub fires on the comment as
-    *created*, so an edit-after-post cannot retract it.
+    *created*, so an edit-after-post cannot retract it. A state whose
+    ``turn_outcome`` is ``INCOMPLETE/FAILURE`` (stamped by
+    ``_record_engine_failure``) is a failed run the same way. A *stale*
+    ``engine_failure`` context entry from an earlier failed run must not
+    block a later green run (issue #1288 round 4), so the context entry
+    alone decides nothing here — the outcome does.
     """
     if engine_failed:
         return BOT_MARKER
     if state is None:
         return LIVE_HEADER_LINE
-    # A state carrying a failed ``engine_failure`` payload frames a
-    # notification: the run failed after the state was framed (#1288).
-    state_failed = bool(
-        (state.current_context or {}).get("engine_failure", {}).get("ok", True)
-        is False
-    )
-    if state_failed:
-        return BOT_MARKER
     turn_outcome = state.turn_outcome
     if turn_outcome is None:
         return LIVE_HEADER_LINE
