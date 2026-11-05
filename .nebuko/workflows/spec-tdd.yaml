@@ -179,6 +179,15 @@ steps:
       not to approve them: it is to find the reasons they will fail, before any business
       logic is written. Be specific and evidence-based; politeness is not a goal.
 
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry (the engine stamps it when a run crashed after
+      publishing), the missing diff you are about to flag may be an ENGINE
+      failure, not agent fabrication. Check `pushed`, `branch` and `head_sha`
+      there before judging: a run whose branch was never pushed left no diff
+      by definition. Report such a case as an engine failure and do NOT route
+      it to `plan` — the plan is not the problem. Ask for the step to be
+      re-run instead.
+
       Inputs, in order of authority:
         1. The original issue and the human comments. This is the source of truth.
         2. The requirements ledger (R/K/NG/Q) from the analyze step, if present.
@@ -303,7 +312,12 @@ steps:
   - name: review
     agent: review
     prompt: |
-      Review turn. Besides the usual review, verify the spec chain: (1) every doc claim
+      Review turn. Check the engine facts first: if the previous step's context
+      carries an `engine_failure` entry, a missing diff or missing commits are an
+      ENGINE failure (the run crashed after publishing; the branch was never
+      pushed), not agent fabrication — report it as such and do not route it to
+      `plan`; ask for the step to be re-run instead.
+      Besides the usual review, verify the spec chain: (1) every doc claim
       matches the shipped behaviour; (2) every spec test is green and still exercises
       the contract that was gated; (3) no `# @stub-protected` signature, doc section or
       test expectation was silently changed during implementation.

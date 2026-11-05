@@ -7,4 +7,11 @@ description: "Standalone code review workflow — reviews code without prior imp
 steps:
   - name: review
     agent: review
+    prompt: |
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry, a missing diff or missing commits are an ENGINE
+      failure (the run crashed after publishing; the branch was never pushed),
+      not agent fabrication — report it as such; there is no `plan` step to
+      route to in this workflow, so ask for the reviewed step to be re-run
+      instead.
     next: null

@@ -1412,6 +1412,15 @@ def build_output(
         context_updates["recovery_log"] = ""
         logger.info("Cleared stale recovery log from previous failed run")
 
+    # Engine-failure facts (issue #1288): a green run clears the previous
+    # run's failure record, the same way the recovery log is cleared — a
+    # stale entry would otherwise ride ``build_state`` into every later
+    # step's state and keep marking healthy runs as failed.
+    if not is_graceful_timeout and final_message and not is_malformed_final_message(final_message):
+        if prev_state and prev_state.current_context and "engine_failure" in prev_state.current_context:
+            context_updates["engine_failure"] = ""
+            logger.info("Cleared stale engine-failure record from previous failed run")
+
     # ── Build workflow state ─────────────────────────────────────
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
     inject_context = inject_context_str.lower() not in ("false", "0", "no")

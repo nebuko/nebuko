@@ -58,7 +58,18 @@ def test_real_entry_point_imports_its_package_and_rejects_conflicting_prompts() 
     ``cannot import name 'load_prompt' from 'agent_script'``.
     """
     with pytest.raises(RuntimeError) as excinfo:
-        run_legacy_agent("prompt", repo_root=REPO_ROOT, env={"PROMPT_STRING": "conflict"})
+        run_legacy_agent(
+            "prompt",
+            repo_root=REPO_ROOT,
+            env={
+                # The child logs through a rich console that hard-wraps (and
+                # splices the source-location column into) lines at the terminal
+                # width, 80 columns without a TTY: widen it so the message stays
+                # on one line.
+                "PROMPT_STRING": "conflict",
+                "COLUMNS": "500",
+            },
+        )
 
     message = str(excinfo.value)
     assert "Both PROMPT_STRING and prompt_location provided" in message

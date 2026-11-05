@@ -182,11 +182,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     # @stub-protected
     def capabilities(self) -> PosterCapabilities:
         """The local journal is plain markdown with no platform markup."""
-        return PosterCapabilities()
-
-    # @stub-protected
-    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
-        raise NotImplementedError("edit_comment not supported by this adapter")
+        return PosterCapabilities(edit_comment=True)
 
     # @stub-protected
     def add_reaction(self, comment_id: str, emoji: str) -> None:
