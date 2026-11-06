@@ -32,7 +32,7 @@ class TestGitInfoModel:
     def test_statuses_are_the_engine_actions(self):
         assert [s.value for s in GitActionStatus] == [
             "create",
-            "rebase",
+            "continue",
             "conflict",
             "dirty",
             "pr",

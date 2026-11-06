@@ -79,6 +79,11 @@ class ScaffoldResult:
     ok: bool
     skipped: bool = False
     conflict: bool = False
+    # True when this run created the branch, rather than continuing one.
+    created: bool = False
+    # True when the branch contains the base, as opposed to a clean probe that
+    # deliberately left the base out (both set ``already_up_to_date``).
+    base_contained: bool = False
     # True when the branch already contained the base (issue #1194): the
     # merge was skipped, so already-committed work must not look absent.
     already_up_to_date: bool = False
@@ -307,7 +312,9 @@ class BranchScaffold:
             self._fetch_base(base)
             if self._idempotency.base_already_merged(branch, base):
                 return self._continue_as_is(
-                    branch, f"{branch} already contains origin/{base}: up to date"
+                    branch,
+                    f"{branch} already contains origin/{base}: up to date",
+                    base_contained=True,
                 )
             conflicts = self._idempotency.has_base_conflict(branch, base)
             if conflicts == []:
@@ -362,7 +369,7 @@ class BranchScaffold:
             )
         detail = f"created {branch} from origin/{base}"
         logger.info("branch scaffold: %s", detail)
-        return ScaffoldResult(ok=True, detail=detail, branch=branch)
+        return ScaffoldResult(ok=True, created=True, detail=detail, branch=branch)
 
     def _checkout_existing(self, branch: str) -> str:
         """Check out an existing branch; return a problem, or ``""``.
@@ -387,14 +394,20 @@ class BranchScaffold:
             return f"checked out {branch} but HEAD is on {current!r}"
         return ""
 
-    def _continue_as_is(self, branch: str, detail: str) -> ScaffoldResult:
+    def _continue_as_is(
+        self, branch: str, detail: str, *, base_contained: bool = False
+    ) -> ScaffoldResult:
         """Continue an existing branch without merging the base."""
         problem = self._checkout_existing(branch)
         if problem:
             return ScaffoldResult(ok=False, detail=problem)
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(
-            ok=True, already_up_to_date=True, detail=detail, branch=branch
+            ok=True,
+            already_up_to_date=True,
+            base_contained=base_contained,
+            detail=detail,
+            branch=branch,
         )
 
     def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected

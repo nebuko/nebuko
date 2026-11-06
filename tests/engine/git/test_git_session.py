@@ -381,3 +381,21 @@ def test_run_git_disables_terminal_prompt(checkout, monkeypatch):
     GitSessionGuard(checkout, {})._run_git(["status"])
 
     assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_finalize_reports_the_commit_it_made_for_leftovers(checkout):
+    (checkout / "leftover.txt").write_text("wip\n", encoding="utf-8")
+
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok, result.detail
+    assert result.auto_commit
+    assert _git(checkout, "rev-parse", "--short", "HEAD").startswith(result.auto_commit)
+
+
+def test_finalize_reports_no_commit_on_a_clean_tree(checkout):
+    result = _local_guard(checkout).finalize()
+
+    assert result.ok, result.detail
+    assert result.auto_commit == ""
+
