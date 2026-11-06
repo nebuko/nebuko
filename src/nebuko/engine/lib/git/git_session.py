@@ -251,6 +251,14 @@ class GitSessionGuard:
         except (RuntimeError, OSError):
             return ""
 
+    def pending_paths(self) -> tuple[str, ...]:
+        """Uncommitted paths in the checkout, best-effort (issue #1322).
+
+        An uninspectable tree reads as pending, so a caller that uses this to
+        decide whether work still needs committing never drops it silently.
+        """
+        return self._pending_paths()
+
     # ── Identity and credentials ──────────────────────────────────
 
     # @stub-protected
