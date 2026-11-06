@@ -24,6 +24,7 @@ PORT_METHODS = (
     "load_history_page",
     "load_state",
     "save_state",
+    "set_status",
     "artifact_dir",
     "write_artifact",
 )
@@ -50,6 +51,7 @@ class TestPlatformAdapterProtocol:
             "PostedComment",
             "Poster",
             "PosterCapabilities",
+            "RunStatus",
         }
         assert Poster is not None
         assert HistoryProvider is not None

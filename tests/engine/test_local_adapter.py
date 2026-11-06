@@ -181,3 +181,26 @@ class TestState:
 
         assert (run_dir / STATE_FILE).is_file()
         assert adapter.load_state() == state
+
+
+class TestRunStatus:
+    """The local host records the neutral run status (issue #1336)."""
+
+    def test_no_status_before_the_first_update(self, adapter):
+        assert adapter.load_status() is None
+
+    def test_set_status_round_trips(self, adapter, run_dir):
+        from nebuko.adapters.base import RunStatus
+
+        adapter.set_status(RunStatus.GATED)
+
+        assert adapter.load_status() is RunStatus.GATED
+        assert (run_dir / "status.json").is_file()
+
+    def test_the_latest_status_wins(self, adapter):
+        from nebuko.adapters.base import RunStatus
+
+        adapter.set_status(RunStatus.RUNNING)
+        adapter.set_status(RunStatus.REVIEW_NEEDED)
+
+        assert adapter.load_status() is RunStatus.REVIEW_NEEDED

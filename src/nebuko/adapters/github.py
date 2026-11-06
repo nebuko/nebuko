@@ -11,7 +11,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from nebuko.adapters.base import PostedComment, PosterCapabilities
+from nebuko.adapters.base import PostedComment, PosterCapabilities, RunStatus
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -32,6 +32,20 @@ ARTIFACT_DIR_NAME = "nebuko-task-logs"
 # the matching ``upload-artifact`` step into ``nebuko-workflow.yaml`` needs
 # ``workflows`` push permission and is tracked as remaining work in PR #814.
 COMMENT_BODY_ARTIFACT = "comment-body.md"
+
+# Run-status labels (issue #1336). The engine speaks :class:`RunStatus`; the
+# GitHub adapter renders it as one ``nebuko:<status>`` label and removes the
+# other status labels so exactly one is ever present.
+STATUS_LABEL_PREFIX = "nebuko:"
+STATUS_LABEL_COLOR = "5319e7"
+
+
+def status_label(status: RunStatus) -> str:
+    """The GitHub label name for ``status`` (``review_needed`` → ``review-needed``)."""
+    return STATUS_LABEL_PREFIX + RunStatus(status).value.replace("_", "-")
+
+
+STATUS_LABELS: tuple[str, ...] = tuple(status_label(status) for status in RunStatus)
 
 
 # @stub-protected
@@ -323,6 +337,25 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             if client.delete_comment(repo, int(comment_id)):
                 deleted += 1
         return deleted
+
+    # @stub-protected
+    def set_status(self, status: RunStatus) -> None:
+        """Apply the run-status label, creating it when the repo lacks it (#1336).
+
+        Exactly one status label is kept: the other ``nebuko:<status>`` labels
+        are removed, labels owned by anyone else are untouched. Best-effort —
+        the caller logs and swallows a failure, like the notices.
+        """
+        client = self._client_handle()
+        repo = self._require_repo()
+        number = self._issue_number()
+        target = status_label(status)
+
+        client.ensure_label(repo, target, STATUS_LABEL_COLOR)
+        client.add_label_to_issue(repo, number, target)
+        for name in STATUS_LABELS:
+            if name != target:
+                client.remove_label_from_issue(repo, number, name)
 
     # @stub-protected
     def artifact_dir(self) -> Path:

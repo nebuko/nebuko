@@ -90,7 +90,7 @@ from nebuko.engine.lib.workflow_state import (
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
-    from nebuko.adapters.base import PlatformAdapter
+    from nebuko.adapters.base import PlatformAdapter, RunStatus
     from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
     from nebuko.engine.lib.config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
@@ -165,6 +165,41 @@ PHASES: tuple[str, ...] = (
 
 def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
+
+
+#: The engine events that carry a run status (issue #1336). One decision point
+#: maps each to a :class:`RunStatus`, so the labels can never disagree with the
+#: notices emitted alongside them.
+STATUS_EVENT_STARTED = "started"
+STATUS_EVENT_HUMAN_ACTION = "human_action"
+STATUS_EVENT_FAILURE = "failure"
+
+
+def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
+    """Map an engine event to the run status it publishes, or ``None``.
+
+    ``kind`` is the :class:`HumanActionNotice` classification: an approval or
+    input request means a human must act (``gated``), a finished workflow means
+    the result needs review. ``awaiting_input`` shares ``gated`` with
+    ``awaiting_approval`` for now — both mean a human has to act.
+    """
+    from nebuko.adapters.base import RunStatus
+    from nebuko.engine.lib.config.sub_domains.human_action_notice.human_action_notice import (
+        AWAITING_APPROVAL,
+        AWAITING_INPUT,
+        WORKFLOW_COMPLETE,
+    )
+
+    if event in (STATUS_EVENT_STARTED,):
+        return RunStatus.RUNNING
+    if event == STATUS_EVENT_FAILURE:
+        return RunStatus.FAILED
+    if event == STATUS_EVENT_HUMAN_ACTION:
+        if kind in (AWAITING_APPROVAL, AWAITING_INPUT):
+            return RunStatus.GATED
+        if kind == WORKFLOW_COMPLETE:
+            return RunStatus.REVIEW_NEEDED
+    return None
 
 
 def _script_exit_code(result: StepResult) -> int | None:
@@ -1651,6 +1686,7 @@ class Engine:
         """
         from nebuko.engine.lib.config import EngineFailureNotice
 
+        self._set_status(run_status_for(STATUS_EVENT_FAILURE))
         try:
             trigger = self._active_trigger()
             notice = EngineFailureNotice(
@@ -2410,6 +2446,7 @@ class Engine:
         issue number or a failed post is logged and swallowed — the
         acknowledgment is informational and must never abort the run.
         """
+        self._set_status(run_status_for(STATUS_EVENT_STARTED))
         if notice.issue_number is None:
             log.warning("[phase:agent] no issue number; skipping agent-start notice")
             return
@@ -2427,6 +2464,7 @@ class Engine:
         swallowed — the acknowledgment is informational and must never abort
         the run.
         """
+        self._set_status(run_status_for(STATUS_EVENT_STARTED))
         if notice.issue_number is None:
             log.warning("[phase:action] no issue number; skipping script-start notice")
             return
@@ -2444,10 +2482,26 @@ class Engine:
         plain hold, or end-of-workflow). Mirrors :meth:`notify_agent_started`:
         a failed post is logged and swallowed, never aborting the run.
         """
+        self._set_status(
+            run_status_for(STATUS_EVENT_HUMAN_ACTION, kind=notice.kind)
+        )
         try:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
             log.warning("[phase:publish] human-action notice failed: %s", exc)
+
+    def _set_status(self, status: "RunStatus | None") -> None:
+        """Publish this run's status through the adapter (issue #1336).
+
+        Best-effort, like the notices: a host that cannot update the status is
+        logged and never fails the run.
+        """
+        if status is None:
+            return
+        try:
+            self.adapter.set_status(status)
+        except Exception as exc:  # noqa: BLE001 - a status must not abort a run
+            log.warning("[phase:status] run status %s failed: %s", status.value, exc)
 
     def human_action_notice(
         self,

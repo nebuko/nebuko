@@ -67,6 +67,18 @@ def test_given_a_custom_broker_variable_when_rendering_then_that_name_is_used(tm
     assert "NEBUKO_BROKER_URL" not in rendered
 
 
+def test_given_a_writer_when_rendering_then_no_label_trigger_is_present(tmp_path):
+    """Adding a run-status label must never start a run (issue #1336).
+
+    The engine sets ``nebuko:*`` labels on the issue it works on; a ``labeled``
+    trigger in the shipped caller template would make every status update fire
+    a new run.
+    """
+    rendered = _writer(tmp_path).render()
+
+    assert "labeled" not in rendered
+
+
 def test_given_a_writer_when_rendering_then_the_output_is_valid_yaml(tmp_path):
     import yaml
 
