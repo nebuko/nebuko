@@ -1,6 +1,6 @@
-"""Red tests for the engine's git lifecycle state wiring (issue #1153).
+"""The engine's git lifecycle state wiring (issue #1153).
 
-The engine records every git action it takes — branch create/rebase/conflict,
+The engine records every git action it takes — branch create/continue/conflict,
 the PR it opens, and the dirty-tree auto-commit — in the persisted state's
 ``git`` sub-domain, next to the legacy ``current_context["dev_branch"]``.
 """
@@ -89,7 +89,7 @@ class TestScaffoldBranchRecorded:
         assert state.git.branch_name == "feature/590-fix-it"
         assert GitActionStatus.CREATE in [e.status for e in state.git.history]
 
-    def test_a_rebased_branch_is_recorded_as_rebase(
+    def test_a_continued_branch_is_recorded_as_continue(
         self, tmp_path, monkeypatch, root
     ):
         engine = _stub_flow(
@@ -102,7 +102,42 @@ class TestScaffoldBranchRecorded:
 
         state = engine.adapter.load_state()
         assert state.git.branch_name == "feature/590-fix-it"
-        assert GitActionStatus.REBASE in [e.status for e in state.git.history]
+        assert GitActionStatus.CONTINUE in [e.status for e in state.git.history]
+
+    def test_a_branch_already_containing_the_base_is_recorded_as_already_applied(
+        self, tmp_path, monkeypatch, root
+    ):
+        engine = _stub_flow(
+            monkeypatch,
+            root,
+            scaffold=branch_scaffold.ScaffoldResult(
+                ok=True,
+                already_up_to_date=True,
+                base_contained=True,
+                branch="feature/590-fix-it",
+            ),
+        )
+
+        state = engine.adapter.load_state()
+        assert GitActionStatus.ALREADY_APPLIED in [e.status for e in state.git.history]
+
+    def test_a_clean_probe_is_recorded_as_continue_not_already_applied(
+        self, tmp_path, monkeypatch, root
+    ):
+        # A clean probe also sets already_up_to_date, but the base isn't in the
+        # branch: it was deliberately left out (issue #1242).
+        engine = _stub_flow(
+            monkeypatch,
+            root,
+            scaffold=branch_scaffold.ScaffoldResult(
+                ok=True,
+                already_up_to_date=True,
+                branch="feature/590-fix-it",
+            ),
+        )
+
+        state = engine.adapter.load_state()
+        assert [e.status for e in state.git.history][0] is GitActionStatus.CONTINUE
 
     def test_a_conflict_is_recorded_as_conflict(self, tmp_path, monkeypatch, root):
         engine = _stub_flow(
@@ -146,7 +181,7 @@ class TestDirtyFinalizeRecorded:
         engine = _stub_flow(
             monkeypatch,
             root,
-            finalize=GuardResult(ok=True, detail="committed abc1234"),
+            finalize=GuardResult(ok=True, auto_commit="abc1234"),
         )
 
         state = engine.adapter.load_state()
@@ -161,3 +196,35 @@ class TestDirtyFinalizeRecorded:
 
         state = engine.adapter.load_state()
         assert not [e for e in state.git.history if e.status is GitActionStatus.DIRTY]
+
+
+class TestGitStatePersists:
+    def test_the_next_state_keeps_the_history(self):
+        from nebuko.engine.lib.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.features.build_state.build_state import (
+            build_state,
+        )
+        from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitInfo
+
+        git = GitInfo(branch_name="feature/590-fix-it", pr_number=42)
+        git.record(GitActionStatus.PR)
+        prev = WorkflowState(run_id=1, workflow="wf", step="plan", agent="dev", git=git)
+
+        state = build_state(prev, workflow="wf", step="implement", agent="dev")
+
+        assert state.git == git
+
+    def test_it_survives_the_state_comment_round_trip(self):
+        from nebuko.engine.lib.workflow_state import WorkflowState, state_to_json
+        from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitInfo
+
+        git = GitInfo(branch_name="feature/590-fix-it")
+        git.record(GitActionStatus.CONTINUE, commit_id="abc1234", turn=2)
+        state = WorkflowState(run_id=1, workflow="wf", step="plan", agent="dev", git=git)
+
+        assert WorkflowState.model_validate_json(state_to_json(state)).git == git
+
+    def test_a_state_without_git_still_loads(self):
+        from nebuko.engine.lib.workflow_state import WorkflowState
+
+        assert WorkflowState.model_validate({"run_id": 1}).git is None

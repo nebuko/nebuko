@@ -200,6 +200,7 @@ def build_state(
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
         base_gate: Optional[GateLock] = None
+        base_git = None
         base_complexity_policy: Optional[ComplexityPolicy] = None
         base_thread: list[ThreadRecord] = []
     else:
@@ -219,6 +220,7 @@ def build_state(
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
         base_gate = prev_state.gate
+        base_git = prev_state.git
         base_complexity_policy = prev_state.complexity_policy
         base_thread = list(prev_state.thread)
 
@@ -402,6 +404,7 @@ def build_state(
         gate_decision=new_gate_decision,
         gate_history=new_gate_history,
         gate=new_gate,
+        git=base_git,
         complexity_policy=new_complexity_policy,
         thread=thread if thread is not None else base_thread,
     )

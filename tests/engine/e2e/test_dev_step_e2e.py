@@ -13,6 +13,7 @@ executor and the run loop all run for real. See ``docs/testing-e2e.md``.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -391,4 +392,10 @@ def test_dev_step_e2e_branch_push_and_finalize_retry(tmp_path, monkeypatch) -> N
     run_dir = tmp_path / "runs" / "e2e"
     assert (run_dir / "journal.md").is_file()
     assert (run_dir / "state.json").is_file()
+
+    # then: the saved state records the engine's git actions on this branch
+    git_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))["git"]
+    assert git_state["branch_name"] == BRANCH
+    statuses = [entry["status"] for entry in git_state["history"]]
+    assert statuses and statuses[0] == "continue"
     assert (run_dir / "latest_answer.md").is_file()

@@ -129,6 +129,7 @@ class TestScaffold:
         result = _scaffold(checkout)
 
         assert result.ok and not result.skipped
+        assert result.created
         assert result.branch == BRANCH
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
         # The branch starts at the fetched base, not at the old HEAD.
@@ -148,6 +149,7 @@ class TestScaffold:
 
         assert result.ok and not result.conflict
         assert result.already_up_to_date
+        assert result.base_contained
         assert result.branch == BRANCH
         assert "already contains origin/main" in result.detail
         # No merge commit was created: the branch head is untouched.
