@@ -532,6 +532,8 @@ class TestEmptyAnswerRejected:
         assert "empty" in (outcome.turn_outcome.note or "")
 
     def test_a_real_report_still_passes(self, tmp_path, monkeypatch):
+        from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
+
         engine = _engine(tmp_path)
         resolved = dict(_RESOLVED)
         from nebuko.engine.lib.config import StepOutput
@@ -550,12 +552,18 @@ class TestEmptyAnswerRejected:
             ]
         ).model_dump_json()
         _stub_resolved(monkeypatch, resolved)
+        # A real report carries the section markers the contract asks for; a
+        # markerless answer renders only its title, i.e. no report at all.
+        answer = (
+            "# The headline\n\n"
+            + SECTION_OPEN.format(name="changes")
+            + "\nSomething changed.\n"
+            + SECTION_CLOSE
+        )
         monkeypatch.setattr(
             Engine,
             "invoke_agent",
-            lambda self, prompt: _agent_result(
-                "# The headline\n\n## changes\n\nSomething changed."
-            ),
+            lambda self, prompt: _agent_result(answer),
         )
 
         outcome = engine.run()
@@ -689,7 +697,6 @@ class TestPreviousFailureDoesNotFailAGreenRun:
 
         outcome = engine.run()
 
-        # ``is`` on purpose: ``==`` on ExitCode is always true (#1310).
         assert outcome.exit_code is ExitCode.ADVANCE
         _, posted = engine.adapter.load_raw_thread()
         answers = [
@@ -834,7 +841,6 @@ class TestEmptyReportReadsThePostedAnswer:
 
     A finalize turn leaves two texts: ``answer`` (``latest_answer.md``, usually
     a short closing note) and ``deliverable`` (the report the comment shows).
-    Exit codes are compared with ``is`` because ``==`` cannot fail (#1310).
     """
 
     NOTE = "Report posted. The analysis is complete."
