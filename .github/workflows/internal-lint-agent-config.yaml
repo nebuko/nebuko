@@ -6,7 +6,7 @@ on:
       - "defaults/agents/**"
       - "src/nebuko/engine/config_lint.py"
       - "src/nebuko/engine/config_lint_cli.py"
-      - ".github/workflows/lint-agent-config.yaml"
+      - ".github/workflows/internal-lint-agent-config.yaml"
 
 permissions:
   contents: read
