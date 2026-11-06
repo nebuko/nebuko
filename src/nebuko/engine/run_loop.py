@@ -3149,9 +3149,10 @@ class Engine:
         ("Finalize complete — the deliverable report is posted…") carries no
         step result at all: treating it as a valid answer let an empty report
         drive routing (issue #1286, round 3). A step that declares an output
-        contract must have at least one non-empty section body — including a
-        non-empty *title* when the contract declares one (round 4: a bare
-        closing line under a boilerplate heading is still an empty report).
+        contract must have at least one non-empty section *body*. A non-empty
+        title is not content on its own: a heading over sections that are all
+        empty is still an empty report (round 4). Only a title-only contract
+        falls back to the title, since that is then the whole report.
         """
         contract = step_output_contract(
             self._get(self._resolved_config(), "STEP_OUTPUT")
@@ -3169,23 +3170,21 @@ class Engine:
         has_title = bool(
             re.search(r"^#\s+\S", stripped, re.MULTILINE)
         ) and not self._is_boilerplate_answer(stripped)
-        saw_any_section = False
+        saw_present_body = False
         for field in contract.fields:
             try:
                 value = self._extract_section_body(answer, field)
             except Exception:  # noqa: BLE001 - a malformed section is not empty-content proof
                 return
             if field.title:
-                if not has_title:
-                    continue
-                saw_any_section = True
                 continue
-            if value is None:
-                continue
-            saw_any_section = True
             if value:
                 return
-        if not saw_any_section:
+            saw_present_body = True
+        # A non-empty title over empty (or absent) body sections is still an
+        # empty report (round 4): only a title-only contract may pass on its
+        # title, because the title is then the whole report.
+        if saw_present_body or not has_title:
             raise ValueError(
                 "agent output failed validation: every declared output section "
                 "is empty; a run with no report content is not a valid step result"
