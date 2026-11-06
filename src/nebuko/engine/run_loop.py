@@ -75,6 +75,10 @@ from nebuko.engine.paths import (
     repo_root,
 )
 
+from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
+    GitActionStatus,
+    GitInfo,
+)
 from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
@@ -577,6 +581,17 @@ def _clear_prev_state_handoff() -> None:
 
 
 # @stub-protected
+def _scaffold_git_status(result: branch_scaffold.ScaffoldResult) -> GitActionStatus:
+    """The git action a prepared scaffold amounts to (issue #1153)."""
+    if result.conflict:
+        return GitActionStatus.CONFLICT
+    if result.created:
+        return GitActionStatus.CREATE
+    if result.base_contained:
+        return GitActionStatus.ALREADY_APPLIED
+    return GitActionStatus.CONTINUE
+
+
 @dataclass(frozen=True)
 class Engine:
     """Platform-free orchestration driver over a :class:`PlatformAdapter`."""
@@ -1156,6 +1171,13 @@ class Engine:
                 # The failure paths (#1288) read this to report whether the
                 # branch was pushed before the run failed.
                 self._scaffold_state["finalize_result"] = finalize_result
+                if finalize_result.auto_commit:
+                    state = self._record_git_action(
+                        state,
+                        GitActionStatus.DIRTY,
+                        commit_id=finalize_result.auto_commit,
+                        detail="committed work the agent left uncommitted",
+                    )
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
@@ -2162,7 +2184,15 @@ class Engine:
             if not step:
                 continue
             rounds[step] = rounds.get(step, 0) + 1
-            path.append(WorkflowPathEntry(step=step, round=rounds[step]))
+            outcome = getattr(node, "turn_outcome", None)
+            path.append(
+                WorkflowPathEntry(
+                    step=step,
+                    round=rounds[step],
+                    failed=getattr(outcome, "incomplete_reason", None)
+                    is IncompleteReason.FAILURE,
+                )
+            )
         return path
 
     def _previous_workflow(self) -> str:
@@ -3000,6 +3030,42 @@ class Engine:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the dev branch")
+        return self._record_git_action(
+            updated,
+            _scaffold_git_status(result),
+            commit_id=str(self._scaffold_state.get("head_before") or "") or None,
+            detail=result.detail,
+            branch_name=result.branch,
+        )
+
+    def _record_git_action(
+        self,
+        state: WorkflowState | None,
+        status: GitActionStatus,
+        *,
+        commit_id: str | None = None,
+        detail: str = "",
+        branch_name: str | None = None,
+        pr_number: int | None = None,
+    ) -> WorkflowState | None:
+        """Append one engine git action to the persisted state (issue #1153).
+
+        ``turn`` is the history length, which ties the action to a step. Audit
+        data only: nothing routes on it, so a failed write is only logged.
+        """
+        if state is None:
+            return None
+        git = state.git.model_copy(deep=True) if state.git else GitInfo()
+        if branch_name:
+            git.branch_name = branch_name
+        if pr_number is not None:
+            git.pr_number = pr_number
+        git.record(status, commit_id=commit_id, turn=len(state.history), detail=detail)
+        updated = state.model_copy(update={"git": git})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the git action")
         return updated
 
     def _record_pull_request(
@@ -3041,7 +3107,11 @@ class Engine:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the PR metadata")
-        return updated
+        if state.git is not None and state.git.pr_number == number:
+            return updated  # every later run finds the same PR: record it once
+        return self._record_git_action(
+            updated, GitActionStatus.PR, detail=pr_result.pr_url, pr_number=number
+        )
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""

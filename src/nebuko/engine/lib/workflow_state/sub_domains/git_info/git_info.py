@@ -11,7 +11,7 @@ class GitActionStatus(str, Enum):
     """Status of one engine git action (branch lifecycle)."""
 
     CREATE = "create"
-    REBASE = "rebase"
+    CONTINUE = "continue"
     CONFLICT = "conflict"
     DIRTY = "dirty"
     PR = "pr"

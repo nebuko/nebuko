@@ -52,9 +52,11 @@ to repeat:
 Branch-scaffold outcomes land in the persisted state's
 `current_context` (`dev_branch`, plus `dev_branch_up_to_date` and
 `dev_branch_note` when the branch already contained the base) and in the
-git sub-domain's action history (`workflow_state/sub_domains/git_info`),
-whose statuses include `already_applied` for skipped/no-op actions. An
-entry with status `already_applied` or a detail of
+`git` block (`workflow_state/sub_domains/git_info`). Its history has one
+entry per engine action, with the status `create`, `continue`, `conflict`,
+`dirty`, `pr` or `already_applied`, and the commit where one applies. For
+scaffold entries that's the branch HEAD before the agent ran, and for `dirty`
+it's the automatic commit. An entry with status `already_applied` or a detail of
 "`<branch>` already contains `origin/<base>`" means the engine verified the
 work was present and deliberately did nothing.
 

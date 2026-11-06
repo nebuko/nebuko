@@ -39,6 +39,8 @@ steps:
           },
         )
         Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
+      - If the request needs more than one PR, scope this run to the first PR and
+        list the rest as follow-up issues in your assumptions.
       - Do not plan yet. The engine's closing turn asks only for this step's report in its declared sections: the delegate has not run yet, so there is nothing to plan from.
       - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
     next: context
@@ -228,6 +230,9 @@ steps:
           row, a decision resting on an `inferred` fact, a re-measurement that contradicts
           the plan, or a fix that moves only a metric or shifts the same cost later in the
           run instead of improving the user's outcome.
+          Also BLOCKING, unless `engine_failure` explains it: no failing-test output for
+          this round's changes. Also BLOCKING: a test that pins behaviour the plan or a
+          human ruling says is wrong.
         - SHOULD-FIX: real risk or gap that does not invalidate the plan.
         - NIT: everything else. Keep at most three.
       Each finding states: where (plan section or file:line), what is wrong, why it matters,
@@ -307,6 +312,11 @@ steps:
       matches the shipped behaviour; (2) every spec test is green and still exercises
       the contract that was gated; (3) no `# @stub-protected` signature, doc section or
       test expectation was silently changed during implementation.
+      Run each requirement through the real code path, not only its tests. Treat these
+      as findings: tests using hand-built state the engine never writes, assertions that
+      cannot fail (for example `or True`), and a full test suite that did not finish.
+      If the contract itself is wrong, finish with appreciation 'hold' and name the
+      defect. Do not send it back to implement, which cannot change the contract.
     conditions:
       - on_result: approved
         next: null

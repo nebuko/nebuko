@@ -57,7 +57,13 @@ class TestResolvePostDecisionGate(unittest.TestCase):
 
     def test_no_decision_leaves_gate_untouched(self):
         armed = GateLock(step="plan", status=GateStatus.ARMED)
-        self.assertIs(resolve_post_decision_gate(armed, "plan", None, True), armed)
+        self.assertIs(resolve_post_decision_gate(armed, "plan", None, False), armed)
+
+    def test_no_decision_on_the_auto_reject_route_releases_gate(self):
+        # Issue #1274: the routed edge consumes the lock without a gate command.
+        armed = GateLock(step="plan", status=GateStatus.ARMED)
+        gate = resolve_post_decision_gate(armed, "plan", None, True)
+        self.assertEqual(gate.status, GateStatus.RELEASED)
 
 
 if __name__ == "__main__":

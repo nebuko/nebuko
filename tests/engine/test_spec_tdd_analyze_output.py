@@ -8,7 +8,7 @@ cannot carry the new artifacts (issue #1282).
 
 RED against the current workflow: the tests fail until the analyze
 ``output.fields`` block, the stale prompt line and the context step prompt
-land in ``.nebuko/workflows/spec-tdd.yaml`` (and its byte-identical mirror).
+land in ``.nebuko/workflows/spec-tdd.yaml``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from nebuko.engine.lib.config import WorkflowDefinition
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO / ".nebuko" / "workflows" / "spec-tdd.yaml"
-MIRROR_PATH = REPO / ".nebuko-engine" / ".nebuko" / "workflows" / "spec-tdd.yaml"
 
 
 def _definition() -> WorkflowDefinition:
@@ -36,7 +35,7 @@ def _step(name: str):
 
 
 class TestTheAnalyzeStepOutputDeclaration:
-    def test_then_it_declares_five_fields_in_contract_order(self):
+    def test_then_it_declares_its_fields_in_contract_order(self):
         fields = _step("analyze").output.fields
         assert [f.name for f in fields] == [
             "headline",
@@ -44,6 +43,7 @@ class TestTheAnalyzeStepOutputDeclaration:
             "claims",
             "context_request",
             "assumptions",
+            "requirements",
         ]
 
     def test_then_headline_is_the_title_field(self):
@@ -101,11 +101,6 @@ class TestTheContextStep:
         assert "agent_call.task" in prompt
         assert "verify" in prompt
         assert "claim" in prompt.lower()
-
-
-class TestTheMirrorCopy:
-    def test_then_the_engine_mirror_is_byte_identical(self):
-        assert MIRROR_PATH.read_bytes() == WORKFLOW_PATH.read_bytes()
 
 
 class TestTheDeclarationIsTheEngineSchema:

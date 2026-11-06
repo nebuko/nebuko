@@ -348,6 +348,7 @@ class TestDefaultWithOutputWorkflow:
             "headline",
             "context_request",
             "assumptions",
+            "requirements",
         ]
 
     def test_the_resolver_exports_the_dirs_the_gate_check_searches(self) -> None:
