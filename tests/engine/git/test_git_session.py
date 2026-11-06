@@ -14,8 +14,11 @@ import pytest
 
 from nebuko.engine.lib.git.git_session import (
     BENIGN_SKIPS,
+    GIT_IDENTITY_EMAIL,
+    GIT_IDENTITY_NAME,
     GitSessionGuard,
     GuardResult,
+    git_identity_args,
 )
 
 
@@ -75,8 +78,31 @@ def test_preflight_writes_the_repo_local_identity(checkout):
     assert result.ok
     # Literal values, not the module constants: the constants could drift and
     # the test would still pass (tautology flagged in review round 2).
-    assert _git(checkout, "config", "--local", "user.name") == "nebuko"
-    assert _git(checkout, "config", "--local", "user.email") == "nebuko@nebuko.dev"
+    assert _git(checkout, "config", "--local", "user.name") == "nebuko-agent"
+    assert _git(checkout, "config", "--local", "user.email") == (
+        "350013676+nebuko-agent@users.noreply.github.com"
+    )
+
+
+def test_identity_args_default_to_the_nebuko_agent_account():
+    """Attribution is metadata only: the default identity names nebuko-agent
+    (issue #1306), so GitHub links the commit without a new credential."""
+    assert git_identity_args({}) == [
+        "-c",
+        f"user.name={GIT_IDENTITY_NAME}",
+        "-c",
+        f"user.email={GIT_IDENTITY_EMAIL}",
+    ]
+    assert GIT_IDENTITY_NAME == "nebuko-agent"
+    assert GIT_IDENTITY_EMAIL == "350013676+nebuko-agent@users.noreply.github.com"
+
+
+def test_identity_args_honour_the_env_override():
+    args = git_identity_args(
+        {"NEBUKO_GIT_AUTHOR_NAME": "other", "NEBUKO_GIT_AUTHOR_EMAIL": "o@e.com"}
+    )
+
+    assert args == ["-c", "user.name=other", "-c", "user.email=o@e.com"]
 
 
 def test_preflight_skips_without_a_remote(tmp_path):
@@ -275,7 +301,7 @@ def test_finalize_commits_and_pushes_leftovers(checkout, remote):
         remote, "rev-parse", "feature/x"
     )
     author = _git(checkout, "log", "-1", "--format=%an <%ae>")
-    assert author == "nebuko <nebuko@nebuko.dev>"
+    assert author == "nebuko-agent <350013676+nebuko-agent@users.noreply.github.com>"
 
 
 def test_finalize_respects_gitignore(checkout, remote):
