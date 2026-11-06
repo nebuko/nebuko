@@ -1,0 +1,7 @@
+{
+  "files": {
+    "expected.json": "f52cf04f0bd08524cb4eeeec1d8dcf112309c00f225bf9083918d60ee6d7ee30",
+    "pinned.txt": "6897d1617f726eee6663c5c8d57dbf4f98a07f42260db4157073238eaa21dbb4",
+    "repro.sh": "2e9657a94659befdde2eb716d27285faaba7f9ee224c95106230c0ed4a1db861"
+  }
+}
