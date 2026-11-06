@@ -1062,8 +1062,18 @@ class Engine:
 
             if failure_reason is None:
                 self.notify_agent_started(self._agent_start_notice(trigger))
+                # Imported here, not at module scope: the agent assembly needs
+                # the runtime extra, and the engine imports without it.
+                from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+                    ProviderFailure,
+                )
+
                 try:
                     agent_result = self.invoke_agent(prompt)
+                except ProviderFailure as exc:
+                    # A provider failure is terminal (issue #1322): no finalize
+                    # attempts, no validation, no publish and no routing.
+                    return self._handle_provider_failure(exc, phases)
                 except Exception as exc:  # noqa: BLE001 - never crash the host
                     log.exception("[phase:agent] agent invocation failed: %s", exc)
                     # The bash runs the agent behind ``| tee console.txt``, so a
@@ -1546,6 +1556,9 @@ class Engine:
         phase: str,
         pushed: bool,
         state: WorkflowState | None = None,
+        provider: str = "",
+        model: str = "",
+        requires_config_fix: bool = False,
     ) -> WorkflowState | None:
         """Stamp the engine-side failure facts onto the persisted state (#1288).
 
@@ -1596,6 +1609,14 @@ class Engine:
                 "run_url": self._run_url(trigger) if trigger else "",
                 "pr_url": pr_url,
             }
+            # Provider facts (issue #1322): only stamped when the failure came
+            # from a model call, so the existing failure paths are unchanged.
+            if provider:
+                facts["provider"] = provider
+            if model:
+                facts["model"] = model
+            if requires_config_fix:
+                facts["requires_config_fix"] = True
             context = dict(base.current_context)
             context["engine_failure"] = facts
             failed_state = base.model_copy(
@@ -1617,8 +1638,110 @@ class Engine:
         """This run's resolver output, or ``None`` when it never resolved."""
         return self._run_resolved.get(_RUN_RESOLVED_KEY)
 
+    # @stub-protected
+    def _handle_provider_failure(
+        self, failure: Any, phases: Sequence[str]
+    ) -> RunOutcome:
+        """Stop the run on a provider failure and report the real cause (#1322).
+
+        A model call that the provider could not serve (connectivity, 5xx/429
+        after the SDK's retries, or a 401/403/404 config rejection) ends the
+        run here: no finalize attempts, no ``validate``, no ``publish`` and no
+        routing, so the empty-report check can never replace the cause. Only
+        the one step that preserves the agent's work is kept — if it left
+        changes in the checkout, they are committed and pushed once.
+
+        The engine-failure facts and the single posted notice carry the same
+        error and the same agent phase, and the run ends as a resumable
+        ``FAILURE`` (``/nebuko resume`` re-runs the step; no retry budget is
+        consumed because ``SOFT_RETRY_ATTEMPT`` is never stamped).
+        """
+        error = str(failure.provider_error or "the LLM provider failed")
+        from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            redact_secrets,
+        )
+
+        error = redact_secrets(error, self._provider_secrets())
+        phase = str(failure.agent_phase or "agent")
+        pushed = False
+        if self._pending_worktree_paths():
+            finalize_result = self._git_session_finalize()
+            self._scaffold_state["finalize_result"] = finalize_result
+            pushed = finalize_result.ok and not finalize_result.skipped
+            if not finalize_result.ok:
+                error = f"{error}; git session finalize failed: {finalize_result.detail}"
+        state = self._record_engine_failure(
+            error,
+            phase=phase,
+            pushed=pushed,
+            provider=str(failure.provider or ""),
+            model=str(failure.model or ""),
+            requires_config_fix=bool(failure.requires_config_fix),
+        )
+        self._post_failure_notice(
+            error,
+            phase=phase,
+            pushed=pushed,
+            provider=str(failure.provider or ""),
+            model=str(failure.model or ""),
+            requires_config_fix=bool(failure.requires_config_fix),
+        )
+        return RunOutcome(
+            exit_code=ExitCode.ERROR,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.FAILURE, note=error
+            ),
+            prompt=None,
+            posted_body=None,
+            state=state,
+            phases=tuple(phases),
+        )
+
+    def _pending_worktree_paths(self) -> tuple[str, ...]:
+        """Uncommitted paths in the caller checkout, best-effort (#1322).
+
+        Used only to decide whether a provider failure still owes the agent's
+        work one commit and push; an uninspectable tree reads as pending, so
+        the work is never silently dropped.
+        """
+        try:
+            guard = git_session.GitSessionGuard(
+                self._caller_root(), self._session_env()
+            )
+            return guard._pending_paths()
+        except Exception as exc:  # noqa: BLE001 - a probe failure is not fatal
+            log.warning("[phase:agent] could not inspect the worktree: %s", exc)
+            return ()
+
+    def _provider_secrets(self) -> list[str]:
+        """Configured secret values a provider error might echo (#1322).
+
+        The comment and the recorded facts are public, so every token-ish env
+        value is scrubbed verbatim (no pattern matching). Short values are
+        skipped: they would redact ordinary words.
+        """
+        try:
+            env = self._agent_env()
+        except Exception:  # noqa: BLE001 - the raw env still names the secrets
+            env = self.env
+        return [
+            str(value)
+            for key, value in env.items()
+            if value
+            and len(str(value)) >= 8
+            and ("TOKEN" in key.upper() or "API_KEY" in key.upper())
+        ]
+
     def _post_failure_notice(
-        self, error: str, *, phase: str, pushed: bool, posted: bool = False
+        self,
+        error: str,
+        *,
+        phase: str,
+        pushed: bool,
+        posted: bool = False,
+        provider: str = "",
+        model: str = "",
+        requires_config_fix: bool = False,
     ) -> None:
         """Post the engine's failure notice and ping the starter (#1288).
 
@@ -1626,6 +1749,8 @@ class Engine:
         swallowed, never masking the run error that triggered it. ``posted``
         selects the honest aftermath wording (issue #1288 round 4): a crash
         after the answer comment was created may re-fire the workflow gate.
+        ``provider``/``model``/``requires_config_fix`` name the provider failure
+        the run stopped on (issue #1322).
         """
         from nebuko.engine.lib.config import EngineFailureNotice
 
@@ -1640,6 +1765,9 @@ class Engine:
                 pushed=pushed,
                 target=self._trigger_author(),
                 posted=posted,
+                provider=provider,
+                model=model,
+                requires_config_fix=requires_config_fix,
             )
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure

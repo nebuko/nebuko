@@ -35,7 +35,13 @@ from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import (
     RECALL_PASS_BUDGET_S,
     perform_dispatch_recalls,
 )
-from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, classify_failure
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+    ProviderFailure,
+    RunFailure,
+    classify_failure,
+    is_provider_failure,
+    redact_secrets,
+)
 from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
     CHECKPOINT_100_PROMPT,
     CheckpointScheduler,
@@ -228,6 +234,32 @@ def _run_supervised(
     finally:
         watchdog.cancel()
     return watchdog, error
+
+
+def _raise_if_provider_failure(failure: RunFailure, llm_config: dict) -> None:
+    """Stop the run when ``failure`` is a provider failure (issue #1322).
+
+    The agent layer used to swallow the provider error and let ``build_output``
+    synthesize a comment, so the engine carried on through ``validate`` and
+    replaced the real cause. Raising here — before the finalize turn, the
+    metrics and the output builder — skips all of that by construction.
+
+    Args:
+        failure: The classified run failure.
+        llm_config: The resolved LLM config, for the provider and model names.
+
+    Raises:
+        ProviderFailure: When the failure is a provider failure.
+    """
+    if not is_provider_failure(failure):
+        return
+    raise ProviderFailure(
+        redact_secrets(failure.detail, [str(llm_config.get("api_key") or "")]),
+        provider=str(llm_config.get("base_url") or ""),
+        model=str(llm_config.get("model") or ""),
+        agent_phase="agent",
+        requires_config_fix=failure.requires_config_fix,
+    )
 
 
 def _perform_wind_down(
@@ -519,6 +551,9 @@ def run_agent(
         logger.error("Main run crashed — classifying as failure")
         outcome = OutcomeStatus.FAILURE
         failure = classify_failure(main_error)
+        # A provider failure is terminal for the run (issue #1322): stop here
+        # so the engine reports the real cause instead of a synthesized comment.
+        _raise_if_provider_failure(failure, llm_config)
     else:
         outcome = classify_run(main_status, False)
 

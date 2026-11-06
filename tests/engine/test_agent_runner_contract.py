@@ -27,7 +27,6 @@ from nebuko.engine.agent_runner import (
     run_engine_agent,
     run_legacy_agent,
 )
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRY_POINT = (
     Path("src") / "nebuko" / "engine" / "lib" / "agent_script" / "agent_script.py"
@@ -283,6 +282,61 @@ def test_run_engine_agent_propagates_a_run_failure(monkeypatch, tmp_path: Path) 
         run_engine_agent("prompt", repo_root=repo_root)
 
     assert not isinstance(excinfo.value, EngineAgentUnavailable)
+
+
+def test_run_engine_agent_propagates_a_provider_failure(monkeypatch, tmp_path: Path) -> None:
+    """A provider failure crosses the in-process seam typed (issue #1322)."""
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        ProviderFailure,
+    )
+
+    repo_root = tmp_path / "checkout"
+    _write_entry_point(repo_root)
+
+    def _boom(*args, **kwargs):
+        raise ProviderFailure("Error code: 404", provider="https://x/v1", model="m")
+
+    _install_fake_pipeline(monkeypatch, events=[], latest_answer="", run_agent=_boom)
+
+    with pytest.raises(ProviderFailure) as excinfo:
+        run_engine_agent("prompt", repo_root=repo_root)
+
+    # Never mistaken for an unavailable seam: falling back would run the agent twice.
+    assert not isinstance(excinfo.value, EngineAgentUnavailable)
+
+
+def test_legacy_seam_maps_the_provider_exit_code_back_to_a_typed_failure(
+    tmp_path: Path,
+) -> None:
+    """The child cannot raise across the process boundary, so it stages + exits 3."""
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        ProviderFailure,
+    )
+
+    repo_root = tmp_path / "checkout"
+    script = repo_root / ENTRY_POINT
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path('provider_failure.json').write_text(json.dumps({\n"
+        "    'provider_error': 'Error code: 404 - model not found',\n"
+        "    'provider': 'https://wrong.example.test/v1',\n"
+        "    'model': 'glm-5',\n"
+        "    'agent_phase': 'agent',\n"
+        "    'requires_config_fix': True,\n"
+        "}), encoding='utf-8')\n"
+        "sys.exit(3)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProviderFailure) as excinfo:
+        run_legacy_agent("prompt", repo_root=repo_root)
+
+    assert "404" in excinfo.value.provider_error
+    assert excinfo.value.provider == "https://wrong.example.test/v1"
+    assert excinfo.value.model == "glm-5"
+    assert excinfo.value.agent_phase == "agent"
+    assert excinfo.value.requires_config_fix is True
 
 
 # ── engine checkout vs caller git anchor (issue #1208) ────────────────────

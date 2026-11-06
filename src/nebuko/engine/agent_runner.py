@@ -22,6 +22,7 @@ platform-free: swapping the adapter never touches the agent runtime, and hosts
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -42,6 +43,9 @@ _FINAL_MESSAGE_FILE = "final_message.txt"
 _STATE_FILE = "workflow_state.json"
 _CONSOLE_LOG_FILE = "console.txt"
 _PROMPT_FILE = "final_prompt.md"
+#: The child's provider-failure staging file and exit status (issue #1322).
+_PROVIDER_FAILURE_FILE = "provider_failure.json"
+_PROVIDER_FAILURE_EXIT_CODE = 3
 # The entry point is staged under a name that cannot shadow the ``agent_script``
 # package (see :func:`_stage_entry_point`).
 _STAGED_ENTRY_FILE = "agent_script_entry.py"
@@ -94,6 +98,10 @@ def run_legacy_agent(
             capture_output=True,
             text=True,
         )
+        if completed.returncode == _PROVIDER_FAILURE_EXIT_CODE:
+            # A provider failure is terminal (issue #1322): surface it typed so
+            # the engine reports the real cause instead of a generic crash.
+            raise _provider_failure_from(work, completed.stderr)
         if completed.returncode != 0:
             raise RuntimeError(
                 f"agent_script exited {completed.returncode}: "
@@ -216,3 +224,33 @@ def _load_state(path: Path) -> Any:
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - a malformed state is reported downstream
         return None
+
+
+def _provider_failure_from(work: Path, stderr: str) -> Any:
+    """Rebuild the child's ``ProviderFailure`` from its staged record (#1322).
+
+    The child cannot hand an exception across the process boundary, so it
+    writes the payload next to its other artefacts and exits with the dedicated
+    status. A missing/corrupt record still yields a typed failure — the engine
+    must never fall back to a generic crash for a provider error.
+    """
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        ProviderFailure,
+    )
+
+    payload: dict[str, Any] = {}
+    path = work / _PROVIDER_FAILURE_FILE
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, ValueError):
+            payload = {}
+    return ProviderFailure(
+        str(payload.get("provider_error") or stderr.strip()[-500:]),
+        provider=str(payload.get("provider") or ""),
+        model=str(payload.get("model") or ""),
+        agent_phase=str(payload.get("agent_phase") or "agent"),
+        requires_config_fix=bool(payload.get("requires_config_fix")),
+    )

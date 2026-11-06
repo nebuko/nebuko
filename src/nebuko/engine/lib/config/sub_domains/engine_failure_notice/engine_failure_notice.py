@@ -34,8 +34,17 @@ _LINE = (
     "{ping} workflow **{workflow}** failed at step `{step}` "
     "({phase} phase): {error}\n\n"
     "Run: {run_url} — branch pushed: {pushed}.\n"
+    "{provider_line}"
     "{aftermath}\n"
     "Fix the failure, then re-run the step with `/nebuko resume`."
+)
+
+#: Provider-failure line (issue #1322): names the provider, model and whether a
+#: retry can help. Empty for every other engine failure.
+_PROVIDER_LINE = "Provider: {provider} — model: {model}.\n"
+_CONFIG_FIX_LINE = (
+    "Retrying won't help until the provider configuration "
+    "(API key, base URL or model) is fixed.\n"
 )
 
 # The two aftermath wordings (#1288 round 4): a run that failed before its
@@ -64,6 +73,11 @@ class EngineFailureNotice(BaseModel):
         posted: Whether the answer comment was already created when the
             failure surfaced (a post-publish crash) — it selects the honest
             aftermath wording (issue #1288 round 4).
+        provider: Provider base URL, when the failure came from a model call
+            (issue #1322).
+        model: Model identifier of that call (issue #1322).
+        requires_config_fix: The provider refused the configuration, so a
+            retry cannot help until it is fixed (issue #1322).
     """
 
     step: str
@@ -74,6 +88,9 @@ class EngineFailureNotice(BaseModel):
     pushed: bool = False
     target: str
     posted: bool = False
+    provider: str = ""
+    model: str = ""
+    requires_config_fix: bool = False
 
     # Frozen: a notice describes one already-failed run (functional-first
     # value object); nothing downstream may rewrite it.
@@ -99,6 +116,7 @@ class EngineFailureNotice(BaseModel):
                     error=self.error or "unknown error",
                     run_url=self.run_url or "(unavailable)",
                     pushed="yes" if self.pushed else "no",
+                    provider_line=self._provider_line(),
                     aftermath=(
                         _AFTERMATH_MAY_ADVANCE if self.posted
                         else _AFTERMATH_NOT_ADVANCED
@@ -106,3 +124,13 @@ class EngineFailureNotice(BaseModel):
                 ),
             ]
         )
+
+    def _provider_line(self) -> str:
+        """The provider/model line, with the config-fix warning when needed."""
+        if not (self.provider or self.model):
+            return ""
+        line = _PROVIDER_LINE.format(
+            provider=self.provider or "(unknown)",
+            model=self.model or "(unknown)",
+        )
+        return line + (_CONFIG_FIX_LINE if self.requires_config_fix else "")
