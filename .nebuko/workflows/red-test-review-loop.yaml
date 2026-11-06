@@ -68,7 +68,7 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
+          NEBUKO_MERGE_MAIN=1 sh .nebuko/scripts/use-session-branch.sh &&
           uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf
       timeout_minutes: 20
     conditions:
