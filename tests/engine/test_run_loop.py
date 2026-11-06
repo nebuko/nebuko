@@ -341,6 +341,65 @@ class TestGuardsPhase:
 
         assert str(verdict["SKIP_AGENT"]).lower() == "false"
 
+    @pytest.mark.parametrize(
+        "header",
+        [
+            pytest.param(f"{LIVE_HEADER_LINE}\n{BOT_AGENT_MARKER}\n", id="answer-marker-on-line-2"),
+            pytest.param(f"{BOT_AGENT_MARKER}\n", id="continuation-marker-at-top"),
+        ],
+    )
+    def test_a_quoted_marker_does_not_make_a_self_call_look_like_a_cross_agent_call(
+        self, tmp_path, monkeypatch, header
+    ):
+        """Issue #1317: the caller comes from the header, not from the prose.
+
+        A dev answer quoting ``<!-- bot-agent-unknown -->`` used to read as
+        ``dev\nunknown``, so the same-agent guard saw a cross-agent call and let
+        the answer re-trigger dev. A header naming another agent must still
+        reach its target, even when the body quotes a marker.
+        """
+        self_call = header + (
+            "*dev answer*\n\n"
+            "```\n"
+            "E  AssertionError: assert '<!-- workflow-continue -->' in "
+            "'<!-- bot-agent-unknown -->'\n"
+            "```\n"
+        )
+        cross_call = (
+            f"{LIVE_HEADER_LINE}\n"
+            "<!-- bot-agent-architect -->\n"
+            "*Architect answer*\n\n"
+            "context reported: <!-- bot-agent-context -->\n"
+        )
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": "dev"})
+        engine = _engine(tmp_path, _trigger(body=self_call))
+
+        verdict = engine.guard(_trigger(body=self_call), [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "true"
+
+        # The cross-agent half cannot fail on the buggy code (a quoted marker
+        # only ever added names), so it rides in this red test instead of
+        # standing alone as a vacuous one.
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": "context"})
+        cross_verdict = engine.guard(_trigger(body=cross_call), [])
+
+        assert str(cross_verdict["SKIP_AGENT"]).lower() == "false"
+
+    @pytest.mark.parametrize("role", ["issue-reviewer", "reviewer2"])
+    def test_a_hyphenated_or_numbered_role_is_read_as_the_caller(
+        self, tmp_path, monkeypatch, role
+    ):
+        """The caller pattern accepts the role names the other readers accept."""
+        body = f"{LIVE_HEADER_LINE}\n<!-- bot-agent-{role} -->\n*answer*\n"
+        trigger = _trigger(body=body)
+        engine = _engine(tmp_path, trigger)
+        _stub_resolved(monkeypatch, {"SKIP_AGENT": "false", "TASK": role})
+
+        verdict = engine.guard(trigger, [])
+
+        assert str(verdict["SKIP_AGENT"]).lower() == "true"
+
     def test_uses_the_injected_history_for_the_circuit_breaker(self, tmp_path):
         from nebuko.engine.models import CommentEntry
 
