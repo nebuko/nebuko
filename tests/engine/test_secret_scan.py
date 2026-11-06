@@ -8,6 +8,9 @@ the repo's own fake fixtures, and the ``<REDACTED:{rule}>`` marker.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +20,7 @@ from nebuko.engine.lib.redaction import (
     is_evidence_path,
     redact_text,
     redact_worktree,
+    scan_git_range,
     scan_text,
 )
 
@@ -113,6 +117,100 @@ class TestRedactWorktree:
 
         assert redact_worktree(tmp_path, ["blob.bin"]) == []
         assert FAKE_OAUTH.encode() in target.read_bytes()
+
+
+def _fake_gitleaks(tmp_path: Path, monkeypatch, body: str) -> Path:
+    """Install a fake ``gitleaks`` on PATH and return its directory."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "gitleaks"
+    script.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    return bin_dir
+
+
+class TestGitleaksBinary:
+    """The binary path (CI/dev shell) parses gitleaks' JSON report."""
+
+    def test_uses_the_binary_and_parses_its_report(self, tmp_path: Path, monkeypatch):
+        bin_dir = _fake_gitleaks(
+            tmp_path,
+            monkeypatch,
+            "\n".join(
+                [
+                    "import json, sys",
+                    "args = sys.argv[1:]",
+                    "open(sys.argv[0] + '.args', 'w').write(' '.join(args))",
+                    "report = args[args.index('--report-path') + 1]",
+                    "json.dump([{'File': 'console.txt', 'StartLine': 4,",
+                    "            'RuleID': 'github-oauth'}], open(report, 'w'))",
+                    "sys.exit(1)",
+                ]
+            ),
+        )
+
+        findings = scan_git_range(tmp_path, "origin/main..HEAD")
+
+        assert [(f.file, f.line, f.rule) for f in findings] == [
+            ("console.txt", 4, "github-oauth")
+        ]
+        argv = (bin_dir / "gitleaks.args").read_text(encoding="utf-8")
+        assert argv.split()[0] == "git"
+        assert "--log-opts origin/main..HEAD" in argv
+        assert "--report-format json" in argv
+
+    def test_a_binary_without_a_report_falls_back_to_the_builtin_rules(
+        self, tmp_path: Path, monkeypatch
+    ):
+        _fake_gitleaks(tmp_path, monkeypatch, "import sys\nsys.exit(2)\n")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git = ["git", "-C", str(repo)]
+        subprocess.run([*git, "init", "-b", "main"], check=True, capture_output=True)
+        subprocess.run(
+            [*git, "config", "user.email", "t@example.com"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [*git, "config", "user.name", "t"], check=True, capture_output=True
+        )
+        (repo / "console.txt").write_text("clean\n", encoding="utf-8")
+        subprocess.run([*git, "add", "."], check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-m", "base"], check=True, capture_output=True)
+        (repo / "console.txt").write_text(f"leak {FAKE_OAUTH}\n", encoding="utf-8")
+        subprocess.run([*git, "commit", "-am", "leak"], check=True, capture_output=True)
+
+        findings = scan_git_range(repo, "HEAD~1..HEAD")
+
+        assert [(f.file, f.line, f.rule) for f in findings] == [
+            ("console.txt", 1, "github-oauth")
+        ]
+
+    def test_an_unparseable_report_falls_back(self, tmp_path: Path, monkeypatch):
+        _fake_gitleaks(
+            tmp_path,
+            monkeypatch,
+            "\n".join(
+                [
+                    "import sys",
+                    "args = sys.argv[1:]",
+                    "open(args[args.index('--report-path') + 1], 'w').write('not json')",
+                    "sys.exit(1)",
+                ]
+            ),
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-b", "main"],
+            check=True,
+            capture_output=True,
+        )
+
+        # No commits yet: the fallback finds nothing and must not raise.
+        assert scan_git_range(repo, "HEAD~1..HEAD") == []
 
 
 class TestEvidencePath:
