@@ -39,18 +39,24 @@ from typing import Optional
 # whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
 logger = logging.getLogger(__name__)
 
+#: Commit identity for engine-authored commits (issue #1306).
+#:
+#: GitHub links a commit to a user profile from the commit's author/committer
+#: email alone, so naming the ``nebuko-agent`` user here attributes the engine's
+#: git work to a real account while the push keeps using the ``nebuko[bot]``
+#: App token. The numeric prefix is the account id (``GET /users/nebuko-agent``).
 # @stub-protected
-GIT_IDENTITY_NAME: str = "nebuko"
+GIT_IDENTITY_NAME: str = "nebuko-agent"
 # @stub-protected
-GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
+GIT_IDENTITY_EMAIL: str = "350013676+nebuko-agent@users.noreply.github.com"
 
 
 def git_identity_args(env: Optional[Mapping[str, str]] = None) -> list[str]:
     """``git -c`` flags for engine-authored commits, honouring the env override.
 
     ``NEBUKO_GIT_AUTHOR_NAME`` / ``NEBUKO_GIT_AUTHOR_EMAIL`` (set by the
-    workflow when the token is the App's, so GitHub links commits to the bot)
-    win over the ``GIT_IDENTITY_*`` constants. ``env`` defaults to ``os.environ``.
+    workflow, so a deployment can name its own account) win over the
+    ``GIT_IDENTITY_*`` constants. ``env`` defaults to ``os.environ``.
     """
     source = os.environ if env is None else env
     name = source.get("NEBUKO_GIT_AUTHOR_NAME") or GIT_IDENTITY_NAME
@@ -263,7 +269,7 @@ class GitSessionGuard:
 
     # @stub-protected
     def _configure_identity(self) -> None:
-        """Write the repo-local commit identity (``nebuko``).
+        """Write the repo-local commit identity (``GIT_IDENTITY_*``).
 
         Repo-local so a bare checkout with no global identity still commits;
         the env overrides keep the two constants the single source of truth.
