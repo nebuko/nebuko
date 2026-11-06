@@ -20,6 +20,7 @@ from ...sub_domains.history_entry.history_entry import HistoryEntry
 from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.run_prefs.run_prefs import RunPrefs
+from ...sub_domains.secret_scan.secret_scan import SecretScan
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...sub_domains.gate_lock.gate_lock import GateLock
@@ -202,6 +203,7 @@ def build_state(
         base_gate: Optional[GateLock] = None
         base_git = None
         base_complexity_policy: Optional[ComplexityPolicy] = None
+        base_secret_scan: Optional[SecretScan] = None
         base_thread: list[ThreadRecord] = []
     else:
         base_run_id = prev_state.run_id
@@ -222,6 +224,7 @@ def build_state(
         base_gate = prev_state.gate
         base_git = prev_state.git
         base_complexity_policy = prev_state.complexity_policy
+        base_secret_scan = prev_state.secret_scan
         base_thread = list(prev_state.thread)
 
     # Build history entry for the current step
@@ -408,5 +411,9 @@ def build_state(
         gate=new_gate,
         git=base_git,
         complexity_policy=new_complexity_policy,
+        # A redaction is permanent for the run (issue #1347): the record is
+        # carried forward verbatim so a later step cannot re-introduce the
+        # value without the warning showing up again.
+        secret_scan=base_secret_scan,
         thread=thread if thread is not None else base_thread,
     )

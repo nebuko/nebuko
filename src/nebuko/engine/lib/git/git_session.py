@@ -34,6 +34,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from nebuko.engine.lib.redaction import (
+    is_evidence_path,
+    redact_worktree,
+    scan_git_range,
+)
+from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+)
+
 # Plain stdlib logger: ``openhands.sdk.get_logger`` is ``logging.getLogger`` plus
 # ``propagate = True`` (the default), and importing it at module top dragged the
 # whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
@@ -94,12 +103,15 @@ class GuardResult:
     why); ``detail`` is actionable prose — it names the env vars to set or the
     remote to configure, never a token. ``auto_commit`` is the short SHA of the
     commit finalize made for work the agent left uncommitted, empty when none.
+    ``secret_findings`` are the credentials the pre-push scan redacted (file,
+    line and rule only — never the value, issue #1347).
     """
 
     ok: bool
     skipped: bool = False
     detail: str = ""
     auto_commit: str = ""
+    secret_findings: tuple[SecretFinding, ...] = ()
 
 
 class GitSessionGuard:
@@ -221,6 +233,7 @@ class GitSessionGuard:
 
         problems: list[str] = []
         auto_commit = ""
+        secret_findings: tuple[SecretFinding, ...] = ()
         try:
             auto_commit = self._commit_all_pending()
         except RuntimeError as exc:
@@ -230,6 +243,10 @@ class GitSessionGuard:
                 "the working tree still holds uncommitted changes after the "
                 "automatic commit (see `git status`)"
             )
+        if not problems:
+            secret_findings, scan_problem = self._redact_unpublished(branch)
+            if scan_problem:
+                problems.append(scan_problem)
         if not problems:
             push_problem = self._push_branch(branch)
             if push_problem:
@@ -244,11 +261,29 @@ class GitSessionGuard:
                 detail="; ".join(problems)
                 + self._token_hint(),
                 auto_commit=auto_commit,
+                secret_findings=secret_findings,
             )
         detail = f"{branch} is clean and pushed"
+        if secret_findings:
+            sources = sorted(
+                {f.file for f in secret_findings if not is_evidence_path(f.file)}
+            )
+            detail += (
+                f" ({len(secret_findings)} secret(s) redacted from the "
+                "unpublished commits)"
+            )
+            if sources:
+                # A redaction in source code is louder than one in a pasted
+                # log: the agent wrote it there deliberately (issue #1347).
+                detail += " — including source file(s): " + ", ".join(sources)
         if head_before and self.head_sha() == head_before:
             detail += " (no new commit this session)"
-        return GuardResult(ok=True, detail=detail, auto_commit=auto_commit)
+        return GuardResult(
+            ok=True,
+            detail=detail,
+            auto_commit=auto_commit,
+            secret_findings=secret_findings,
+        )
 
     def head_sha(self) -> str:
         """The current HEAD SHA, empty when it cannot be read."""
@@ -393,6 +428,99 @@ class GitSessionGuard:
             raise RuntimeError(
                 f"automatic session commit failed: {_dedent(str(exc))}"
             ) from exc
+
+    # @stub-protected
+    def _redact_unpublished(
+        self, branch: str
+    ) -> tuple[tuple[SecretFinding, ...], str]:
+        """Scan the unpublished commits and redact any credential (issue #1347).
+
+        Only *unpublished* history may be rewritten: the scan covers
+        ``<remote tip>..HEAD``, and a hit resets the branch onto that tip,
+        redacts the working tree and recommits as one commit. Published history
+        is never touched — the value is already out there and rewriting it
+        would break every clone.
+
+        Returns:
+            ``(findings, problem)``: the redactions (file/line/rule only) and
+            an actionable problem string, empty when the scan is clean or the
+            rewrite succeeded.
+        """
+        base = self._unpublished_base(branch)
+        if not base:
+            return (), ""
+        rev_range = f"{base}..HEAD"
+        try:
+            findings = scan_git_range(self.repo_root, rev_range)
+        except Exception as exc:  # noqa: BLE001 - the scan never crashes the guard
+            return (), f"could not scan the unpublished commits: {_dedent(str(exc))}"
+        if not findings:
+            return (), ""
+        message = self._head_message()
+        try:
+            self._run_git(["reset", "--soft", base])
+            redacted = redact_worktree(self.repo_root, {f.file for f in findings})
+            if redacted:
+                self._run_git(
+                    ["add", "-A", "--", ".", f":(exclude){_WORKFLOW_DIR}"]
+                )
+            self._run_git(["commit", "--no-verify", "-m", message])
+            remaining = scan_git_range(self.repo_root, rev_range)
+        except (RuntimeError, OSError) as exc:
+            return (
+                tuple(f.as_state() for f in findings),
+                f"could not redact the unpublished commits: {_dedent(str(exc))}",
+            )
+        if remaining:
+            rules = ", ".join(sorted({f.rule for f in remaining}))
+            return (
+                tuple(f.as_state() for f in findings),
+                f"{len(remaining)} secret(s) still match after redaction ({rules})",
+            )
+        logger.warning(
+            "git session: redacted %d secret(s) from the unpublished commits of %s",
+            len(findings),
+            branch,
+        )
+        return tuple(f.as_state() for f in findings), ""
+
+    def _unpublished_base(self, branch: str) -> str:
+        """The commit the unpublished range starts at, empty when unknown.
+
+        The remote branch when it exists; otherwise the merge base with the
+        remote's default branch, so a brand-new branch still scans everything
+        it added. The remote is consulted directly (``ls-remote``) because the
+        guard never fetches: a stale or missing remote-tracking ref would
+        otherwise hide the range and skip the scan.
+        """
+        for ref in (
+            f"refs/heads/{branch}",
+            "refs/heads/main",
+            "refs/heads/master",
+        ):
+            sha = self._ls_remote(ref)
+            if not sha:
+                continue
+            try:
+                return self._run_git(["merge-base", sha, "HEAD"]).strip()
+            except (RuntimeError, OSError):
+                continue
+        return ""
+
+    def _ls_remote(self, ref: str) -> str:
+        """The remote's SHA for ``ref``, empty when it does not exist."""
+        try:
+            out = self._run_git(["ls-remote", self.remote, ref])
+        except (RuntimeError, OSError):
+            return ""
+        return out.split()[0] if out.split() else ""
+
+    def _head_message(self) -> str:
+        """The current HEAD commit message, so a rewrite keeps it."""
+        try:
+            return self._run_git(["log", "-1", "--format=%B"]).strip()
+        except (RuntimeError, OSError):
+            return "chore: engine: redact secrets from unpublished commits"
 
     # @stub-protected
     def _is_fully_pushed(self, branch: str) -> Optional[str]:

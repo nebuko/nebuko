@@ -13,6 +13,7 @@ from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.run_prefs.run_prefs import RunPrefs
+from .sub_domains.secret_scan.secret_scan import SecretScan
 from .sub_domains.turn_outcome.turn_outcome import TurnOutcome
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.gate_lock.gate_lock import GateLock, GateStatus
@@ -222,6 +223,10 @@ class WorkflowState(BaseModel):
             via the ``NEBUKO_WORKFLOW_REF`` env var. Provenance only — the
             checkout pin is resolved by the workflow YAML itself. None when the
             var is absent, so legacy blobs load and serialize unchanged.
+        secret_scan: Secret-scan record for this run (issue #1347): the status
+            (``clean`` / ``redacted``), the redacted locations and the step the
+            scan ran in. Never the value. None on legacy blobs and on a run
+            that never scanned.
     """
 
     run_id: int = 0
@@ -301,6 +306,10 @@ class WorkflowState(BaseModel):
     # auditability. Carries builtin->repo provenance. None on legacy blobs,
     # which load and serialize unchanged.
     complexity_policy: Optional[ComplexityPolicy] = None  # @stub-protected
+    # Secret-scan facts for this run (issue #1347): what the pre-push and
+    # pre-post scans redacted, by file/line/rule — never the value. None on
+    # legacy blobs and on a run that never scanned, which load unchanged.
+    secret_scan: Optional[SecretScan] = None  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod

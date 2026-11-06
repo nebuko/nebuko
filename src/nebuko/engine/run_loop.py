@@ -32,6 +32,11 @@ from nebuko.engine.lib.git import (
     git_session,
     pr_finalize,
 )
+from nebuko.engine.lib.redaction import scan_text
+from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+    SecretScan,
+)
 from nebuko.engine.hook_runner import (
     HookPhase,
     HookResult,
@@ -1223,6 +1228,17 @@ class Engine:
                         commit_id=finalize_result.auto_commit,
                         detail="committed work the agent left uncommitted",
                     )
+                if finalize_result.secret_findings:
+                    # A pre-push redaction is permanent for the run (#1347):
+                    # the record makes every later comment warn about it.
+                    state = self._merge_secret_scan(
+                        state, list(finalize_result.secret_findings)
+                    )
+                    if state is not None:
+                        # The comment framed below embeds the agent's own state
+                        # artifact, so the record is carried to the publish
+                        # seam explicitly.
+                        self._publish_state["secret_scan"] = state.secret_scan
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
@@ -3102,6 +3118,55 @@ class Engine:
             branch_name=result.branch,
         )
 
+    def _scan_comment_sources(
+        self, *, answer: str, final_message: str, console_log: str
+    ) -> list[SecretFinding]:
+        """Credential matches in the text that becomes the posted comment (#1347).
+
+        Scans the sources rather than the framed body so the findings can be
+        recorded on the state (the body is redacted again at the framing seam,
+        which is what actually removes the value).
+        """
+        findings: list[SecretFinding] = []
+        for label, text in (
+            ("answer", answer),
+            ("final_message", final_message),
+            ("console_log", console_log),
+        ):
+            if not text:
+                continue
+            for finding in scan_text(text, label):
+                findings.append(finding.as_state())
+        return findings
+
+    def _merge_secret_scan(
+        self,
+        state: WorkflowState | None,
+        findings: Sequence[SecretFinding],
+        *,
+        persist: bool = True,
+    ) -> WorkflowState | None:
+        """Merge redaction findings into the persisted ``secret_scan`` record.
+
+        The record is what renders the warning on this and every later comment.
+        ``persist=False`` returns the updated state without saving it — the
+        publish seam does that, because the state it frames is not the one the
+        post-publish merge saves. Best-effort: a write hiccup must not break
+        publication.
+        """
+        if state is None or not findings:
+            return state
+        step = str(self._get(self._resolved_config(), "WORKFLOW_STEP") or "")
+        merged = (state.secret_scan or SecretScan()).merge(list(findings), at=step)
+        updated = state.model_copy(update={"secret_scan": merged})
+        if not persist:
+            return updated
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the secret scan record")
+        return updated
+
     def _record_git_action(
         self,
         state: WorkflowState | None,
@@ -3480,6 +3545,26 @@ class Engine:
             ) or explicit_state
         else:
             publish_state = explicit_state
+        # Comment-body secret scan (issue #1347): a comment is a public artifact
+        # and a pasted log is the likeliest leak channel, so the sources are
+        # scanned before framing. The findings are merged into the run's
+        # ``secret_scan`` record (warning + persistence), never the values.
+        comment_findings = self._scan_comment_sources(
+            answer=answer, final_message=final_message, console_log=console_log
+        )
+        recorded_scan = self._publish_state.get("secret_scan")
+        if recorded_scan is not None and publish_state is not None:
+            publish_state = publish_state.model_copy(
+                update={"secret_scan": recorded_scan}
+            )
+        if comment_findings:
+            publish_state = self._merge_secret_scan(
+                publish_state, comment_findings, persist=False
+            )
+            # The state was persisted before publish, so the record rides
+            # ``_publish_state`` and is folded in by the post-publish merge.
+            if publish_state is not None:
+                self._publish_state["secret_scan"] = publish_state.secret_scan
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3490,6 +3575,7 @@ class Engine:
             role_name=self._role_of(agent_result),
             state=publish_state,
             engine_failed=engine_failed,
+            secret_findings=comment_findings,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).
@@ -3560,6 +3646,12 @@ class Engine:
         if state is None:
             return None
         merged = self._backfill_step_output(state)
+        scan = self._publish_state.get("secret_scan")
+        if scan is not None and merged.secret_scan != scan:
+            # The comment-body scan ran after ``persist`` (issue #1347); the
+            # record must survive the merge or the next comment loses the
+            # warning and the run could re-introduce the value.
+            merged = merged.model_copy(update={"secret_scan": scan})
         if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
