@@ -12,6 +12,7 @@ logs can be fetched raw without any unzip step.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,8 @@ __all__ = [
     "ArtifactFile",
     "CONSOLE_LOG_FILE",
     "EVENT_LOG_FILE",
+    "METRICS_DIR_NAME",
+    "METRICS_LOG_FILE",
     "PERSISTENCE_DIR_NAME",
     "RunArtifactStager",
     "RunArtifacts",
@@ -49,6 +52,16 @@ PERSISTENCE_DIR_NAME = "persistence"
 
 # The browser-viewable bundle of the persisted event log (issue #1120).
 EVENT_LOG_FILE = "events.jsonl"
+
+# Subdirectory of ``LOG_DIR`` the metrics collector drops one
+# ``metrics-<run_id>.json`` per agent run into (``collect_metrics.save_metrics_json``).
+# The agent runs in a throwaway cwd, so the relative ``output/`` copy dies with
+# it; this staged copy is what survives to be uploaded.
+METRICS_DIR_NAME = "metrics"
+
+# The browser-viewable bundle of the staged per-run metrics: one compact JSON
+# ``Metrics`` record per line (per-call LLM latencies, token counts, TTFT/TPS).
+METRICS_LOG_FILE = "metrics.jsonl"
 
 # The SDK's per-conversation layout: ``<id>/events/event-<idx>-<event_id>.json``
 # (``persistence_const.EVENTS_DIR`` / ``EVENT_FILE_PATTERN``), plus dot-prefixed
@@ -144,10 +157,33 @@ class RunArtifactStager:
                 "\n".join(lines) + "\n", encoding="utf-8"
             )
 
+    def _stage_metrics_log(self) -> None:
+        """Bundle the staged per-run metrics into ``metrics.jsonl``.
+
+        ``save_metrics_json`` writes one ``metrics-<run_id>.json`` per agent run
+        under ``metrics/``; the bundle re-emits each as one compact JSON line, in
+        file-name order. Best-effort like :meth:`_stage_event_log`: no staged
+        metrics (or only unparsable files) yields no bundle.
+        """
+        metrics_dir = self._base_dir / METRICS_DIR_NAME
+        if not metrics_dir.is_dir():
+            return
+        lines: list[str] = []
+        for path in sorted(metrics_dir.glob("metrics-*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            lines.append(json.dumps(record, separators=(",", ":")))
+        if lines:
+            (self._base_dir / METRICS_LOG_FILE).write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
+
     # @stub-protected
     def artifact_files(self) -> tuple[ArtifactFile, ...]:
         """The per-file unzipped upload manifest (``console.txt``, ``app.txt``,
-        ``events.jsonl``).
+        ``events.jsonl``, ``metrics.jsonl``).
 
         The workflow uploads each entry as its own unzipped artifact; the
         filename-derived artifact name is what the debug prompt fetches raw.
@@ -158,11 +194,11 @@ class RunArtifactStager:
         with ``if-no-files-found: ignore``, so a missing ``app.txt`` simply
         yields no artifact instead of failing the run. ``events.jsonl`` is the
         same deal: it only appears when the conversation persisted events
-        (issue #1120).
+        (issue #1120), and ``metrics.jsonl`` only when a run staged its metrics.
         """
         return tuple(
             ArtifactFile(name=name, path=self._base_dir / name)
-            for name in (CONSOLE_LOG_FILE, APP_LOG_FILE, EVENT_LOG_FILE)
+            for name in (CONSOLE_LOG_FILE, APP_LOG_FILE, EVENT_LOG_FILE, METRICS_LOG_FILE)
         )
 
     # @stub-protected
@@ -171,6 +207,7 @@ class RunArtifactStager:
         self.stage_console_log(console_log)
         self._rename_sdk_app_log()
         self._stage_event_log()
+        self._stage_metrics_log()
         return RunArtifacts(
             staging_dir=self.log_dir(),
             console_log=console_log,
