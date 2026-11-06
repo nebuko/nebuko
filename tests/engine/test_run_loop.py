@@ -2034,6 +2034,49 @@ class TestHumanActionRecipient:
 
         assert engine._trigger_author(None) == "olivier-norture"
 
+    def test_a_bot_trigger_never_becomes_the_ping_target(self, tmp_path):
+        """#1295: a chained run triggered by the bot pings nobody rather than it."""
+        engine = _engine(
+            tmp_path,
+            trigger=_trigger(),
+            env={"TRIGGER_AUTHOR": "nebuko[bot]"},
+        )
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body="<!-- bot-workflow-terminal --><!-- workflow-continue -->",
+            type="issue_comment",
+            number=1295,
+        )
+
+        assert engine._trigger_author(None) == ""
+
+    def test_a_chained_bot_run_pings_the_recorded_human_starter(self, tmp_path):
+        """#1295: bot-triggered chained runs still reach the human on the hook."""
+        engine = _engine(tmp_path, env={"TRIGGER_AUTHOR": "nebuko[bot]"})
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body="<!-- bot-workflow-terminal --><!-- workflow-continue -->",
+            type="issue_comment",
+            number=1295,
+        )
+
+        author = engine._trigger_author(
+            self._state(started_by="olivier-norture", issue_author="nebuko[bot]")
+        )
+
+        assert author == "olivier-norture"
+
+    def test_a_bot_issue_author_is_skipped_for_the_trigger_login(self, tmp_path):
+        """#1295: without ``started_by`` the fallback must still find a human."""
+        engine = _engine(
+            tmp_path,
+            env={"TRIGGER_AUTHOR": "nebuko[bot]", "TRIGGER_AUTHOR_LOGIN": "olivier-norture"},
+        )
+
+        author = engine._trigger_author(self._state(issue_author="nebuko[bot]"))
+
+        assert author == "olivier-norture"
+
 
 class TestHumanActionSinglePing:
     """A stop pings a human exactly once (issue #795)."""

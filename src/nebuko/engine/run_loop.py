@@ -86,6 +86,9 @@ from nebuko.engine.lib.workflow_state import (
     TurnOutcome,
     TurnStatus,
 )
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
+    is_bot_login,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -3927,23 +3930,29 @@ class Engine:
         a chained, bot-triggered run still pings the human on the hook — then
         the issue author, then the raw trigger author. Falls back to the
         adapter's own trigger when the environment carries none.
+
+        A bot login is never a valid target (issue #1295): the notice exists to
+        reach a person, so bot candidates are skipped rather than pinged.
         """
         if state is None:
             state = self._seeded_prev_state.get("state") or self._previous_state()
-        candidates = (
+        candidates = [
             getattr(state, "started_by", None) if state is not None else None,
             getattr(getattr(state, "issue", None), "author", None)
             if state is not None
             else None,
             self.env.get("TRIGGER_AUTHOR"),
-        )
-        for candidate in candidates:
-            if candidate and str(candidate).strip():
-                return str(candidate).strip()
+            self.env.get("TRIGGER_AUTHOR_LOGIN"),
+        ]
         try:
-            return self.adapter.read_trigger().author
+            candidates.append(self.adapter.read_trigger().author)
         except Exception:  # noqa: BLE001 - a missing event payload is not fatal here
-            return ""
+            pass
+        for candidate in candidates:
+            login = str(candidate or "").strip()
+            if login and not is_bot_login(login):
+                return login
+        return ""
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
         """Return the agent's own state artifact, else the previous state.

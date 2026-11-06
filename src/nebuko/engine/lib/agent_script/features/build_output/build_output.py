@@ -603,6 +603,26 @@ def _derive_phase(workflow_step: str) -> str:
     return ""
 
 
+def _started_by_from_env() -> Optional[str]:
+    """The workflow starter's login, ignoring a bot trigger (issue #1295).
+
+    ``TRIGGER_AUTHOR`` is only exported by the legacy normalizer step, so a
+    chained run on the engine path carries just ``TRIGGER_AUTHOR_LOGIN``. Both
+    are read, and a bot login is never recorded: the field is the target of the
+    engine's human notices, so capturing the bot there would ping it forever
+    (issue #1295).
+    """
+    from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
+        is_bot_login,
+    )
+
+    for key in ("TRIGGER_AUTHOR", "TRIGGER_AUTHOR_LOGIN"):
+        login = (os.environ.get(key) or "").strip()
+        if login and not is_bot_login(login):
+            return login
+    return None
+
+
 def _build_issue_info() -> IssueInfo | None:
     """Build IssueInfo from environment variables."""
     issue_number_str = os.environ.get("TARGET_NUMBER")
@@ -1450,7 +1470,7 @@ def build_output(
         prefs=prefs,
         function_call=function_call,
         callback=callback,
-        started_by=os.environ.get("TRIGGER_AUTHOR") or None,
+        started_by=_started_by_from_env(),
         inject_context=inject_context,
         pin=pin,
         scaffold_branch=scaffold_branch,

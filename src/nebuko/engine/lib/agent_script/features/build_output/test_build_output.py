@@ -14,6 +14,7 @@ from build_output import (
     _parse_gate_released_env,
     _recall_aware_events,
     _resolve_pin,
+    _started_by_from_env,
     _terminal_turn_answer,
     _write_latest_answer_file,
     apply_gate_lock,
@@ -2116,6 +2117,33 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
     def test_missing_repo_env_returns_none(self):
         os.environ.pop("REPO_NAME", None)
         self.assertIsNone(load_prev_state_or_recover(fetch_comments=lambda *_a: []))
+
+
+class TestStartedByCapture(unittest.TestCase):
+    """The recorded workflow starter is always a human (issue #1295)."""
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        for key in ("TRIGGER_AUTHOR", "TRIGGER_AUTHOR_LOGIN"):
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+
+    def test_prefers_the_legacy_trigger_author(self):
+        os.environ["TRIGGER_AUTHOR"] = "olivier-norture"
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "nebuko[bot]"
+        self.assertEqual(_started_by_from_env(), "olivier-norture")
+
+    def test_falls_back_to_the_trigger_login(self):
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "olivier-norture"
+        self.assertEqual(_started_by_from_env(), "olivier-norture")
+
+    def test_a_bot_trigger_is_never_recorded(self):
+        os.environ["TRIGGER_AUTHOR"] = "nebuko[bot]"
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "nebuko[bot]"
+        self.assertIsNone(_started_by_from_env())
 
 
 class TestBuildOutputPrevStateIntegration(unittest.TestCase):
