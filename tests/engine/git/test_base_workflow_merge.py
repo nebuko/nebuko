@@ -8,7 +8,7 @@ silently reverted ``main``'s workflow change. The publisher did the same when it
 concluded the merge itself (unstage, then deliver an empty patch).
 
 Real git against a local bare remote, same harness style as
-``test_publish_base_sync.py``.
+``test_conflict_only_publish.py``.
 """
 
 from __future__ import annotations

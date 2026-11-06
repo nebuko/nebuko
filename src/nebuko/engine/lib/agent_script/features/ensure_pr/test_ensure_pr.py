@@ -740,7 +740,9 @@ def _patch_ensure_pr(git, gh, env=None, artifact_dir=None):
     stack = contextlib.ExitStack()
     for p in patchers:
         stack.enter_context(p)
-    stack.enter_context(patch.dict("os.environ", env or {}, clear=False))
+    # The patch comment is posted to this repo; a CI runner sets it, a local run doesn't.
+    full_env = {"GITHUB_REPOSITORY": "acme/repo", **(env or {})}
+    stack.enter_context(patch.dict("os.environ", full_env, clear=False))
     return stack
 
 
@@ -1093,6 +1095,8 @@ class TestRealGitTokenBoundary(unittest.TestCase):
             self._git("add", "-A", cwd=work)
             self._git("commit", "-qm", "base", cwd=work)
             self._git("push", "-q", "-u", "origin", "main", cwd=work)
+            # Publishing from the base is refused (issue #1268).
+            self._git("checkout", "-q", "-b", "feature/issue-1080-x", cwd=work)
 
             # Agent work: a plain file *and* a workflow file, both left dirty.
             with open(os.path.join(work, code), "w", encoding="utf-8") as fh:
@@ -1158,7 +1162,7 @@ class TestRealGitTokenBoundary(unittest.TestCase):
                     "show",
                     "--name-only",
                     "--format=",
-                    "main",
+                    "feature/issue-1080-x",
                 ],
                 capture_output=True,
                 text=True,
@@ -1209,6 +1213,8 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
             self._git("add", "-A", cwd=work)
             self._git("commit", "-qm", "base", cwd=work)
             self._git("push", "-q", "-u", "origin", "main", cwd=work)
+            # Publishing from the base is refused (issue #1268).
+            self._git("checkout", "-q", "-b", "feature/issue-1-x", cwd=work)
 
             # WHEN: a brand-new (untracked) file under .github/workflows/
             os.makedirs(os.path.join(work, ".github", "workflows"))

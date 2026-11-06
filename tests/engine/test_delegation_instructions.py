@@ -85,13 +85,15 @@ class TestUnambiguousCallShape:
 
         assert missing == []
 
-    def test_the_architect_prompt_shows_the_canonical_handoff(self):
-        text = (REPO_ROOT / "defaults" / "prompts" / "architect.md").read_text(
+    def test_the_call_agent_skill_shows_the_canonical_handoff(self):
+        # The architect gets this through the injected call-agent skill; each
+        # delegating step's prompt carries a worked example (checked above).
+        text = (REPO_ROOT / "defaults" / "skills" / "call-agent.md").read_text(
             encoding="utf-8"
         )
 
-        assert '"agent_call"' in text
-        assert '"agent_name": "context"' in text
+        assert "finalize(turn_outcome={agent_call:" in text
+        assert "agent_call.agent_name" in text
 
 
 class TestPlanningIsScopedOutOfAnalyze:
