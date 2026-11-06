@@ -2,8 +2,8 @@
 
 The test drives the whole ten-phase :meth:`Engine.run` for a dev step and locks
 the three things a real run depends on: the engine creates the feature branch,
-merges the base into it and pushes it (in that order, with real git effects on a
-local bare remote); the run completes; and a malformed ``finalize`` (missing
+leaves a clean base out of it (issue #1242) and pushes it (with real git effects
+on a local bare remote); the run completes; and a malformed ``finalize`` (missing
 ``appreciation``) is rejected and retried until the second, correct call lands.
 
 Only the LLM (``agent_runner._load_pipeline``) and PR creation
@@ -13,6 +13,7 @@ executor and the run loop all run for real. See ``docs/testing-e2e.md``.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +24,7 @@ from nebuko.engine.lib.git.branch_scaffold import feature_branch_name
 from nebuko.engine.models import ExitCode, Trigger
 from nebuko.engine.run_loop import PHASES, Engine
 
-from workflow_state import Appreciation
+from nebuko.engine.lib.workflow_state import Appreciation
 
 ISSUE_NUMBER = 1207
 ISSUE_TITLE = "End-to-end test for a running dev agent"
@@ -67,7 +68,7 @@ class GitCommandRecorder:
         for module in (
             git_session,
             branch_scaffold,
-            importlib.import_module("agent_script.features.ensure_pr.ensure_pr"),
+            importlib.import_module("nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr"),
         ):
             monkeypatch.setattr(module, "subprocess", proxy)
 
@@ -148,7 +149,7 @@ def _finalize_turn(*, report: str, turn_outcome: dict[str, Any] | None) -> list[
     _structured_output={"turn_outcome": turn_outcome} and the report text.
     turn_outcome=None or a dict missing required keys (e.g. {"note": "done"})
     produces the malformed first-turn finalize."""
-    from agent_script.features.finalize_tool.finalize_tool import FinalizeAction
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import FinalizeAction
     from openhands.sdk.event import ActionEvent
     from openhands.sdk.llm.message import MessageToolCall, TextContent
 
@@ -220,8 +221,8 @@ def _dev_checkout(tmp_path) -> Path:
 
     The remote also carries a previous round's ``BRANCH`` and the base moves on
     after it was cut, so the scaffold takes its existing-branch path (checkout
-    the branch, merge the base) — what a second dev turn on the issue really
-    does.
+    the branch, probe the base, no merge on a clean probe) — what a second dev
+    turn on the issue really does.
     """
     import subprocess
 
@@ -295,10 +296,10 @@ def _resolved() -> dict[str, str]:
 
 def _pin_resolver(monkeypatch) -> None:
     """Pin the resolver facade's output (the ``_patch_resolver`` pattern)."""
-    import resolve_config  # noqa: F401 - ensures the submodule is imported
+    import nebuko.engine.lib.resolve_config  # noqa: F401 - ensures the submodule is imported
 
     monkeypatch.setattr(
-        sys.modules["resolve_config.resolve_config"],
+        sys.modules["nebuko.engine.lib.resolve_config.resolve_config"],
         "resolve_config",
         lambda **_: _resolved(),
     )
@@ -327,7 +328,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
+def test_dev_step_e2e_branch_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
     """The single red-then-green e2e test."""
     # given: a real checkout on a bare remote and a wrong-then-right scripted LLM
     root = _dev_checkout(tmp_path)
@@ -347,7 +348,7 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     def _fake_ensure_pr(
         dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
     ):
-        from agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
+        from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 
         return EnsurePrResult(
             pr_url="https://github.com/nebuko/nebuko/pull/1207",
@@ -355,7 +356,7 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
         )
 
     monkeypatch.setattr(
-        "agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake_ensure_pr
+        "nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr.ensure_pr", _fake_ensure_pr
     )
     _pin_resolver(monkeypatch)
     engine = _dev_engine(tmp_path, root, _dev_trigger())
@@ -369,20 +370,18 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
     assert tuple(outcome.phases) == PHASES
 
-    # then: branch created, base merged, branch pushed — in that order
+    # then: branch created then pushed, and the clean base was not merged
     created = recorder.matching(f"checkout -b {BRANCH}")
     merged = recorder.matching("merge --no-edit origin/main")
     pushed = recorder.matching(f"push origin HEAD:refs/heads/{BRANCH}")
     assert created, recorder.commands
-    assert merged, recorder.commands
+    assert not merged, recorder.commands
     assert pushed, recorder.commands
-    assert recorder.commands.index(created[0]) < recorder.commands.index(merged[0])
-    assert recorder.commands.index(merged[0]) < recorder.commands.index(pushed[0])
+    assert recorder.commands.index(created[0]) < recorder.commands.index(pushed[0])
 
-    # then: the effects are real — the remote branch is the session HEAD, merged
+    # then: the effects are real — the remote branch is the session HEAD
     remote_sha = _git(tmp_path / "origin.git", "rev-parse", f"refs/heads/{BRANCH}")
     assert remote_sha == _git(root, "rev-parse", "HEAD")
-    _git(root, "merge-base", "--is-ancestor", "origin/main", "HEAD")
 
     # then: the first finalize was rejected, the second was accepted
     rejections = conversation.rejection_texts()
@@ -393,4 +392,10 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     run_dir = tmp_path / "runs" / "e2e"
     assert (run_dir / "journal.md").is_file()
     assert (run_dir / "state.json").is_file()
+
+    # then: the saved state records the engine's git actions on this branch
+    git_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))["git"]
+    assert git_state["branch_name"] == BRANCH
+    statuses = [entry["status"] for entry in git_state["history"]]
+    assert statuses and statuses[0] == "continue"
     assert (run_dir / "latest_answer.md").is_file()

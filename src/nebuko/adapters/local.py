@@ -14,7 +14,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Sequence
 
-from nebuko.adapters.base import HistoryPage, PostedComment, PosterCapabilities
+from nebuko.adapters.base import HistoryPage, PostedComment, PosterCapabilities, RunStatus
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -30,6 +30,7 @@ __all__ = ["LocalAdapter"]
 TRIGGER_FILE = "trigger.json"
 JOURNAL_FILE = "journal.md"
 STATE_FILE = "state.json"
+STATUS_FILE = "status.json"
 LATEST_ANSWER_FILE = "latest_answer.md"
 CONSOLE_LOG_FILE = "console.txt"
 
@@ -169,6 +170,28 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         return len(entries)
 
     # @stub-protected
+    def set_status(self, status: RunStatus) -> None:
+        """Record the run status in the run directory (#1336).
+
+        The local host has no labels, so the status is written to
+        ``status.json`` and readable through :meth:`load_status` — the seam
+        tests assert on.
+        """
+        payload = {"status": RunStatus(status).value, "updated_at": _utc_now_iso()}
+        (self._run_dir / STATUS_FILE).write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+
+    # @stub-protected
+    def load_status(self) -> RunStatus | None:
+        """The last status :meth:`set_status` recorded, or ``None``."""
+        path = self._run_dir / STATUS_FILE
+        if not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return RunStatus(payload.get("status"))
+
+    # @stub-protected
     def artifact_dir(self) -> Path:
         """The run directory doubles as the local host's artifact staging area."""
         return self._run_dir
@@ -182,11 +205,7 @@ class LocalAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     # @stub-protected
     def capabilities(self) -> PosterCapabilities:
         """The local journal is plain markdown with no platform markup."""
-        return PosterCapabilities()
-
-    # @stub-protected
-    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
-        raise NotImplementedError("edit_comment not supported by this adapter")
+        return PosterCapabilities(edit_comment=True)
 
     # @stub-protected
     def add_reaction(self, comment_id: str, emoji: str) -> None:

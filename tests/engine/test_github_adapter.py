@@ -49,6 +49,22 @@ class FakeGhClient:
         self.calls = []
         self.deleted = []
         self.limits = []
+        self.ensured = []
+        self.removed = []
+
+    def ensure_label(self, repo, name, color=None, token=None, dry_run=False):
+        self.calls.append(("ensure_label", repo, name))
+        self.ensured.append((repo, name))
+        return True
+
+    def add_label_to_issue(self, repo, issue_number, name, token=None, dry_run=False):
+        self.calls.append(("add_label_to_issue", repo, issue_number, name))
+        return True
+
+    def remove_label_from_issue(self, repo, issue_number, name, token=None, dry_run=False):
+        self.calls.append(("remove_label_from_issue", repo, issue_number, name))
+        self.removed.append(name)
+        return True
 
     def get_authenticated_user(self, token=None, dry_run=False):
         self.calls.append(("get_authenticated_user",))
@@ -375,6 +391,43 @@ class TestDeleteIssueComments:
 
         assert adapter.delete_issue_comments("590") == 1
         assert client.deleted == [20]
+
+
+class TestRunStatus:
+    """The adapter renders the neutral status as one ``nebuko:*`` label (#1336)."""
+
+    def test_sets_the_status_label_and_creates_it_when_missing(self, tmp_path):
+        from nebuko.adapters.base import RunStatus
+
+        client = FakeGhClient()
+        adapter = _adapter(tmp_path, client)
+
+        adapter.set_status(RunStatus.GATED)
+
+        assert client.ensured == [("olivier-norture/git-flow-ai", "nebuko:gated")]
+        assert ("add_label_to_issue", "olivier-norture/git-flow-ai", 590, "nebuko:gated") in client.calls
+
+    def test_removes_only_the_other_status_labels(self, tmp_path):
+        from nebuko.adapters.base import RunStatus
+
+        client = FakeGhClient()
+        adapter = _adapter(tmp_path, client)
+
+        adapter.set_status(RunStatus.REVIEW_NEEDED)
+
+        assert client.removed == ["nebuko:running", "nebuko:gated", "nebuko:failed"]
+        assert "nebuko:review-needed" not in client.removed
+
+    def test_maps_every_status_to_its_label(self):
+        from nebuko.adapters.base import RunStatus
+        from nebuko.adapters.github import status_label
+
+        assert [status_label(status) for status in RunStatus] == [
+            "nebuko:running",
+            "nebuko:gated",
+            "nebuko:failed",
+            "nebuko:review-needed",
+        ]
 
 
 class TestThreadSnapshotReuse:

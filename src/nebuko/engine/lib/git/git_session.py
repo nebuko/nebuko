@@ -92,12 +92,14 @@ class GuardResult:
     ``ok`` is the pass/fail verdict; ``skipped`` marks the benign case where
     there was nothing to guard (``ok`` is then True and ``detail`` explains
     why); ``detail`` is actionable prose — it names the env vars to set or the
-    remote to configure, never a token.
+    remote to configure, never a token. ``auto_commit`` is the short SHA of the
+    commit finalize made for work the agent left uncommitted, empty when none.
     """
 
     ok: bool
     skipped: bool = False
     detail: str = ""
+    auto_commit: str = ""
 
 
 class GitSessionGuard:
@@ -218,8 +220,9 @@ class GitSessionGuard:
             )
 
         problems: list[str] = []
+        auto_commit = ""
         try:
-            self._commit_all_pending()
+            auto_commit = self._commit_all_pending()
         except RuntimeError as exc:
             problems.append(str(exc))
         if self._pending_paths(exclude_workflows=True):
@@ -240,11 +243,12 @@ class GitSessionGuard:
                 ok=False,
                 detail="; ".join(problems)
                 + self._token_hint(),
+                auto_commit=auto_commit,
             )
         detail = f"{branch} is clean and pushed"
         if head_before and self.head_sha() == head_before:
             detail += " (no new commit this session)"
-        return GuardResult(ok=True, detail=detail)
+        return GuardResult(ok=True, detail=detail, auto_commit=auto_commit)
 
     def head_sha(self) -> str:
         """The current HEAD SHA, empty when it cannot be read."""
@@ -252,6 +256,14 @@ class GitSessionGuard:
             return self._run_git(["rev-parse", "HEAD"]).strip()
         except (RuntimeError, OSError):
             return ""
+
+    def pending_paths(self) -> tuple[str, ...]:
+        """Uncommitted paths in the checkout, best-effort (issue #1322).
+
+        An uninspectable tree reads as pending, so a caller that uses this to
+        decide whether work still needs committing never drops it silently.
+        """
+        return self._pending_paths()
 
     # ── Identity and credentials ──────────────────────────────────
 

@@ -26,7 +26,7 @@ class TestSkillsToString:
 
     def _import_helper(self):
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         return resolve_workflow._skills_to_string
 
     def test_none_returns_empty(self):
@@ -651,13 +651,13 @@ class TestSpecDrivenWorkflow:
 
     def _import_resolver(self):
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         return resolve_workflow.resolve_workflow_step
 
     def test_po_in_task_to_prompt(self):
         """Verify po agent is registered in TASK_TO_PROMPT."""
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         assert "po" in resolve_workflow.TASK_TO_PROMPT
         assert resolve_workflow.TASK_TO_PROMPT["po"] == "po.md"
 

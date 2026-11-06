@@ -194,9 +194,12 @@ class TestStagePatchArtifact(unittest.TestCase):
             self.assertEqual(stage_patch_artifact("x"), PATCH_FILENAME)
 
     def test_io_failure_raises(self):
-        with patch.dict(os.environ, {"RUNNER_TEMP": "/nonexistent-root-dir/x"}):
-            with self.assertRaises(OSError):
-                stage_patch_artifact("x")
+        # A path *under a regular file* can never be created, even as root
+        # (a missing top-level dir is creatable when the suite runs as root).
+        with tempfile.NamedTemporaryFile() as blocker:
+            with patch.dict(os.environ, {"RUNNER_TEMP": f"{blocker.name}/x"}):
+                with self.assertRaises(OSError):
+                    stage_patch_artifact("x")
 
 
 class TestRevertWorkflowChanges(unittest.TestCase):

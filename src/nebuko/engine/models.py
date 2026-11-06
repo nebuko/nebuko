@@ -83,8 +83,6 @@ class CommentEntry:
 
 
 # @stub-protected
-@dataclass(frozen=True)
-# @stub-protected
 class ExitCode(IntEnum):
     """Run-outcome codes; the host process status is derived (issue #1057).
 

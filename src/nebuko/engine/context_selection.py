@@ -16,6 +16,8 @@ thread entries)``:
 * **IMPLICIT_PREVIOUS** — a step's default ``inputs`` is ``[previous_step]``
   (D5): a workflow declaring no ``inputs`` is still fully determined. An
   explicit previous step (the engine-added loop edge, D6) is the same request.
+  The previous step is the last run of a *different* step that did not fail; a
+  re-run of a step also receives its own latest good output, so it can revise it.
 * **DECLARED** — the workflow's entry step defaults to ``[issue_body]`` (D11);
   any other explicit ``inputs`` is the complete selection.
 * **CONDITIONAL** — a matched conditional-branch edge contributes its declared
@@ -96,6 +98,9 @@ class ContextEntry:
     #: its own ``sequence`` identifies it. Selection is per answer, so a split
     #: answer is injected once and rendered from all of its parts.
     parts: tuple[str, ...] | None = None
+    #: The answer of a run that failed (a crash notice, not a step result): it
+    #: is never selected as a step's output.
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,8 @@ class WorkflowPathEntry:
 
     step: str
     round: int = 1
+    #: The run crashed, so it produced no output a later step can use.
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -163,12 +170,23 @@ def default_inputs(
     agent child, after the prompt is built, so the last node is the previous
     step. The first step of a workflow has no node at all and receives the issue
     body; outside a workflow there is no default (``None`` ⇒ ``DEFAULT_LAST``).
+
+    A failed run is skipped, so a crash never stands in for a step's output. A
+    re-run of ``step`` still receives the step before it, plus its own latest
+    good output: a rejected plan is revised, not rewritten from nothing.
     """
     if path is None:
         return None
-    if not path:
-        return (ContextInput(ContextKind.ISSUE_BODY),)
-    return (ContextInput(ContextKind.AGENT_OUTPUT, path[-1].step),)
+    usable = [node for node in path if not node.failed]
+    previous = next((node.step for node in reversed(usable) if node.step != step), None)
+    inputs = [
+        ContextInput(ContextKind.ISSUE_BODY)
+        if previous is None
+        else ContextInput(ContextKind.AGENT_OUTPUT, previous)
+    ]
+    if usable and usable[-1].step == step:
+        inputs.append(ContextInput(ContextKind.AGENT_OUTPUT, step))
+    return tuple(inputs)
 
 
 def _output_of(
@@ -189,7 +207,9 @@ def _output_of(
     candidates = [
         entry
         for entry in entries
-        if entry.kind == ContextKind.AGENT_OUTPUT and entry.step == step
+        if entry.kind == ContextKind.AGENT_OUTPUT
+        and entry.step == step
+        and not entry.failed
     ]
     current_round = [
         entry for entry in candidates if entry.round == (round_number or 1)

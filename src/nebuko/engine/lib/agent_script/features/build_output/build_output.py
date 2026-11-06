@@ -1364,12 +1364,17 @@ def build_output(
         os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
         in ("true", "1", "yes")
     )
-    turn_outcome, gate = apply_gate_lock(
-        turn_outcome,
-        workflow_name=workflow_name,
-        workflow_step=workflow_step,
-        gate=prev_state.gate if prev_state is not None else None,
-    )
+    # A crashed run has nothing to approve: it carries the previous lock forward
+    # but never arms a new one, so `/nebuko resume` can re-run the step.
+    if run_outcome is not None and run_outcome.status is OutcomeStatus.FAILURE:
+        gate = prev_state.gate if prev_state is not None else None
+    else:
+        turn_outcome, gate = apply_gate_lock(
+            turn_outcome,
+            workflow_name=workflow_name,
+            workflow_step=workflow_step,
+            gate=prev_state.gate if prev_state is not None else None,
+        )
     # The release is folded into ``resolve_post_decision_gate`` (issue #1178):
     # it is the single authority over the lock, so a rejected-with-feedback
     # decision re-arms a fresh gate even though ``resolve_route`` sets
@@ -1411,6 +1416,15 @@ def build_output(
         # Agent succeeded — clear stale recovery log so it doesn't persist forward
         context_updates["recovery_log"] = ""
         logger.info("Cleared stale recovery log from previous failed run")
+
+    # Engine-failure facts (issue #1288): a green run clears the previous
+    # run's failure record, the same way the recovery log is cleared — a
+    # stale entry would otherwise ride ``build_state`` into every later
+    # step's state and keep marking healthy runs as failed.
+    if not is_graceful_timeout and final_message and not is_malformed_final_message(final_message):
+        if prev_state and prev_state.current_context and "engine_failure" in prev_state.current_context:
+            context_updates["engine_failure"] = ""
+            logger.info("Cleared stale engine-failure record from previous failed run")
 
     # ── Build workflow state ─────────────────────────────────────
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")

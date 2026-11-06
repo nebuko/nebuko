@@ -1,4 +1,4 @@
-"""Red tests for the conflict-only publish flow (issue #1242).
+"""The conflict-only publish flow (issue #1242).
 
 The publish-time base sync (#1219) is removed: ensure_pr pushes the agent's
 commits plainly, probes the base read-only, and comments on the PR when main
@@ -139,7 +139,8 @@ class TestPublishNeverMerges:
         _commit(seed, "base.txt", "main\n", "main side")
         _git(seed, "push", "-q", "origin", "main")
         calls = _stub_gh(monkeypatch)
-        monkeypatch.setenv("GFA_ISSUE_NUMBER", "1242")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+        monkeypatch.setenv("TARGET_NUMBER", "1242")
 
         # when: the publish flow runs
         result = ensure_pr(issue_title="comment not block")
@@ -148,6 +149,72 @@ class TestPublishNeverMerges:
         # commits are pushed and a comment asks a human to re-call the agent
         assert not result.error, result.message
         assert result.pushed
-        assert any(
-            "conflict" in " ".join(a).lower() for a in calls
-        ), "a PR/issue comment must report the conflicts"
+        comments = [a for a in calls if "/repos/o/r/issues/1/comments" in " ".join(a)]
+        assert len(comments) == 1, "the PR must get one comment about the conflict"
+        body = " ".join(comments[0])
+        assert "conflict" in body.lower()
+        assert "`base.txt`" in body
+        # and: nothing was merged into the branch
+        assert not _git(publish_repo, "log", "--merges", "--oneline")
+
+    def test_the_probe_sees_a_base_that_moved_after_the_last_fetch(
+        self, publish_repo: Path, monkeypatch
+    ):
+        # given: the local origin/main predates the conflicting commit
+        _git(publish_repo, "checkout", "-q", "-b", "feature/issue-1242-s", "origin/main")
+        _commit(publish_repo, "base.txt", "branch\n", "branch side")
+        before = _git(publish_repo, "rev-parse", "origin/main")
+        seed = publish_repo.parent / "seed"
+        _git(seed, "checkout", "-q", "main")
+        _commit(seed, "base.txt", "main\n", "main side")
+        _git(seed, "push", "-q", "origin", "main")
+        calls = _stub_gh(monkeypatch)
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+        assert _git(publish_repo, "rev-parse", "origin/main") == before
+
+        # when: the publish flow runs
+        ensure_pr(issue_title="moved")
+
+        # then: the conflict is still reported
+        assert any("conflict" in " ".join(a).lower() for a in calls)
+
+    def test_a_clean_base_advance_posts_no_comment(self, publish_repo: Path, monkeypatch):
+        # given: main moved, without touching what the branch changed
+        seed = publish_repo.parent / "seed"
+        _git(seed, "checkout", "-q", "main")
+        _commit(seed, "main-only.txt", "main\n", "advance main")
+        _git(seed, "push", "-q", "origin", "main")
+        calls = _stub_gh(monkeypatch)
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+
+        # when: the publish flow runs
+        result = ensure_pr(issue_title="clean")
+
+        # then: pushed, with no comment
+        assert result.pushed
+        assert not [a for a in calls if "/comments" in " ".join(a)]
+
+    def test_a_failed_comment_does_not_fail_the_publish(
+        self, publish_repo: Path, monkeypatch
+    ):
+        # given: a real conflict, and GitHub refuses the comment
+        _git(publish_repo, "checkout", "-q", "-b", "feature/issue-1242-f", "origin/main")
+        _commit(publish_repo, "base.txt", "branch\n", "branch side")
+        seed = publish_repo.parent / "seed"
+        _git(seed, "checkout", "-q", "main")
+        _commit(seed, "base.txt", "main\n", "main side")
+        _git(seed, "push", "-q", "origin", "main")
+        _stub_gh(monkeypatch)
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+
+        def _refuse(*args, **kwargs):
+            raise RuntimeError("github down")
+
+        monkeypatch.setattr(ep, "_post_patch_comment", _refuse)
+
+        # when: the publish flow runs
+        result = ensure_pr(issue_title="refused")
+
+        # then: the publish still succeeds
+        assert not result.error, result.message
+        assert result.pushed

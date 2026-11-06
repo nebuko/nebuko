@@ -63,7 +63,9 @@ def test_directory_argument_expands_to_config_files(capsys):
     assert "C3-unknown-tool" in capsys.readouterr().out
 
 
-def test_no_argument_lints_the_shipped_config(capsys):
+def test_no_argument_lints_the_shipped_config(capsys, monkeypatch):
+    # CI sets this; no file carries the bare default name, agent-config.yaml.
+    monkeypatch.setenv("AGENT_CONFIG_PATH", "agent-config-mistral.yaml")
     assert Path(default_target()).is_file()
     assert main([]) == 0
     assert "issue(s)" in capsys.readouterr().out

@@ -431,7 +431,7 @@ class TestPostDecisionGateReArm(unittest.TestCase):
         )
 
     def test_reject_with_feedback_rerun_then_completion_keeps_gate_armed(self):
-        import build_output as bo
+        import nebuko.engine.lib.agent_script.features.build_output.build_output as bo
         from types import SimpleNamespace as NS
         from nebuko.engine.lib.workflow_state import GateLock, RunPrefs, WorkflowState
 

@@ -348,6 +348,7 @@ class TestDefaultWithOutputWorkflow:
             "headline",
             "context_request",
             "assumptions",
+            "requirements",
         ]
 
     def test_the_resolver_exports_the_dirs_the_gate_check_searches(self) -> None:
@@ -716,7 +717,9 @@ def _host_for(
     state_turn_outcome: dict[str, Any] | None = None,
     classify_event: Callable[[object], bool] | None = None,
 ) -> InProcessAgentHost:
-    def _run_agent(llm_config, prompt, args, agent_cfg=None, workspace=None):
+    def _run_agent(
+        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None
+    ):
         return conversation
 
     events = getattr(conversation, "state", SimpleNamespace(events=[])).events

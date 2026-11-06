@@ -20,7 +20,10 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
     _run_supervised,
     run_agent,
 )
-from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailureKind
+from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+    ProviderFailure,
+    RunFailureKind,
+)
 from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
@@ -254,12 +257,10 @@ class TestRunAgentIntegration(unittest.TestCase):
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
-    def test_unreachable_provider_failure_is_modelled_on_outcome(
-        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
-    ):
+    def test_unreachable_provider_failure_stops_the_run(self, mock_budget, mock_llm, mock_agent, mock_conversation_cls):
         # An unreachable provider escapes arun() as a typed connectivity
-        # error; the run must record it (issue #668) so build_output can
-        # print a human-readable cause instead of the opaque sentinel.
+        # error; the run must stop there (issue #1322) so the engine reports
+        # the real cause instead of a synthesized comment.
         mock_budget.return_value = SimpleNamespace(
             soft_timeout_s=60.0, wind_down_timeout_s=30.0
         )
@@ -281,12 +282,10 @@ class TestRunAgentIntegration(unittest.TestCase):
             "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
             return_value=None,
         ):
-            run_agent(llm_config={}, prompt="do the thing")
-        self.assertIs(convo.run_outcome.status, OutcomeStatus.FAILURE)
-        self.assertIsNotNone(convo.run_outcome.failure)
-        self.assertIs(
-            convo.run_outcome.failure.kind, RunFailureKind.LLM_UNREACHABLE
-        )
+            with self.assertRaises(ProviderFailure) as raised:
+                run_agent(llm_config={}, prompt="do the thing")
+        self.assertIn("Cannot connect", raised.exception.provider_error)
+        self.assertIs(raised.exception.agent_phase, "agent")
 
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")

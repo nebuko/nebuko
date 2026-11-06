@@ -22,6 +22,7 @@ from .sub_domains.skill_spec.skill_spec import SkillSpec
 from .sub_domains.agent_config.agent_config import AgentConfig
 from .sub_domains.agent_start_notice.agent_start_notice import AgentStartNotice
 from .sub_domains.human_action_notice.human_action_notice import HumanActionNotice
+from .sub_domains.engine_failure_notice.engine_failure_notice import EngineFailureNotice
 from .sub_domains.script_start_notice.script_start_notice import ScriptStartNotice
 from .sub_domains.script_step_report.script_step_report import ScriptStepReport
 from .sub_domains.app_config.app_config import AppConfig
@@ -95,6 +96,7 @@ __all__ = [
     "AgentConfig",
     "AgentStartNotice",
     "HumanActionNotice",
+    "EngineFailureNotice",
     "ScriptStartNotice",
     "ScriptStepReport",
     "AppConfig",

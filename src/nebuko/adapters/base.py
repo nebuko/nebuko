@@ -7,6 +7,7 @@ refactors. ``nebuko.engine.run_loop`` depends on this module only — no mode br
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, Sequence, runtime_checkable
 
 from pydantic import BaseModel, Field
@@ -22,7 +23,22 @@ __all__ = [
     "PostedComment",
     "Poster",
     "PosterCapabilities",
+    "RunStatus",
 ]
+
+
+# @stub-protected
+class RunStatus(str, Enum):
+    """Platform-neutral state of the run working on the issue or PR (#1336).
+
+    The engine only deals in this vocabulary; how a host surfaces it (GitHub
+    labels, GitLab scoped labels, a local file) is the adapter's business.
+    """
+
+    RUNNING = "running"
+    GATED = "gated"
+    FAILED = "failed"
+    REVIEW_NEEDED = "review_needed"
 
 
 # @stub-protected
@@ -93,10 +109,6 @@ class PlatformAdapter(Protocol):
         ...
 
     # @stub-protected
-    def edit_comment(self, comment_id: str, body: str) -> PostedComment:
-        raise NotImplementedError("edit_comment not supported by this adapter")
-
-    # @stub-protected
     def add_reaction(self, comment_id: str, emoji: str) -> None:
         raise NotImplementedError("add_reaction not supported by this adapter")
 
@@ -118,6 +130,15 @@ class PlatformAdapter(Protocol):
     def delete_issue_comments(self, issue: str, from_comment: str = "") -> int:
         """Delete every comment on the issue, or ``from_comment`` and all later
         ones, and return the number deleted."""
+        ...
+
+    # @stub-protected
+    def set_status(self, status: RunStatus) -> None:
+        """Publish ``status`` as the run's single current state.
+
+        Exactly one status is visible at a time: the host replaces any other
+        run-status marker of its own and leaves foreign labels alone.
+        """
         ...
 
     # @stub-protected

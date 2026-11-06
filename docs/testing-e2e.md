@@ -82,11 +82,10 @@ through `GitSessionGuard.finalize` against the bare remote.
 
 - **Run outcome** — the run completed (`ExitCode.ADVANCE`) with an `approved`
   turn outcome, and every phase in `PHASES` ran.
-- **Branch create → merge → push order** — a `checkout -b feature/…` line comes
-  before a `merge --no-edit origin/main` line, which comes before a
-  `push origin HEAD:refs/heads/feature/…` line.
-- **Real effects** — the bare remote's `feature/…` ref equals the session HEAD,
-  and `origin/main` is an ancestor of it (the base was really merged).
+- **Branch create → push order** — a `checkout -b feature/…` line comes before a
+  `push origin HEAD:refs/heads/feature/…` line, and no `merge --no-edit
+  origin/main` line ran: a clean base stays out of the branch (issue #1242).
+- **Real effects** — the bare remote's `feature/…` ref equals the session HEAD.
 - **Finalize retry** — exactly one rejection was recorded and it mentions
   `finalize rejected`; the second turn's finalize was accepted.
 - **Run artefacts** — the `LocalAdapter` run directory holds `journal.md`,

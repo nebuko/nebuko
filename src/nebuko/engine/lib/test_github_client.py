@@ -10,6 +10,8 @@ from nebuko.engine.lib.github_client import (
     COMMENTS_PER_PAGE,
     ApiErrorKind,
     GitHubTransport,
+    add_label_to_issue,
+    ensure_label,
     get_comment_body,
     get_authenticated_user,
     get_issue_comments,
@@ -17,6 +19,7 @@ from nebuko.engine.lib.github_client import (
     post_comment,
     minimize_comment,
     ensure_bot_marker,
+    remove_label_from_issue,
 )
 
 
@@ -282,6 +285,46 @@ class TestPostComment:
 
         assert result.ok is False
         assert result.error_kind == ApiErrorKind.SECONDARY_RATE_LIMIT
+
+
+class TestLabels:
+    """Run-status labels (issue #1336): create-if-missing, add, remove."""
+
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
+    def test_ensure_label_creates_a_missing_label(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"name": "nebuko:gated"}))
+
+        assert ensure_label("owner/repo", "nebuko:gated") is True
+
+        args = mock_run.call_args[0][0]
+        assert "POST" in args
+        assert "/repos/owner/repo/labels" in args
+
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
+    def test_ensure_label_treats_already_exists_as_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="Validation Failed (HTTP 422)"
+        )
+
+        assert ensure_label("owner/repo", "nebuko:gated", transport=_transport()) is True
+
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
+    def test_remove_label_treats_an_absent_label_as_success(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Not Found (HTTP 404)")
+
+        assert (
+            remove_label_from_issue("owner/repo", 42, "nebuko:running", transport=_transport())
+            is True
+        )
+
+    @patch("nebuko.engine.lib.github_client.subprocess.run")
+    def test_add_label_targets_the_issue_labels_endpoint(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="[]")
+
+        assert add_label_to_issue("owner/repo", 42, "nebuko:gated") is True
+
+        args = mock_run.call_args[0][0]
+        assert "/repos/owner/repo/issues/42/labels" in args
 
 
 class TestMinimizeComment:
