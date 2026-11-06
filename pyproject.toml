@@ -48,6 +48,7 @@ hook-dirs = "nebuko.engine._pyinstaller_hooks:hook_dirs"
 dev = [
     "pytest>=8",
     "pytest-mock>=3",
+    "pytest-xdist>=3",
 ]
 
 [tool.setuptools.packages.find]
@@ -61,6 +62,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests", "src/nebuko/engine/lib"]
+# `slow` tests each spawn a fresh interpreter that imports the agent SDK (~10s).
+# The fast run skips them: `uv run pytest -n 4 -m "not slow"`. CI runs everything.
+markers = [
+    "slow: spawns a fresh interpreter that imports the agent SDK (~10s each); skipped by the fast run",
+]
 
 [tool.mypy]
 # The engine library is a real subpackage (issue #1165): type checkers resolve

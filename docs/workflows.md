@@ -83,7 +83,8 @@ stays the base identity. Injection order in the agent context:
 `### 🔴 STEP INSTRUCTION (from workflow.yaml)`).
 
 **Mechanics.** The resolver writes the prompt verbatim to
-`/tmp/step_prompt.md` and emits `STEP_PROMPT_FILE` (path only — the prompt may
+`/tmp/step_prompt.md` (`STEP_PROMPT_PATH`; tests redirect it with
+`NEBUKO_STEP_PROMPT_DIR`) and emits `STEP_PROMPT_FILE` (path only — the prompt may
 contain newlines). When the step has no `prompt`, the variable is empty and any
 stale file is removed, so existing workflows are unaffected. Multi-line YAML
 block scalars (`|` / `>`) are supported.
