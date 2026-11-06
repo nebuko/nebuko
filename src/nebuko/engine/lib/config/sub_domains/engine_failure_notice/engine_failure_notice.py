@@ -31,7 +31,7 @@ _FAILURE_MARKER = "<!-- bot-engine-failure -->"
 # ``{ping}`` is the ``@login`` mention; it is the only place a human is
 # notified, and the engine owns it.
 _LINE = (
-    "{ping} workflow **{workflow}** failed at step `{step}` "
+    "{ping}workflow **{workflow}** failed at step `{step}` "
     "({phase} phase): {error}\n\n"
     "Run: {run_url} — branch pushed: {pushed}.\n"
     "{aftermath}\n"
@@ -92,7 +92,7 @@ class EngineFailureNotice(BaseModel):
                 _BOT_MARKER,
                 _FAILURE_MARKER,
                 _LINE.format(
-                    ping=f"@{self.target}",
+                    ping=f"@{self.target} " if self.target else "",
                     workflow=self.workflow or "unknown",
                     step=self.step or "unknown",
                     phase=self.phase or "unknown",

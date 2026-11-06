@@ -2148,6 +2148,38 @@ class TestHumanActionSinglePing:
         # The human-aware halt body is the only ping: no second engine notice.
         assert "<!-- bot-human-action -->" not in outcome.posted_body
 
+    def test_a_bot_only_chain_posts_the_halt_without_a_dangling_ping(
+        self, tmp_path, monkeypatch
+    ):
+        """#1295: when no human resolves, the notice carries no ``@`` at all."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body=_soft_kill_comment_body(), number=1295),
+            env={"TRIGGER_AUTHOR": "nebuko[bot]"},
+        )
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body=_soft_kill_comment_body(),
+            type="issue_comment",
+            number=1295,
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SOFT_RETRY_EXHAUSTED": "true",
+                "REASON": "Soft time-kill: budget exhausted; resume with /nebuko resume.",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.posted_body is not None
+        assert "/nebuko resume" in outcome.posted_body
+        assert "@nebuko" not in outcome.posted_body
+        assert "@ " not in outcome.posted_body
+
     def test_the_follow_up_terminal_skip_run_posts_no_notice(self, tmp_path, monkeypatch):
         """Only the *completing* run announces the end of the workflow (#795)."""
         engine = _engine(tmp_path)

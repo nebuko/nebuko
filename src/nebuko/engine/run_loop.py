@@ -1430,7 +1430,7 @@ class Engine:
             self._stage_failed_comment()
             _gha_error(f"comment publish failed: {error or 'unknown error'}")
         body = (
-            f"@{self._trigger_author()} the engine could not prepare the agent's "
+            f"{self._human_ping()}the engine could not prepare the agent's "
             f"comment ({error or 'unknown error'}). The agent's output follows.\n"
             f"\n{_posted_answer_of(agent_result)}"
         )
@@ -1701,7 +1701,7 @@ class Engine:
         the hold.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -1721,7 +1721,7 @@ class Engine:
         a failed post must not mask the terminal outcome.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -3953,6 +3953,15 @@ class Engine:
             if login and not is_bot_login(login):
                 return login
         return ""
+
+    def _human_ping(self, state: WorkflowState | None = None) -> str:
+        """The ``@login `` mention for the engine's notices, or nothing.
+
+        When no human resolves (a bot-only trigger chain) the notice is posted
+        without a mention rather than a dangling ``@`` or a bot ping (#1295).
+        """
+        author = self._trigger_author(state)
+        return f"@{author} " if author else ""
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
         """Return the agent's own state artifact, else the previous state.
