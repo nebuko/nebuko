@@ -20,6 +20,8 @@ from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
     EVENT_LOG_FILE,
+    METRICS_DIR_NAME,
+    METRICS_LOG_FILE,
     PERSISTENCE_DIR_NAME,
     SDK_APP_LOG_FILE,
     ArtifactFile,
@@ -73,6 +75,7 @@ class TestRunArtifactStager:
             ArtifactFile(name=CONSOLE_LOG_FILE, path=staging.resolve() / CONSOLE_LOG_FILE),
             ArtifactFile(name=APP_LOG_FILE, path=staging.resolve() / APP_LOG_FILE),
             ArtifactFile(name=EVENT_LOG_FILE, path=staging.resolve() / EVENT_LOG_FILE),
+            ArtifactFile(name=METRICS_LOG_FILE, path=staging.resolve() / METRICS_LOG_FILE),
         )
         assert all(artifact.path.is_absolute() for artifact in files)
 
@@ -88,7 +91,7 @@ class TestRunArtifactStager:
 
         names = [artifact.name for artifact in RunArtifactStager(staging).artifact_files()]
 
-        assert names == ["console.txt", "app.txt", "events.jsonl"]
+        assert names == ["console.txt", "app.txt", "events.jsonl", "metrics.jsonl"]
 
     def test_bundle_renames_the_sdk_app_log_to_app_txt(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"
@@ -111,6 +114,7 @@ class TestRunArtifactStager:
             "console.txt",
             "app.txt",
             "events.jsonl",
+            "metrics.jsonl",
         ]
 
     def test_bundle_without_persistence_writes_no_event_log(self, tmp_path):
@@ -162,6 +166,49 @@ class TestRunArtifactStager:
         RunArtifactStager(staging).bundle("console output")
 
         assert not (staging / EVENT_LOG_FILE).exists()
+
+
+class TestMetricsBundle:
+    def test_bundle_without_staged_metrics_writes_no_metrics_log(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / METRICS_LOG_FILE).exists()
+
+    def test_bundle_emits_one_compact_json_line_per_staged_run(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        metrics = staging / METRICS_DIR_NAME
+        metrics.mkdir(parents=True)
+        # Pretty-printed on disk (as save_metrics_json writes it), one line in the bundle.
+        (metrics / "metrics-bbb.json").write_text('{\n  "run_id": "bbb"\n}', encoding="utf-8")
+        (metrics / "metrics-aaa.json").write_text('{\n  "run_id": "aaa"\n}', encoding="utf-8")
+
+        RunArtifactStager(staging).bundle("console output")
+
+        bundled = (staging / METRICS_LOG_FILE).read_text(encoding="utf-8")
+        assert bundled == '{"run_id":"aaa"}\n{"run_id":"bbb"}\n'
+
+    def test_bundle_skips_an_unparsable_metrics_file(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        metrics = staging / METRICS_DIR_NAME
+        metrics.mkdir(parents=True)
+        (metrics / "metrics-bad.json").write_text("{not json", encoding="utf-8")
+        (metrics / "metrics-ok.json").write_text('{"run_id": "ok"}', encoding="utf-8")
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert (staging / METRICS_LOG_FILE).read_text(encoding="utf-8") == '{"run_id":"ok"}\n'
+
+    def test_bundle_with_only_unparsable_metrics_writes_no_log(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        metrics = staging / METRICS_DIR_NAME
+        metrics.mkdir(parents=True)
+        (metrics / "metrics-bad.json").write_text("{not json", encoding="utf-8")
+
+        RunArtifactStager(staging).bundle("console output")
+
+        assert not (staging / METRICS_LOG_FILE).exists()
 
 
 class TestArtifactFile:
