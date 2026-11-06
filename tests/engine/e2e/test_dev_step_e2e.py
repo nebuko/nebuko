@@ -2,8 +2,8 @@
 
 The test drives the whole ten-phase :meth:`Engine.run` for a dev step and locks
 the three things a real run depends on: the engine creates the feature branch,
-merges the base into it and pushes it (in that order, with real git effects on a
-local bare remote); the run completes; and a malformed ``finalize`` (missing
+leaves a clean base out of it (issue #1242) and pushes it (with real git effects
+on a local bare remote); the run completes; and a malformed ``finalize`` (missing
 ``appreciation``) is rejected and retried until the second, correct call lands.
 
 Only the LLM (``agent_runner._load_pipeline``) and PR creation
@@ -220,8 +220,8 @@ def _dev_checkout(tmp_path) -> Path:
 
     The remote also carries a previous round's ``BRANCH`` and the base moves on
     after it was cut, so the scaffold takes its existing-branch path (checkout
-    the branch, merge the base) — what a second dev turn on the issue really
-    does.
+    the branch, probe the base, no merge on a clean probe) — what a second dev
+    turn on the issue really does.
     """
     import subprocess
 
@@ -327,7 +327,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
+def test_dev_step_e2e_branch_push_and_finalize_retry(tmp_path, monkeypatch) -> None:
     """The single red-then-green e2e test."""
     # given: a real checkout on a bare remote and a wrong-then-right scripted LLM
     root = _dev_checkout(tmp_path)
@@ -369,20 +369,18 @@ def test_dev_step_e2e_branch_merge_push_and_finalize_retry(tmp_path, monkeypatch
     assert outcome.turn_outcome.appreciation is Appreciation.APPROVED
     assert tuple(outcome.phases) == PHASES
 
-    # then: branch created, base merged, branch pushed — in that order
+    # then: branch created then pushed, and the clean base was not merged
     created = recorder.matching(f"checkout -b {BRANCH}")
     merged = recorder.matching("merge --no-edit origin/main")
     pushed = recorder.matching(f"push origin HEAD:refs/heads/{BRANCH}")
     assert created, recorder.commands
-    assert merged, recorder.commands
+    assert not merged, recorder.commands
     assert pushed, recorder.commands
-    assert recorder.commands.index(created[0]) < recorder.commands.index(merged[0])
-    assert recorder.commands.index(merged[0]) < recorder.commands.index(pushed[0])
+    assert recorder.commands.index(created[0]) < recorder.commands.index(pushed[0])
 
-    # then: the effects are real — the remote branch is the session HEAD, merged
+    # then: the effects are real — the remote branch is the session HEAD
     remote_sha = _git(tmp_path / "origin.git", "rev-parse", f"refs/heads/{BRANCH}")
     assert remote_sha == _git(root, "rev-parse", "HEAD")
-    _git(root, "merge-base", "--is-ancestor", "origin/main", "HEAD")
 
     # then: the first finalize was rejected, the second was accepted
     rejections = conversation.rejection_texts()
