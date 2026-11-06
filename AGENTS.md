@@ -49,6 +49,37 @@ Test-writing pitfalls that have broken `main` before:
 - Red spec tests (`# @stub-protected`) must not be merged to `main` without
   their implementation; if the feature is dropped, delete the tests.
 
+## Debugging engine decisions (replay helper)
+`src/nebuko/engine/lib/replay.py` replays the engine's **per-invocation routing
+and complexity decisions** from a recorded state — no LLM, no agent, no GitHub
+writes. Use it instead of writing scratch `/tmp/*.py` scripts that extract the
+`WORKFLOW_STATE` block and hand-build `prev_state` / `turn_outcome` inputs.
+
+```bash
+# from an issue (fetches body + comments; needs --repo or GITHUB_REPOSITORY)
+uv run python -m nebuko.engine.lib.replay --issue 1299 --entry 14
+# from a saved state, fully offline
+uv run python -m nebuko.engine.lib.replay --state state.json --all-entries
+uv run python -m nebuko.engine.lib.replay --state state.json --json
+```
+
+One row per invocation: step, agent, base tier, recorded vs replayed delta,
+governor trigger + rationale, final `CONFIG_COMPLEXITY`, next step/agent. The
+header prints the policy and env overrides used. Rules of thumb:
+
+- A `recΔ` / `replayΔ` mismatch, or a `*` on the step name, means the replay
+  disagrees with the live run — report it, do not paper over it.
+- The replay uses the **checkout's** policy; if the state's pinned policy
+differs the header warns and the tier comparison is inconclusive.
+- Entry 0 is the seed invocation and has no resolution; triggers for later
+  entries are reconstructed (`[resume trigger]` / `[gate trigger]`).
+- `--state` never touches the network, so it works as an offline regression
+  harness: fixtures live in `src/nebuko/engine/lib/fixtures/` and the run-19
+  state from #1299 is pinned by `TestRun19Regression`.
+
+Full reference: [docs/replay.md](docs/replay.md). Tests:
+`uv run pytest src/nebuko/engine/lib/test_replay.py`.
+
 ## Where workflows live
 Workflow definitions ship in `defaults/workflows/` (e.g. `default.yaml`); per-repo
 overrides go in `.nebuko/workflows/`. Resolve them through

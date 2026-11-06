@@ -20,6 +20,7 @@ For the high-level pitch and quick overview, see the root
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
 | [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L11, CLI usage, exit codes, CI integration. |
+| [replay.md](./replay.md) | Contributors | Deterministic, no-LLM replay of per-invocation routing and complexity decisions from a workflow state (issue or state file). |
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 5 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
 | [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
