@@ -19,6 +19,7 @@ from nebuko.engine.lib.replay import (
 )
 from nebuko.engine.lib.workflow_state import (
     GateDecision,
+    GateLock,
     build_state,
 )
 
@@ -121,7 +122,9 @@ class TestLoadState:
 
     def test_wrapper_object(self):
         state = _state()
-        loaded = load_state_from_text(json.dumps({"state": json.loads(state.model_dump_json())}))
+        loaded = load_state_from_text(
+            json.dumps({"state": json.loads(state.model_dump_json())})
+        )
         assert loaded is not None
         assert loaded.step == "implement"
 
@@ -175,7 +178,14 @@ class TestGateReconstruction:
             position=[{"workflow": "gated", "step": "implement"}],
             turn_outcome=replay_turn_outcome(),
         )
-        return state.model_copy(update={"gate_history": list(decisions)})
+        # The live writer arms the lock when the gated step completes
+        # (``apply_gate_lock``), so a real state carries it.
+        return state.model_copy(
+            update={
+                "gate": GateLock(step="plan"),
+                "gate_history": list(decisions),
+            }
+        )
 
     def test_armed_gate_is_rebuilt_for_a_gated_step(self, tmp_path):
         workflows = _gated_workflow(tmp_path)
@@ -185,7 +195,16 @@ class TestGateReconstruction:
         assert prev.gate.step == "plan"
         assert prev.gate.armed()
 
-    def test_recorded_decision_releases_the_gate(self, tmp_path):
+    def test_legacy_state_without_a_lock_is_not_armed(self, tmp_path):
+        workflows = _gated_workflow(tmp_path)
+        state = self._gated_state().model_copy(
+            update={"gate": None, "gate_history": []}
+        )
+        prev = rebuild_prev_state(state, 1, str(workflows))
+        assert prev is not None
+        assert prev.gate is None
+
+    def test_recorded_decision_becomes_the_next_trigger(self, tmp_path):
         workflows = _gated_workflow(tmp_path)
         decision = GateDecision(
             status="approved",
@@ -196,11 +215,38 @@ class TestGateReconstruction:
             comment_id=101,
             position=[StepRef(workflow="gated", step="plan")],
         )
-        prev = rebuild_prev_state(
-            self._gated_state([decision]), 1, str(workflows)
-        )
+        state = self._gated_state([decision])
+        prev = rebuild_prev_state(state, 1, str(workflows))
+        # The decision landed after the hold's own comment, so it *is* the next
+        # invocation's trigger: the lock is still armed when that command runs.
         assert prev is not None
-        assert prev.gate is None
+        assert prev.gate is not None
+        trigger = replay.invocation_trigger(state, 1, str(workflows))
+        assert trigger is not None
+        assert trigger.kind == "gate"
+        assert trigger.is_bot is False
+        assert trigger.body.startswith("/nebuko approve gate")
+
+    def test_gate_command_routes_the_released_step(self, tmp_path):
+        workflows = _gated_workflow(tmp_path)
+        decision = GateDecision(
+            status="approved",
+            workflow="gated",
+            target_step="plan",
+            decided_by="human",
+            decided_at=datetime.now(timezone.utc),
+            comment_id=101,
+            position=[StepRef(workflow="gated", step="plan")],
+        )
+        row = replay_entry(
+            self._gated_state([decision]),
+            1,
+            workflows_dir=str(workflows),
+            prompt_base=PROMPT_BASE,
+        )
+        assert row.trigger_kind == "gate"
+        assert (row.resolved_step, row.resolved_agent) == ("implement", "dev")
+        assert row.matches
 
     def test_replay_of_a_gated_step_holds(self, tmp_path):
         workflows = _gated_workflow(tmp_path)
@@ -213,6 +259,69 @@ class TestGateReconstruction:
         assert "human_gate_hold" in row.skip_kind
         assert "human_gate:plan held" in row.note
         assert (row.step, row.agent) == ("implement", "dev")
+
+
+class TestTriggerReconstruction:
+    def _resumed_state(self):
+        """A crashed step that the next invocation resumed."""
+        from nebuko.engine.lib.workflow_state import (
+            IncompleteReason,
+            TurnOutcome,
+            TurnStatus,
+        )
+
+        state = build_state(
+            None,
+            workflow="wf",
+            step="analyze",
+            agent="architect",
+            position=[{"workflow": "wf", "step": "analyze"}],
+            turn_outcome=TurnOutcome(
+                status=TurnStatus.INCOMPLETE,
+                incomplete_reason=IncompleteReason.FAILURE,
+            ),
+        )
+        return build_state(
+            state,
+            workflow="wf",
+            step="plan",
+            agent="architect",
+            position=[{"workflow": "wf", "step": "plan"}],
+            turn_outcome=replay_turn_outcome(),
+        )
+
+    def test_crashed_step_is_resumed_by_a_human(self, tmp_path):
+        workflows = _linear_workflow(tmp_path)
+        trigger = replay.invocation_trigger(
+            self._resumed_state(), 1, str(workflows)
+        )
+        assert trigger is not None
+        assert trigger.kind == "resume"
+        assert trigger.is_bot is False
+        assert trigger.body.startswith("/nebuko resume")
+
+    def test_resumed_entry_replays_the_rerun(self, tmp_path):
+        workflows = _linear_workflow(tmp_path)
+        row = replay_entry(
+            self._resumed_state(),
+            1,
+            workflows_dir=str(workflows),
+            prompt_base=PROMPT_BASE,
+        )
+        assert row.trigger_kind == "resume"
+        assert (row.resolved_step, row.resolved_agent) == ("analyze", "architect")
+
+    def test_ordinary_step_uses_the_bot_trigger(self, tmp_path):
+        workflows = _linear_workflow(tmp_path)
+        trigger = replay.invocation_trigger(_state(), 1, str(workflows))
+        assert trigger is not None
+        assert trigger.kind == "bot"
+        assert trigger.is_bot is True
+        assert trigger.body.startswith("<!-- bot-workflow-terminal -->")
+
+    def test_seed_entry_has_no_trigger(self, tmp_path):
+        workflows = _linear_workflow(tmp_path)
+        assert replay.invocation_trigger(_state(), 0, str(workflows)) is None
 
 
 class TestReplayEntry:
@@ -367,6 +476,51 @@ class TestCli:
         code = main(["--issue", "1299"])
         assert code == 2
         assert "--repo" in capsys.readouterr().err
+
+
+class TestRun19Regression:
+    """The run-19 state from #1299, replayed without an ad hoc script."""
+
+    def _state_path(self):
+        from pathlib import Path
+
+        fixtures = Path(replay.__file__).parent / "fixtures"
+        return fixtures / "workflow_state_issue1299_spec_tdd.json"
+
+    def test_per_entry_tiers(self):
+        import nebuko.engine.lib.default_paths as default_paths
+
+        state = load_state_from_text(self._state_path().read_text())
+        assert state is not None
+        shipped, local = default_paths.workflow_dirs()
+        rows = replay_entries(
+            state,
+            workflows_dir=shipped,
+            local_workflows_dir=local,
+            prompt_base=default_paths.config_dir("prompts", "PROMPT_BASE"),
+        )
+        assert [(r.step, r.config_complexity) for r in rows] == [
+            ("analyze", "N/A"),
+            ("context", "medium"),
+            ("plan", "high"),
+            ("plan", "low"),
+            ("spec", "high"),
+            ("plan", "high"),
+            ("plan", "low"),
+            ("spec", "medium"),
+        ]
+        # The two re-planned entries were resumed by a human command, not by
+        # the engine's bot trigger.
+        assert [r.trigger_kind for r in rows] == [
+            "seed",
+            "bot",
+            "bot",
+            "resume",
+            "bot",
+            "bot",
+            "resume",
+            "bot",
+        ]
 
 
 class TestIssueLoading:

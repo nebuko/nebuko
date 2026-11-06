@@ -28,10 +28,18 @@ Fidelity limits (all deterministic, all reported in the header):
 * Entry 0 is the seed invocation — the live run started from a human command
   and a trigger body, neither of which is recorded in state, so it is listed
   without a resolution.
+* The trigger of every later invocation is reconstructed from the previous
+  entry: a recorded :class:`GateDecision` that consumed its hold means a human
+  ``/nebuko approve|reject gate``; a parked outcome that only a human can clear
+  (``hold`` or a crashed run) means ``/nebuko resume``; everything else is the
+  engine's own bot trigger. Rows whose trigger was reconstructed say so.
 * A pending ``function_call`` hand-off and the per-step ``soft_retry`` counter
   are not recorded per history entry, so they cannot be reconstructed.
 * ``parent_workflow``/``parent_workflow_step`` are derived from the recorded
   position chain rather than from the (unrecorded) state fields.
+* A legacy snapshot that recorded neither a gate lock nor a gate decision is
+  replayed without a lock: the live writer arms one when a gated step
+  completes, so inventing it would report a hold the run never had.
 * The replay uses the *checkout's* complexity policy, which may differ from the
   one pinned when the run happened; the header says so when it does.
 """
@@ -42,8 +50,9 @@ import argparse
 import json
 import os
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any, Iterator, Optional, Sequence
 
 from nebuko.engine.lib.complexity_governor.complexity_governor import (
     ComplexityAdjustment,
@@ -54,8 +63,11 @@ from nebuko.engine.lib.config.sub_domains.complexity_policy.complexity_policy im
 )
 from nebuko.engine.lib.resolve_config import resolve_config
 from nebuko.engine.lib.workflow_state import (
+    Appreciation,
     GateDecision,
     GateLock,
+    IncompleteReason,
+    TurnStatus,
     WorkflowState,
 )
 from nebuko.engine.lib.workflow_state.features.get_last_state.get_last_state import (
@@ -72,6 +84,8 @@ __all__ = [
     "PolicyProvenance",
     "load_state_from_text",
     "load_state_from_issue",
+    "invocation_trigger",
+    "InvocationTrigger",
     "rebuild_prev_state",
     "replay_entry",
     "replay_entries",
@@ -93,6 +107,20 @@ _PROVENANCE_ENV = (
 #: The engine's own marker, so the replayed body classifies as a bot comment
 #: exactly like the comment the live run was triggered from.
 _TRIGGER_MARKER = "<!-- bot-workflow-terminal -->"
+
+#: Human commands a replayed invocation may have been started by. The live
+#: trigger body is not recorded, so it is reconstructed from the previous
+#: entry's state (see :func:`invocation_trigger`).
+_RESUME_TRIGGER = "/nebuko resume\n"
+_GATE_TRIGGERS = {
+    "approved": "/nebuko approve gate\n",
+    "rejected": "/nebuko reject gate\n",
+}
+
+#: Repository association the replay assumes for a reconstructed gate command.
+#: ``MEMBER`` is in ``DEFAULT_GATE_ALLOWLIST``; the deciding login comes from
+#: the recorded :class:`GateDecision` when there is one.
+_REPLAY_GATE_ASSOCIATION = "MEMBER"
 
 
 # ── State loading ─────────────────────────────────────────────────────────
@@ -152,42 +180,64 @@ def load_state_from_issue(
 # ── prev_state reconstruction ─────────────────────────────────────────────
 
 
-def _gate_was_released(
-    decisions: Sequence[GateDecision], entry_comment_ids: Sequence[int]
-) -> bool:
-    """True when a recorded decision consumed the hold this entry raised.
+def _pending_decision(
+    decisions: Sequence[GateDecision],
+    entry_comment_ids: Sequence[int],
+    next_comment_ids: Sequence[int],
+) -> Optional[GateDecision]:
+    """The decision that *is* the trigger of the invocation after ``entry``.
 
-    Decisions are ordered against the entry's own comment ids (monotonic on
-    GitHub). A decision without a comment id cannot be ordered, so it is read
-    as having released the hold — a spurious hold would misreport the routing,
-    while a released reading only reproduces what the live run did next.
+    A hold is released only by a human ``/nebuko approve|reject gate`` command,
+    so a decision ordered after the entry's own output comments (and before the
+    next entry's) was that command — its comment is the next invocation's
+    trigger, not a fact the invocation already saw.
     """
-    if not decisions:
-        return False
-    ids = [cid for cid in entry_comment_ids if cid]
-    if not ids:
-        return True
-    latest = max(ids)
-    return any(
-        decision.comment_id is None or decision.comment_id > latest
-        for decision in decisions
-    )
+    entry_ids = [cid for cid in entry_comment_ids if cid]
+    next_ids = [cid for cid in next_comment_ids if cid]
+    lower = max(entry_ids) if entry_ids else None
+    upper = min(next_ids) if next_ids else None
+    for decision in decisions:
+        if decision.comment_id is None:
+            return decision
+        if lower is not None and decision.comment_id <= lower:
+            continue
+        if upper is not None and decision.comment_id >= upper:
+            continue
+        return decision
+    return None
+
+
+@dataclass(frozen=True)
+class _GateState:
+    """The root gate lock as it stood before one invocation, plus its trigger."""
+
+    gate: Optional[GateLock] = None
+    #: The gate command that starts this invocation (None for other triggers).
+    decision: Optional[GateDecision] = None
+    note: str = ""
 
 
 def _gate_before(
     state: WorkflowState,
     entry,
+    next_entry,
     workflow: str,
     position: list,
     workflows_dir: str,
     local_workflows_dir: Optional[str],
-) -> Optional[GateLock]:
+) -> _GateState:
     """The root gate lock as it stood before the invocation that followed ``entry``.
 
     Mirrors the live arming rule: a ``human_gate: true`` step raises the lock
     when it completes, and only a recorded :class:`GateDecision` for that exact
-    hold releases it. ``consult_rounds``/``last_handoff`` are not recorded per
-    entry, so an armed reconstruction starts with a fresh budget.
+    hold releases it. A crashed run has nothing to approve, so it carries no
+    fresh lock (``apply_gate_lock``). ``consult_rounds``/``last_handoff`` are
+    not recorded per entry, so an armed reconstruction starts with a fresh
+    budget.
+
+    When the release decision is the *next* invocation's trigger, the lock is
+    reported armed and the decision is returned so the caller can rebuild that
+    command.
     """
     from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
         _is_human_gate_step,
@@ -195,17 +245,36 @@ def _gate_before(
 
     step = entry.step or (position[-1].step if position else "")
     if not (workflow and step):
-        return None
+        return _GateState()
     if not _is_human_gate_step(workflow, step, workflows_dir, local_workflows_dir):
-        return None
+        return _GateState()
+    if state.gate is None and not (state.gate_history or []):
+        # The live writer arms the lock when a gated step completes
+        # (``apply_gate_lock``), so a run that recorded neither a lock nor a
+        # decision never had one: a legacy snapshot predating issue #1003, or a
+        # run whose gated step was released. Arming one here would invent a
+        # hold the live run never saw.
+        return _GateState(note="no gate lock recorded in this run's state")
+    outcome = entry.turn_outcome
+    if outcome is not None and outcome.status == TurnStatus.INCOMPLETE:
+        if outcome.incomplete_reason == IncompleteReason.FAILURE:
+            return _GateState()
     decisions = [
         decision
         for decision in (state.gate_history or [])
         if decision.is_for(workflow, step, position)
     ]
-    if _gate_was_released(decisions, list(entry.comment_ids or [])):
-        return None
-    return GateLock(step=step)
+    pending = _pending_decision(
+        decisions,
+        list(entry.comment_ids or []),
+        list(next_entry.comment_ids or []) if next_entry is not None else [],
+    )
+    if pending is not None:
+        return _GateState(gate=GateLock(step=step), decision=pending)
+    # No decision is this invocation's trigger, so the hold the entry raised is
+    # still armed — whether an older decision released an earlier instance or
+    # a later one releases this one.
+    return _GateState(gate=GateLock(step=step))
 
 
 def rebuild_prev_state(
@@ -222,6 +291,17 @@ def rebuild_prev_state(
     outcome and its run preferences. Returns ``None`` for the seed invocation
     (index 0), which had no prior state.
     """
+    rebuilt = _rebuild(state, index, workflows_dir, local_workflows_dir)
+    return None if rebuilt is None else rebuilt[0]
+
+
+def _rebuild(
+    state: WorkflowState,
+    index: int,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[tuple[WorkflowState, _GateState]]:
+    """``(prev_state, gate)`` for invocation ``index``; ``None`` for the seed."""
     if index <= 0:
         return None
     history = list(state.history)
@@ -232,6 +312,14 @@ def rebuild_prev_state(
     prior = history[:index]
     last = prior[-1]
     position = list(last.position or [])
+    if not position:
+        # A legacy entry can record no position at all (a human command that
+        # advanced the workflow). The position it consumed is the last one the
+        # log still names, so fall back to it instead of the run's final step.
+        for earlier in reversed(prior[:-1]):
+            if earlier.position:
+                position = list(earlier.position)
+                break
     workflow = position[-1].workflow if position else state.workflow
     # A legacy entry can carry an empty scalar step while its position still
     # names the step that ran; recover it the way ``build_state`` does. The
@@ -239,7 +327,16 @@ def rebuild_prev_state(
     step = last.step or (position[-1].step if position else "")
     parent_workflow = position[-2].workflow if len(position) >= 2 else None
     parent_step = position[-2].step if len(position) >= 2 else None
-    return WorkflowState(
+    gate = _gate_before(
+        state,
+        last,
+        history[index] if index < len(history) else None,
+        workflow,
+        position,
+        workflows_dir,
+        local_workflows_dir,
+    )
+    prev_state = WorkflowState(
         run_id=index,
         schema_version=STATE_SCHEMA_VERSION,
         workflow=workflow,
@@ -251,12 +348,17 @@ def rebuild_prev_state(
         parent_workflow_step=parent_step,
         turn_outcome=last.turn_outcome,
         prefs=last.prefs,
-        gate=_gate_before(
-            state, last, workflow, position, workflows_dir, local_workflows_dir
-        ),
+        gate=gate.gate,
         gate_decision=state.gate_decision,
-        gate_history=list(state.gate_history or []),
-        scaffold_branch=state.scaffold_branch,
+        # A decision that *is* this invocation's trigger was not yet recorded
+        # when the live run resolved it (build_state appends it afterwards), so
+        # it must not appear in the state the resolver sees — the gate path
+        # refuses a hold that already carries a decision (single-shot).
+        gate_history=[
+            decision
+            for decision in (state.gate_history or [])
+            if decision is not gate.decision
+        ],        scaffold_branch=state.scaffold_branch,
         issue=state.issue,
         pull_request=state.pull_request,
         started_by=state.started_by,
@@ -267,14 +369,15 @@ def rebuild_prev_state(
         current_context=dict(state.current_context or {}),
         thread=list(state.thread or []),
     )
+    return prev_state, gate
 
 
-def trigger_body_for(prev_state: WorkflowState) -> str:
-    """The trigger body the live run consumed: bot marker + embedded state."""
+def trigger_body_for(prev_state: WorkflowState, *, bot_marker: bool = True) -> str:
+    """A trigger body carrying ``prev_state``: optional bot marker + state block."""
     payload = prev_state.model_dump(mode="json", exclude_defaults=True)
+    prefix = (_TRIGGER_MARKER + "\n") if bot_marker else ""
     return (
-        _TRIGGER_MARKER
-        + "\n"
+        prefix
         + STATE_MARKER_START
         + "\n"
         + json.dumps(payload)
@@ -282,6 +385,115 @@ def trigger_body_for(prev_state: WorkflowState) -> str:
         + STATE_MARKER_END
         + "\n"
     )
+
+
+@dataclass(frozen=True)
+class InvocationTrigger:
+    """The trigger the live run consumed, reconstructed from the prior entry."""
+
+    body: str
+    is_bot: bool
+    #: ``bot`` (engine auto-dispatch), ``resume``, ``gate`` or ``seed``.
+    kind: str = "bot"
+    #: The recorded gate decision, when ``kind == "gate"``.
+    decision: Optional[GateDecision] = None
+    note: str = ""
+
+
+def _is_human_only_halt(prev_state: WorkflowState) -> bool:
+    """True when only a human ``/nebuko resume`` can start the next invocation.
+
+    A crashed run and an ``awaiting_input`` hold park the step until a human
+    resumes it. A soft time-kill / interruption / checkpoint does *not*: the
+    engine retries it in place while the per-step budget lasts, and that
+    counter is not recorded per entry, so those stay on the bot trigger.
+    """
+    outcome = prev_state.turn_outcome
+    if outcome is None:
+        return False
+    if outcome.status == TurnStatus.COMPLETED:
+        return outcome.appreciation == Appreciation.HOLD
+    return outcome.incomplete_reason == IncompleteReason.FAILURE
+
+
+def invocation_trigger(
+    state: WorkflowState,
+    index: int,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str] = None,
+) -> Optional[InvocationTrigger]:
+    """The trigger of invocation ``index``, rebuilt from the entry before it.
+
+    The live trigger body is not persisted, so it is derived from the previous
+    entry's recorded facts: a gate decision that consumed its hold means a
+    human ``/nebuko approve|reject gate``; a parked outcome only a human can
+    clear means ``/nebuko resume``; anything else is the engine's own bot
+    trigger. Returns ``None`` for the seed invocation.
+    """
+    rebuilt = _rebuild(state, index, workflows_dir, local_workflows_dir)
+    if rebuilt is None:
+        return None
+    prev_state, gate = rebuilt
+    if gate.decision is not None:
+        # A gate command is a human comment: it must not carry the bot marker,
+        # which would classify the body as machine-authored and make the
+        # identity check reject the very decision being replayed.
+        return InvocationTrigger(
+            body=_GATE_TRIGGERS[gate.decision.status]
+            + trigger_body_for(prev_state, bot_marker=False),
+            is_bot=False,
+            kind="gate",
+            decision=gate.decision,
+        )
+    if gate.gate is None and _is_human_only_halt(prev_state):
+        return InvocationTrigger(
+            body=_RESUME_TRIGGER + trigger_body_for(prev_state, bot_marker=False),
+            is_bot=False,
+            kind="resume",
+        )
+    return InvocationTrigger(
+        body=trigger_body_for(prev_state),
+        is_bot=True,
+        kind="bot",
+        note=gate.note,
+    )
+
+
+@contextmanager
+def _gate_author_env(decision: Optional[GateDecision]) -> Iterator[None]:
+    """Expose a recorded gate decision's author to the identity check.
+
+    ``resolve_config`` reads the author from the CI event env; the replay has
+    only the recorded decision, so it is mapped back onto those variables.
+    """
+    if decision is None:
+        yield
+        return
+    from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+        _AUTHOR_ASSOCIATION_ENV,
+        _AUTHOR_LOGIN_ENV,
+        _AUTHOR_TYPE_ENV,
+        _TRIGGER_COMMENT_ID_ENV,
+    )
+
+    values = {
+        _AUTHOR_LOGIN_ENV: decision.decided_by,
+        _AUTHOR_TYPE_ENV: "User",
+        _AUTHOR_ASSOCIATION_ENV: _REPLAY_GATE_ASSOCIATION,
+        _TRIGGER_COMMENT_ID_ENV: (
+            str(decision.comment_id) if decision.comment_id is not None else ""
+        ),
+    }
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # ── One invocation ────────────────────────────────────────────────────────
@@ -305,6 +517,8 @@ class ReplayRow:
     resolved_step: str = ""
     resolved_agent: str = ""
     skip_kind: str = ""
+    #: How the invocation was started: ``seed``, ``bot``, ``resume`` or ``gate``.
+    trigger_kind: str = ""
     note: str = ""
 
     @property
@@ -332,6 +546,7 @@ class ReplayRow:
             "resolved_step": self.resolved_step,
             "resolved_agent": self.resolved_agent,
             "skip_kind": self.skip_kind,
+            "trigger_kind": self.trigger_kind,
             "matches": self.matches,
             "note": self.note,
         }
@@ -345,6 +560,14 @@ def _base_tier(effective: str, adjustment: Optional[ComplexityAdjustment]) -> st
         return effective
     index = max(0, min(len(TIERS) - 1, tier_index(effective) - adjustment.delta))
     return TIERS[index]
+
+
+def _entry_step(entry) -> str:
+    """The step a history entry ran, recovering a legacy empty scalar step."""
+    if entry is None:
+        return ""
+    position = list(entry.position or [])
+    return entry.step or (position[-1].step if position else "")
 
 
 def _next_agent(
@@ -385,6 +608,7 @@ def replay_entry(
             f"entry {index} out of range: state has {len(history)} history entries"
         )
     recorded = history[index]
+    recorded_step = _entry_step(recorded)
     recorded_adjustment = recorded.complexity_adjustment
     recorded_delta = (
         recorded_adjustment.delta if recorded_adjustment is not None else None
@@ -395,11 +619,12 @@ def replay_entry(
     # *effective* tier on the entry).
     recorded_base = _base_tier(recorded_tier, recorded_adjustment)
     recorded_next = history[index + 1] if index + 1 < len(history) else None
+    recorded_next_step = _entry_step(recorded_next) if recorded_next else ""
 
     if index == 0:
         return ReplayRow(
             entry=0,
-            step=recorded.step,
+            step=recorded_step,
             agent=recorded.agent,
             base_tier=recorded_base,
             recorded_delta=recorded_delta,
@@ -407,27 +632,39 @@ def replay_entry(
             trigger="",
             rationale="",
             config_complexity=recorded_tier,
-            next_step=recorded_next.step if recorded_next else "",
+            next_step=recorded_next_step,
             next_agent=recorded_next.agent if recorded_next else "",
+            trigger_kind="seed",
             note="seed invocation (no prior state to replay)",
         )
 
     prev_state = rebuild_prev_state(state, index, workflows_dir, local_workflows_dir)
     assert prev_state is not None  # index > 0
-    result = resolve_config(
-        trigger_body_for(prev_state),
-        prompt_base,
-        workflows_dir,
-        is_bot=True,
-        local_workflows_dir=local_workflows_dir,
-    )
+    trigger = invocation_trigger(state, index, workflows_dir, local_workflows_dir)
+    assert trigger is not None  # index > 0
+    with _gate_author_env(trigger.decision):
+        result = resolve_config(
+            trigger.body,
+            prompt_base,
+            workflows_dir,
+            is_bot=trigger.is_bot,
+            local_workflows_dir=local_workflows_dir,
+        )
 
     if result.get("SKIP_AGENT") == "true":
         skip_kind = result.get("SKIP_KIND", "")
         reason = result.get("REASON", "")
+        if result.get("RUN_SCRIPT") == "true":
+            # A script step is skipped by design (it runs a command, not an
+            # agent); it has no REASON, so name it instead of printing nothing.
+            note = f"script step '{result.get('WORKFLOW_STEP', '')}'"
+        elif reason:
+            note = f"skipped: {reason}"
+        else:
+            note = "skipped"
         return ReplayRow(
             entry=index,
-            step=recorded.step,
+            step=recorded_step,
             agent=recorded.agent,
             base_tier=recorded_base,
             recorded_delta=recorded_delta,
@@ -435,10 +672,11 @@ def replay_entry(
             trigger="",
             rationale="",
             config_complexity=result.get("CONFIG_COMPLEXITY", ""),
-            next_step=recorded_next.step if recorded_next else "",
+            next_step=recorded_next_step,
             next_agent=recorded_next.agent if recorded_next else "",
             skip_kind=skip_kind,
-            note=f"skipped: {reason}",
+            trigger_kind=trigger.kind,
+            note=note,
         )
 
     raw_adjustment = result.get("COMPLEXITY_ADJUSTMENT", "")
@@ -454,27 +692,33 @@ def replay_entry(
         # The run recorded where it actually went; prefer that over an empty
         # forward edge (a terminal step still has a recorded successor when the
         # engine advanced through a parent return).
-        next_step = next_step or recorded_next.step
+        next_step = next_step or recorded_next_step
     else:
         next_agent = _next_agent(
-            result.get("WORKFLOW_NAME", ""), next_step, workflows_dir, local_workflows_dir
+            result.get("WORKFLOW_NAME", ""),
+            next_step,
+            workflows_dir,
+            local_workflows_dir,
         )
 
     # The recorded decision is the live run's fact; the replay's is the
     # recomputation. Report the recorded one when it exists so a disagreement
     # is visible in the delta columns instead of being papered over.
     shown = recorded_adjustment or replay_adjustment
-    note = ""
+    notes = []
     if result.get("RUN_SCRIPT") == "true":
-        note = "script step"
-    elif not (resolved_step == recorded.step and resolved_agent == recorded.agent):
-        note = f"replay resolved {resolved_agent}/{resolved_step}"
+        notes.append("script step")
+    elif not (resolved_step == recorded_step and resolved_agent == recorded.agent):
+        notes.append(f"replay resolved {resolved_agent}/{resolved_step}")
+    if trigger.note:
+        notes.append(trigger.note)
 
     return ReplayRow(
         entry=index,
-        step=recorded.step,
+        step=recorded_step,
         agent=recorded.agent,
-        base_tier=recorded_base or _base_tier(effective, replay_adjustment),        recorded_delta=recorded_delta,
+        base_tier=recorded_base or _base_tier(effective, replay_adjustment),
+        recorded_delta=recorded_delta,
         replay_delta=replay_adjustment.delta if replay_adjustment else None,
         trigger=shown.trigger if shown is not None else "",
         rationale=shown.rationale if shown is not None else "",
@@ -483,7 +727,8 @@ def replay_entry(
         next_agent=next_agent,
         resolved_step=resolved_step,
         resolved_agent=resolved_agent,
-        note=note,
+        trigger_kind=trigger.kind,
+        note="; ".join(notes),
     )
 
 
@@ -618,8 +863,13 @@ def render_table(rows: Sequence[ReplayRow]) -> str:
         trigger = row.trigger or "-"
         if row.rationale:
             trigger = f"{trigger}: {row.rationale}"
+        notes = []
+        if row.trigger_kind in ("resume", "gate"):
+            notes.append(f"{row.trigger_kind} trigger")
         if row.note:
-            trigger = f"{trigger} [{row.note}]"
+            notes.append(row.note)
+        if notes:
+            trigger = f"{trigger} [{'; '.join(notes)}]"
         body.append(
             [
                 str(row.entry),
@@ -634,7 +884,9 @@ def render_table(rows: Sequence[ReplayRow]) -> str:
             ]
         )
     widths = [
-        max(len(headers[i]), *(len(line[i]) for line in body)) if body else len(headers[i])
+        max(len(headers[i]), *(len(line[i]) for line in body))
+        if body
+        else len(headers[i])
         for i in range(len(headers))
     ]
     def fmt(cells: Sequence[str]) -> str:
