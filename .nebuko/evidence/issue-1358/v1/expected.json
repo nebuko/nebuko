@@ -1,0 +1,6 @@
+{
+  "deltas": {
+    "failure_count": {"symptom": 31, "healthy": 4},
+    "subtest_count": {"symptom": 6, "healthy": 14}
+  }
+}

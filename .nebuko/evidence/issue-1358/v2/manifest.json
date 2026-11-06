@@ -1,0 +1,6 @@
+{
+  "files": {
+    "expected.json": "2da64666eb3b903987dfd8894fb035ddac49194d7585eb8c686ad6e1df149064",
+    "repro.sh": "c526f9e3304f33915e4605c5613ca7fe6ba0228239e4e0c02126fa87c126d6cc"
+  }
+}
