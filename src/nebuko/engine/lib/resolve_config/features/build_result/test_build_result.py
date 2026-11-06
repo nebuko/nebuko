@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from nebuko.engine.lib.resolve_config.features.build_result.build_result import _build_result
-from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT, step_prompt_path
 
 
 def _make_dirs():
@@ -171,19 +171,19 @@ class TestBuildResult:
         with open(os.path.join(workflows_dir, "wf.yaml"), "w") as f:
             f.write(wf_yaml)
         try:
-            if os.path.exists("/tmp/step_prompt.md"):
-                os.unlink("/tmp/step_prompt.md")
+            if os.path.exists(step_prompt_path()):
+                os.unlink(step_prompt_path())
             result = _build_result(
                 {"task": "dev", "config_workflow": "wf"},
                 prompt_base,
                 workflows_dir,
             )
-            assert result["STEP_PROMPT_FILE"] == "/tmp/step_prompt.md"
-            with open("/tmp/step_prompt.md") as f:
+            assert result["STEP_PROMPT_FILE"] == step_prompt_path()
+            with open(step_prompt_path()) as f:
                 assert f.read() == prompt
         finally:
-            if os.path.exists("/tmp/step_prompt.md"):
-                os.unlink("/tmp/step_prompt.md")
+            if os.path.exists(step_prompt_path()):
+                os.unlink(step_prompt_path())
 
 
 class TestConfigComplexityEmission:
