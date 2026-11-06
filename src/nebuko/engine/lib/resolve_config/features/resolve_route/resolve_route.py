@@ -397,8 +397,16 @@ def _gate_pending(prev_state: Optional["WorkflowState"]) -> bool:
     root :class:`GateLock`, which only an identity-verified
     ``/nebuko approve gate`` releases. The agent's own verdict is left intact
     (``approved`` means the work is done — it just cannot advance the step).
+
+    The lock only ever holds the step it was armed on (issue #1301): once the
+    workflow has moved on — by a direct agent call, ``--step`` or any other
+    route — the stale lock must not park a step that declares no gate.
     """
-    return _armed_gate(prev_state) is not None
+    gate = _armed_gate(prev_state)
+    if gate is None:
+        return False
+    current = _recover_current_step(prev_state)
+    return not gate.step or not current or gate.step == current
 
 
 def _human_gate_hold_result(step: str, note: str = "") -> dict:
@@ -876,6 +884,12 @@ def _callback_return_target(
     wf_name = (getattr(prev_state, "workflow", "") or "").strip()
     if not wf_name:
         return (callback, "")
+    # A consult from an armed gate returns to the gated step (issue #1301): the
+    # callee ran at its own step, but the caller's position is the gate, which
+    # stays armed. Resolving forward from the callee's step would lose it.
+    gate = _armed_gate(prev_state)
+    if gate is not None and gate.step:
+        return (callback, gate.step)
     target_step = _resolve_callee_step(
         wf_name,
         _recover_current_step(prev_state),
@@ -1285,7 +1299,7 @@ def _resolve_outcome_path(
     # workflow *advance*, never a delegation (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
@@ -1297,7 +1311,7 @@ def _resolve_outcome_path(
         if reject_route is not None:
             return reject_route
         return _human_gate_hold_result(
-            prev_state.step or "", _consult_exhausted_note(prev_state)
+            armed.step or prev_state.step or "", _consult_exhausted_note(prev_state)
         )
 
     config = _route_config_from_prefs(prev_state, prefs)
@@ -2426,7 +2440,7 @@ def _resolve_bot_fallback_path(
     # A pending agent-to-agent hand-off is routed first (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
@@ -2438,7 +2452,7 @@ def _resolve_bot_fallback_path(
         if reject_route is not None:
             return reject_route
         return _human_gate_hold_result(
-            getattr(prev_state, "step", "") or "",
+            armed.step or getattr(prev_state, "step", "") or "",
             _consult_exhausted_note(prev_state),
         )
 

@@ -518,7 +518,11 @@ def apply_gate_lock(
         root-level :class:`GateLock` (``None`` when this step is not gated).
     """
     if not _load_gated_step_def(workflow_name, workflow_step):
-        return outcome, gate
+        # Moving off the gated step resolves its lock (issue #1301): a lock
+        # armed for another step must not survive into an ungated one, where
+        # it would park a step that declares no gate and carry the consult
+        # budget across steps.
+        return outcome, None
     if gate is not None and gate.step == workflow_step and gate.armed():
         # A lock already armed for this step is preserved verbatim so a re-run
         # cannot reset the consult budget; a *released* lock (the human's
@@ -1366,7 +1370,13 @@ def build_output(
     )
     # A crashed run has nothing to approve: it carries the previous lock forward
     # but never arms a new one, so `/nebuko resume` can re-run the step.
+    gate_consult = _parse_gate_consult_env()
     if run_outcome is not None and run_outcome.status is OutcomeStatus.FAILURE:
+        gate = prev_state.gate if prev_state is not None else None
+    elif gate_consult:
+        # This run is the delegated consult (issue #1003): it executes at the
+        # callee's step, so the caller's lock is carried forward untouched —
+        # dropping it here would let the workflow advance past the gate.
         gate = prev_state.gate if prev_state is not None else None
     else:
         turn_outcome, gate = apply_gate_lock(
@@ -1387,7 +1397,6 @@ def build_output(
         _parse_gate_decision_env(),
         _parse_gate_released_env(),
     )
-    gate_consult = _parse_gate_consult_env()
     if gate_consult and gate is not None:
         # This run is the delegated consult (issue #1003): spend one round from
         # the root lock so the persisted ``consult_rounds`` actually counts the

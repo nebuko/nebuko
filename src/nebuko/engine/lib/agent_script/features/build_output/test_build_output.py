@@ -463,6 +463,23 @@ class TestGateLockArming(unittest.TestCase):
                 _, gate = apply_gate_lock(_completed(), "wf", "plan")
         self.assertIsNone(gate)
 
+    def test_non_gated_step_clears_a_lock_armed_on_another_step(self):
+        """Issue #1301: moving off the gated step resolves its lock."""
+        prior = GateLock(step="plan", consult_rounds=2, last_handoff="context")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n"
+                "    next: implement\n"
+                "  - name: implement\n    agent: dev\n    next: null\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_gate_lock(
+                    _completed(), "wf", "implement", gate=prior
+                )
+        self.assertIsNone(gate)
+
     def test_release_env_marks_the_lock_released(self):
         """The gate-decision run's own persist is released, not re-armed.
 
