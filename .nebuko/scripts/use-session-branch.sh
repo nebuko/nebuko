@@ -25,5 +25,22 @@ if [ "$count" -ne 1 ]; then
 fi
 
 git checkout --quiet --detach "origin/${branches}"
+branch_head=$(git rev-parse HEAD)
 echo "branch: ${branches}"
-echo "head: $(git rev-parse HEAD)"
+echo "head: ${branch_head}"
+
+# CI tests GitHub's PR merge commit (branch head merged into main), so the
+# red-test loop opts into the same shape of tree. Local only: never pushed.
+if [ "${NEBUKO_MERGE_MAIN:-}" = "1" ]; then
+  main_sha=$(git rev-parse origin/main)
+  if git -c user.name=nebuko -c user.email=nebuko@invalid merge \
+    --quiet --no-edit --no-ff origin/main; then
+    echo "tested: merge of ${branch_head} into ${main_sha}"
+  else
+    git merge --abort 2>/dev/null || true
+    echo "merge: conflict with origin/main; testing branch head"
+    echo "tested: branch head ${branch_head}"
+  fi
+else
+  echo "tested: branch head ${branch_head}"
+fi
