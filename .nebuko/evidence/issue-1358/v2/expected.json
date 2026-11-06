@@ -1,0 +1,14 @@
+{
+  "deltas": {
+    "subtest_count": {
+      "symptom": 6,
+      "healthy": 14,
+      "note": "executed unittest subtests in src/nebuko/engine/lib: workflow tests the branch head (6), CI tests the merge commit (14)"
+    },
+    "test_files": {
+      "symptom": 123,
+      "healthy": 124,
+      "note": "engine-lib test files: the merge tree adds test_replay.py, absent at the branch head the workflow checks out"
+    }
+  }
+}
