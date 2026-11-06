@@ -2130,22 +2130,20 @@ class Engine:
     def _declared_context_inputs(step: Any) -> list[ContextInput]:
         """Declared ``inputs:`` that name thread artifacts, in declaration order.
 
-        ``ref`` bindings name a step (``<step>`` / ``<step>.<field>``) or the
-        issue body; ``exec``/``str`` bindings are produced values, not selection
-        requests, and are ignored here.
+        A bare ``ref`` names a step or the issue body. Dotted refs
+        (``<step>.<field>``, ``input.<name>``) and ``exec``/``str`` bindings are
+        materialized values, not selection requests: they are ignored here, so
+        they add to the step's default context instead of replacing it.
         """
         inputs: list[ContextInput] = []
         for name, binding in dict(getattr(step, "inputs", None) or {}).items():
-            ref = getattr(binding, "ref", None)
-            if not ref:
+            ref = str(getattr(binding, "ref", None) or "")
+            if not ref or "." in ref:
                 continue
-            root = str(ref).split(".", 1)[0]
-            if root == ContextKind.ISSUE_BODY or root == "issue_body":
+            if ref == ContextKind.ISSUE_BODY or ref == "issue_body":
                 inputs.append(ContextInput(ContextKind.ISSUE_BODY))
-            elif root.startswith("input."):
-                continue
             else:
-                inputs.append(ContextInput(ContextKind.AGENT_OUTPUT, root))
+                inputs.append(ContextInput(ContextKind.AGENT_OUTPUT, ref))
         return inputs
 
     def _conditional_inputs(
@@ -3026,6 +3024,10 @@ class Engine:
         from nebuko.engine.ledger import CoverageValidationError, PlanCoverageGuard
 
         resolved = self._handoff_config()
+        # The ledger binds the plan. Another step may declare a ``coverage``
+        # report of its own (the spec-tdd critique), which is allowed to mark gaps.
+        if self._get(resolved, "WORKFLOW_STEP") != "plan":
+            return
         contract = step_output_contract(self._get(resolved, "STEP_OUTPUT"))
         if contract is None or not any(f.name == "coverage" for f in contract.fields):
             return
