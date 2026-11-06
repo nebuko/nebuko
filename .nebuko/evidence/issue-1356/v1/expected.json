@@ -1,0 +1,6 @@
+{"deltas": {
+  "failed":    {"symptom": 31,   "healthy": 4},
+  "passed":    {"symptom": 4177, "healthy": 4292},
+  "subtests":  {"symptom": 6,    "healthy": 14},
+  "collected": {"symptom": 4208, "healthy": 4296}
+}}

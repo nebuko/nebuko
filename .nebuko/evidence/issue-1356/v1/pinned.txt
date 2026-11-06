@@ -1,0 +1,13 @@
+# Pinned git objects the oracle rebuilds (no network, no "latest").
+#
+#   branch_head  bc4625c  test(engine): red tests for header-only caller detection (#1317)
+#   main_tip     545b2c9  use nebuko-agent as commit user (#1342)
+#
+# Loop run (red-test-review-loop run_tests, issue #1317) checked out the branch
+# head only:  31 failed, 4177 passed, 6 subtests passed, 4208 collected.
+# CI on the PR merge commit (branch head merged into main):
+#             4 failed, 4292 passed, 14 subtests passed, 4296 collected.
+#
+# The 88 extra collected tests (4296 - 4208) are the 28 test files that landed
+# in main between the merge base 0eea854 and 545b2c9; the branch head predates
+# them, so they are missing from the loop's run.
