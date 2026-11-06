@@ -91,6 +91,7 @@ if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
     from nebuko.adapters.base import PlatformAdapter
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import ProviderFailure
     from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
     from nebuko.engine.lib.config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
@@ -122,6 +123,12 @@ _LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
 # Outcome fields the engine measures (issue #1033): the recorded outcome the
 # engine hands back carries them, but an agent may never supply them.
 _ENGINE_MEASURED_OUTCOME_KEYS = frozenset({"status", "incomplete_reason"})
+
+# Env-var name fragments whose values are secrets a provider error may echo into
+# the public failure comment (issue #1322). Values shorter than the minimum are
+# skipped: they would redact ordinary words.
+_SECRET_ENV_MARKERS = ("TOKEN", "API_KEY", "APIKEY", "SECRET", "PASSWORD")
+_SECRET_MIN_LENGTH = 8
 
 # A resolver skip whose reason reports a failed ``/nebuko`` (or legacy
 # ``/workflow``) resolution — a missing/invalid workflow file or an unknown
@@ -1662,7 +1669,7 @@ class Engine:
 
     # @stub-protected
     def _handle_provider_failure(
-        self, failure: Any, phases: Sequence[str]
+        self, failure: "ProviderFailure", phases: Sequence[str]
     ) -> RunOutcome:
         """Stop the run on a provider failure and report the real cause (#1322).
 
@@ -1730,7 +1737,7 @@ class Engine:
             guard = git_session.GitSessionGuard(
                 self._caller_root(), self._session_env()
             )
-            return guard._pending_paths()
+            return guard.pending_paths()
         except Exception as exc:  # noqa: BLE001 - a probe failure is not fatal
             log.warning("[phase:agent] could not inspect the worktree: %s", exc)
             return ()
@@ -1738,8 +1745,8 @@ class Engine:
     def _provider_secrets(self) -> list[str]:
         """Configured secret values a provider error might echo (#1322).
 
-        The comment and the recorded facts are public, so every token-ish env
-        value is scrubbed verbatim (no pattern matching). Short values are
+        The comment and the recorded facts are public, so every secret-looking
+        env value is scrubbed verbatim (no pattern matching). Short values are
         skipped: they would redact ordinary words.
         """
         try:
@@ -1750,8 +1757,8 @@ class Engine:
             str(value)
             for key, value in env.items()
             if value
-            and len(str(value)) >= 8
-            and ("TOKEN" in key.upper() or "API_KEY" in key.upper())
+            and len(str(value)) >= _SECRET_MIN_LENGTH
+            and any(marker in key.upper() for marker in _SECRET_ENV_MARKERS)
         ]
 
     def _post_failure_notice(

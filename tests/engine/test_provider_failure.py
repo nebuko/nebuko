@@ -210,6 +210,29 @@ class TestProviderFailureStopsTheRun:
         assert API_KEY not in journal
         assert "invalid api key" in journal
 
+    def test_secret_named_env_values_are_redacted_too(self, tmp_path, monkeypatch):
+        """Not only ``*API_KEY*``: a ``*SECRET*`` value is scrubbed as well."""
+        engine = _engine(tmp_path)
+        engine.env["PROVIDER_CLIENT_SECRET"] = "s3cr3t-value-xyz"
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        engine.adapter.save_state(_prior_state())
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: (_ for _ in ()).throw(
+                ProviderFailure(
+                    "Error code: 401 - bad secret s3cr3t-value-xyz",
+                    provider=PROVIDER,
+                    model=MODEL,
+                    requires_config_fix=True,
+                )
+            ),
+        )
+
+        engine.run()
+
+        assert "s3cr3t-value-xyz" not in _journal(tmp_path)
+
     def test_engine_failure_state_matches_comment(self, tmp_path, monkeypatch):
         _run_provider_failure(tmp_path, monkeypatch)
 
