@@ -233,8 +233,11 @@ def _resolve_resume_path(
     # *before* the verdict check: the gate is engine-owned run state, so the
     # agent's own ``approved`` verdict no longer marks the step as held.
     if _gate_pending(prev_state):
+        # The stop is a deliberate hold, not a failure: without SKIP_KIND the
+        # guard phase classified it as CONFIG_ERROR and exited 20 (issue #1003).
         return {
             "SKIP_AGENT": "true",
+            "SKIP_KIND": "human_gate_hold",
             "REASON": (
                 f"resume: step '{prev_state.step}' is held by a human gate — "
                 "use `/nebuko approve gate` or `/nebuko reject gate` to release it"

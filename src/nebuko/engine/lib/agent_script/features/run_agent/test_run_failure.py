@@ -2,13 +2,24 @@
 
 import unittest
 
-from openhands.sdk.llm.exceptions import LLMError, LLMServiceUnavailableError
+from openhands.sdk.llm.exceptions import (
+    LLMAuthenticationError,
+    LLMContentPolicyViolationError,
+    LLMContextWindowExceedError,
+    LLMError,
+    LLMRateLimitError,
+    LLMServiceUnavailableError,
+    LLMTimeoutError,
+)
 
 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
     RESUME_COMMAND,
+    ProviderFailure,
     RunFailure,
     RunFailureKind,
     classify_failure,
+    is_provider_failure,
+    redact_secrets,
 )
 
 
@@ -68,6 +79,81 @@ class TestClassifyFailure(unittest.TestCase):
         self.assertIs(failure.kind, RunFailureKind.UNKNOWN)
         self.assertNotIn("unreachable", failure.summary.lower())
         self.assertIn(RESUME_COMMAND, failure.resume_command)
+
+    def test_provider_error_matrix(self):
+        """Connectivity/5xx/429/401/403/404 stop; request-specific 400s don't (#1322)."""
+        stopping = {
+            "connectivity": LLMServiceUnavailableError("Cannot connect to host h:1"),
+            "timeout": LLMTimeoutError("Request timed out"),
+            "rate limit": LLMRateLimitError("Error code: 429 - rate limit"),
+            "auth": LLMAuthenticationError("Error code: 401 - invalid api key"),
+            "forbidden": RuntimeError("Error code: 403 - forbidden"),
+            "not found": RuntimeError("Error code: 404 - model not found"),
+        }
+        for label, error in stopping.items():
+            with self.subTest(label):
+                failure = classify_failure(error)
+                self.assertTrue(is_provider_failure(failure), label)
+                self.assertIn(RESUME_COMMAND, failure.resume_command)
+
+        request_specific = {
+            "context window": LLMContextWindowExceedError("context too long"),
+            "content policy": LLMContentPolicyViolationError("content rejected"),
+        }
+        for label, error in request_specific.items():
+            with self.subTest(label):
+                failure = classify_failure(error)
+                self.assertFalse(is_provider_failure(failure), label)
+                self.assertIs(failure.kind, RunFailureKind.LLM_ERROR)
+
+    def test_config_errors_require_a_config_fix(self):
+        failure = classify_failure(LLMAuthenticationError("Error code: 401"))
+        self.assertIs(failure.kind, RunFailureKind.LLM_CONFIG_ERROR)
+        self.assertTrue(failure.requires_config_fix)
+        self.assertIn("won't help", failure.summary)
+
+    def test_wrapped_404_classified_as_config_error(self):
+        """Run 42049492853: the 404 arrived inside ``ConversationRunError``."""
+        from openhands.sdk.conversation.exceptions import ConversationRunError
+
+        inner = RuntimeError("litellm.NotFoundError: Error code: 404 - not found")
+        wrapped = ConversationRunError("conv-1", inner)
+
+        failure = classify_failure(wrapped)
+
+        self.assertIs(failure.kind, RunFailureKind.LLM_CONFIG_ERROR)
+        self.assertTrue(failure.requires_config_fix)
+        self.assertIn("404", failure.detail)
+
+    def test_wrapped_connectivity_error_is_unreachable(self):
+        from openhands.sdk.conversation.exceptions import ConversationRunError
+
+        inner = LLMServiceUnavailableError("Cannot connect to host h:1")
+        failure = classify_failure(ConversationRunError("conv-1", inner))
+
+        self.assertIs(failure.kind, RunFailureKind.LLM_UNREACHABLE)
+
+
+class TestProviderFailure(unittest.TestCase):
+    def test_carries_the_provider_facts(self):
+        failure = ProviderFailure(
+            "Error code: 404",
+            provider="https://example.test/v1",
+            model="glm-5",
+            requires_config_fix=True,
+        )
+        self.assertEqual(failure.provider_error, "Error code: 404")
+        self.assertEqual(failure.provider, "https://example.test/v1")
+        self.assertEqual(failure.model, "glm-5")
+        self.assertEqual(failure.agent_phase, "agent")
+        self.assertTrue(failure.requires_config_fix)
+
+    def test_redact_secrets_removes_configured_values(self):
+        text = "Error code: 401 - invalid api key sk-secret-123 for model m"
+        self.assertNotIn("sk-secret-123", redact_secrets(text, ["sk-secret-123"]))
+        self.assertIn("[redacted]", redact_secrets(text, ["sk-secret-123"]))
+        # Empty secrets are ignored rather than matching everything.
+        self.assertEqual(redact_secrets(text, [""]), text)
 
 
 if __name__ == "__main__":
