@@ -289,8 +289,10 @@ def build_state(
 
     # Workflow starter (issue #795): captured once, on the first run, then
     # carried forward verbatim. A later (chained, bot-triggered) run must not
-    # re-point the human ping at its own trigger author.
-    new_started_by = started_by if prev_state is None else base_started_by
+    # re-point the human ping at its own trigger author. A previous state that
+    # never recorded one adopts the first human starter it is given (#1295),
+    # so a value missed on the first run does not stay missing forever.
+    new_started_by = started_by if prev_state is None else (base_started_by or started_by)
 
     # Workflow provenance (issue #862): the pinned ref of the reusable workflow
     # that defined this run, from ``job.workflow_ref``. A run that carries the

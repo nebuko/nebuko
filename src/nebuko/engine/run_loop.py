@@ -86,6 +86,9 @@ from nebuko.engine.lib.workflow_state import (
     TurnOutcome,
     TurnStatus,
 )
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
+    is_bot_login,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
@@ -1479,7 +1482,7 @@ class Engine:
             self._stage_failed_comment()
             _gha_error(f"comment publish failed: {error or 'unknown error'}")
         body = (
-            f"@{self._trigger_author()} the engine could not prepare the agent's "
+            f"{self._human_ping()}the engine could not prepare the agent's "
             f"comment ({error or 'unknown error'}). The agent's output follows.\n"
             f"\n{_posted_answer_of(agent_result)}"
         )
@@ -1869,7 +1872,7 @@ class Engine:
         the hold.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -1889,7 +1892,7 @@ class Engine:
         a failed post must not mask the terminal outcome.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -4115,23 +4118,38 @@ class Engine:
         a chained, bot-triggered run still pings the human on the hook — then
         the issue author, then the raw trigger author. Falls back to the
         adapter's own trigger when the environment carries none.
+
+        A bot login is never a valid target (issue #1295): the notice exists to
+        reach a person, so bot candidates are skipped rather than pinged.
         """
         if state is None:
             state = self._seeded_prev_state.get("state") or self._previous_state()
-        candidates = (
+        candidates = [
             getattr(state, "started_by", None) if state is not None else None,
             getattr(getattr(state, "issue", None), "author", None)
             if state is not None
             else None,
             self.env.get("TRIGGER_AUTHOR"),
-        )
-        for candidate in candidates:
-            if candidate and str(candidate).strip():
-                return str(candidate).strip()
+            self.env.get("TRIGGER_AUTHOR_LOGIN"),
+        ]
         try:
-            return self.adapter.read_trigger().author
+            candidates.append(self.adapter.read_trigger().author)
         except Exception:  # noqa: BLE001 - a missing event payload is not fatal here
-            return ""
+            pass
+        for candidate in candidates:
+            login = str(candidate or "").strip()
+            if login and not is_bot_login(login):
+                return login
+        return ""
+
+    def _human_ping(self, state: WorkflowState | None = None) -> str:
+        """The ``@login `` mention for the engine's notices, or nothing.
+
+        When no human resolves (a bot-only trigger chain) the notice is posted
+        without a mention rather than a dangling ``@`` or a bot ping (#1295).
+        """
+        author = self._trigger_author(state)
+        return f"@{author} " if author else ""
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
         """Return the agent's own state artifact, else the previous state.

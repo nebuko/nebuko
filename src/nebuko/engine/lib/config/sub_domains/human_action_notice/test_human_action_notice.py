@@ -121,6 +121,14 @@ class TestRender:
         assert body.count("@olivier-norture") == 1
         assert "@olivier-norture workflow **default**" in body
 
+    def test_a_notice_without_a_target_renders_no_dangling_ping(self):
+        """#1295: an unresolved human must not leave a bare ``@`` in the body."""
+        body = HumanActionNotice(
+            kind="awaiting_approval", target="", step="plan", workflow="default"
+        ).render()
+        assert "@" not in body
+        assert "workflow **default** is waiting for your approval" in body
+
     def test_approval_body_names_the_step_and_the_resume_command(self):
         body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), step="plan", gate_pending=True).render()
         assert "waiting for your approval" in body

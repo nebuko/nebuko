@@ -473,6 +473,23 @@ class TestBuildStateStartedBy(unittest.TestCase):
         nxt = build_state(prev, workflow="default", step="context", agent="context")
         self.assertEqual(nxt.started_by, "olivier-norture")
 
+    def test_a_state_without_a_starter_adopts_the_first_human_one(self):
+        """#1295: a value missed on the first run must not stay missing forever."""
+        prev = build_state(None, workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(prev.started_by)
+        nxt = build_state(
+            prev,
+            workflow="default",
+            step="context",
+            agent="context",
+            started_by="olivier-norture",
+        )
+        self.assertEqual(nxt.started_by, "olivier-norture")
+        later = build_state(
+            nxt, workflow="default", step="plan", agent="architect", started_by="nebuko-bot"
+        )
+        self.assertEqual(later.started_by, "olivier-norture")
+
     def test_legacy_state_without_field_loads_none(self):
         data = {
             "version": 3,

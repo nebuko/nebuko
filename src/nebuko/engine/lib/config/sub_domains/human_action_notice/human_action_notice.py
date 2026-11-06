@@ -39,19 +39,28 @@ KINDS = frozenset({AWAITING_APPROVAL, AWAITING_INPUT, WORKFLOW_COMPLETE})
 # notified, and the engine owns it.
 _LINES = {
     AWAITING_APPROVAL: (
-        "{ping} workflow **{workflow}** is waiting for your approval at step "
+        "{ping}workflow **{workflow}** is waiting for your approval at step "
         "`{step}`. Review the output above, then run `/nebuko resume` to "
         "continue."
     ),
     AWAITING_INPUT: (
-        "{ping} workflow **{workflow}** is paused at step `{step}` and needs "
+        "{ping}workflow **{workflow}** is paused at step `{step}` and needs "
         'your input. Run `/nebuko resume --feedback "<your feedback>"` to continue.'
     ),
     WORKFLOW_COMPLETE: (
-        "{ping} workflow **{workflow}** has finished at step `{step}`. "
+        "{ping}workflow **{workflow}** has finished at step `{step}`. "
         "Please review the result."
     ),
 }
+
+
+def _ping(login: str) -> str:
+    """The ``@login `` mention, or nothing when no human resolved (#1295).
+
+    A bot is never a valid target and an unresolved target must not leave a
+    dangling ``@`` in the body.
+    """
+    return f"@{login} " if login else ""
 
 
 class HumanActionNotice(BaseModel):
@@ -153,7 +162,7 @@ class HumanActionNotice(BaseModel):
                 _BOT_MARKER,
                 _HUMAN_ACTION_MARKER,
                 _LINES[self.kind].format(
-                    ping=f"@{self.target}",
+                    ping=_ping(self.target),
                     workflow=self.workflow,
                     step=self.step,
                 ),
