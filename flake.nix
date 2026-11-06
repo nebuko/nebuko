@@ -17,6 +17,10 @@
         sharedPkgs = with pkgs; [
           git
           gh
+          # Secret scanning for what leaves the sandbox (issue #1347). The
+          # engine falls back to its builtin rules when the binary is missing,
+          # but a dev shell should exercise the real scanner.
+          gitleaks
           vim
           python313
           uv
