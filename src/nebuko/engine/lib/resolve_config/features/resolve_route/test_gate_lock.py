@@ -570,6 +570,39 @@ class TestGateReleasePrecedence(unittest.TestCase):
         self.assertNotEqual(cfg.get("config_gate_released"), "true")
 
 
+class TestGateLockReleaseOnStepChange(unittest.TestCase):
+    """Leaving the gated step by any route resolves its lock (issue #1301)."""
+
+    def test_run_step_to_another_step_is_not_held_by_the_old_lock(self):
+        """``--step`` enters the requested step instead of the stale gate hold.
+
+        The state still carries the lock armed on ``plan``; a human
+        ``/nebuko run workflow --step implement`` moves the workflow off the
+        gated step, so the resolution must dispatch ``implement`` and never
+        report the gate hold that names ``plan``.
+        """
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _resolve_human_path,
+        )
+
+        state = _gated_state()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_human_path(
+                "/nebuko run workflow --name default --step implement",
+                None,
+                None,
+                tmpdir,
+                prev_state=state,
+                workflow_command=parse_workflow_command(
+                    "/nebuko run workflow --name default --step implement"
+                ),
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["task"], "dev")
+        self.assertEqual(cfg["config_step"], "implement")
+
+
 class TestGateArmingFromTheWorkflowDefinition(unittest.TestCase):
     """The gate is a step-config fact: ``human_gate: true`` arms it at root."""
 

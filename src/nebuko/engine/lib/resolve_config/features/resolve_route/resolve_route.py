@@ -1296,7 +1296,7 @@ def _resolve_outcome_path(
     # workflow *advance*, never a delegation (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
@@ -2437,7 +2437,7 @@ def _resolve_bot_fallback_path(
     # A pending agent-to-agent hand-off is routed first (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
