@@ -14,25 +14,30 @@ Do not install test tooling ad hoc (`pip install pytest`, ...): it is declared i
 This project is in Python.
 
 ## Running the test suite
-`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `pytest` collects **only**
-`tests/`. The flat runtime modules under `src/nebuko/engine/lib/**` hold their own
-co-located `test_*.py` files and are **not** collected by default.
+`pyproject.toml` sets `testpaths = ["tests", "src/nebuko/engine/lib"]`, so a bare
+`pytest` collects both trees: `tests/` plus the co-located `test_*.py` files under
+`src/nebuko/engine/lib/**`.
 
 ```bash
-uv run pytest                              # fast gate: tests/ only
+uv run pytest                              # everything (both testpaths)
+uv run pytest tests                        # tests/ only (fast gate)
 uv run pytest src/nebuko/engine/lib        # runtime engine/lib unit tests
-uv run pytest tests src/nebuko/engine/lib  # everything
+uv run pytest tests src/nebuko/engine/lib  # the documented full command
 ```
 
 `main` is expected to be green on both suites (they only need `defaults/` in the
-checkout). **No CI job runs pytest**, though, so drift can land on `main`
-unnoticed. If a test fails:
+checkout). CI runs the full command on every pull request
+(`.github/workflows/internal-tests.yaml`, job `pytest`), so drift is caught there
+first. If a test fails:
 - Check it once against `origin/main`. If it fails there too, it is still a
   bug: fix it, or report it explicitly in your output. Never write it off as
   "N pre-existing failures" and move on; a red suite hides real regressions
   (an entire finalize-salvage test class sat broken for a week this way).
 - Never point tests at a stale venv (e.g. `.nebuko-engine/.venv`); use the
-  repo's `uv run`.
+  repo's `uv run`. The importability tests (`TestBaseDepsImportability`,
+  `TestReportTimePricingImportability`) spawn `sys.executable` with `PYTHONPATH`
+  stripped and rely on the project being installed editable — true for any
+  `uv sync` / `uv run` environment, so run them through `uv run`.
 
 Test-writing pitfalls that have broken `main` before:
 - Import the runtime modules by package path (`nebuko.engine.lib.<mod>`),
