@@ -1234,6 +1234,11 @@ class Engine:
                     state = self._merge_secret_scan(
                         state, list(finalize_result.secret_findings)
                     )
+                    if state is not None:
+                        # The comment framed below embeds the agent's own state
+                        # artifact, so the record is carried to the publish
+                        # seam explicitly.
+                        self._publish_state["secret_scan"] = state.secret_scan
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
@@ -3135,20 +3140,27 @@ class Engine:
         return findings
 
     def _merge_secret_scan(
-        self, state: WorkflowState | None, findings: Sequence[SecretFinding]
+        self,
+        state: WorkflowState | None,
+        findings: Sequence[SecretFinding],
+        *,
+        persist: bool = True,
     ) -> WorkflowState | None:
         """Merge redaction findings into the persisted ``secret_scan`` record.
 
-        The record is what renders the warning on this and every later comment,
-        so it is saved through the adapter here (the state was already
-        persisted before the publish phase). Best-effort: a write hiccup must
-        not break publication.
+        The record is what renders the warning on this and every later comment.
+        ``persist=False`` returns the updated state without saving it — the
+        publish seam does that, because the state it frames is not the one the
+        post-publish merge saves. Best-effort: a write hiccup must not break
+        publication.
         """
         if state is None or not findings:
             return state
         step = str(self._get(self._resolved_config(), "WORKFLOW_STEP") or "")
         merged = (state.secret_scan or SecretScan()).merge(list(findings), at=step)
         updated = state.model_copy(update={"secret_scan": merged})
+        if not persist:
+            return updated
         try:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
@@ -3540,10 +3552,19 @@ class Engine:
         comment_findings = self._scan_comment_sources(
             answer=answer, final_message=final_message, console_log=console_log
         )
+        recorded_scan = self._publish_state.get("secret_scan")
+        if recorded_scan is not None and publish_state is not None:
+            publish_state = publish_state.model_copy(
+                update={"secret_scan": recorded_scan}
+            )
         if comment_findings:
             publish_state = self._merge_secret_scan(
-                publish_state, comment_findings
+                publish_state, comment_findings, persist=False
             )
+            # The state was persisted before publish, so the record rides
+            # ``_publish_state`` and is folded in by the post-publish merge.
+            if publish_state is not None:
+                self._publish_state["secret_scan"] = publish_state.secret_scan
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3625,6 +3646,12 @@ class Engine:
         if state is None:
             return None
         merged = self._backfill_step_output(state)
+        scan = self._publish_state.get("secret_scan")
+        if scan is not None and merged.secret_scan != scan:
+            # The comment-body scan ran after ``persist`` (issue #1347); the
+            # record must survive the merge or the next comment loses the
+            # warning and the run could re-introduce the value.
+            merged = merged.model_copy(update={"secret_scan": scan})
         if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a

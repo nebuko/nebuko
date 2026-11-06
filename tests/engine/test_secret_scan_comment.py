@@ -167,10 +167,16 @@ class TestPublishSeam:
         assert FAKE_OAUTH not in posted
         assert "<REDACTED:github-oauth>" in posted
         assert "Secret redacted" in posted
+        # The record rides ``_publish_state`` and is folded into the persisted
+        # state by the post-publish merge (issue #1347).
+        scan = engine._publish_state.get("secret_scan")
+        assert scan is not None and scan.status is SecretScanStatus.REDACTED
+        assert scan.findings[0].rule == "github-oauth"
+        merged = engine._merge_post_publish_state(result["state"])
         saved = engine.adapter.load_state()
         assert saved is not None and saved.secret_scan is not None
         assert saved.secret_scan.status is SecretScanStatus.REDACTED
-        assert saved.secret_scan.findings[0].rule == "github-oauth"
+        assert merged is not None and merged.secret_scan is not None
 
     def test_a_clean_publish_records_nothing(self, tmp_path):
         engine = self._engine(tmp_path)
@@ -185,6 +191,20 @@ class TestPublishSeam:
         assert "Secret redacted" not in posted
         saved = engine.adapter.load_state()
         assert saved is None or saved.secret_scan is None
+    def test_a_pre_push_redaction_warns_on_the_comment(self, tmp_path):
+        """A git-finalize redaction reaches the comment of the same run."""
+        engine = self._engine(tmp_path)
+        engine._publish_state["secret_scan"] = _redacted_scan()
+        result = {
+            "answer": "all good",
+            "turn_outcome": {"appreciation": "approved"},
+            "state": WorkflowState(workflow="spec-tdd", step="spec", agent="dev"),
+        }
+
+        posted = engine.publish(result)
+
+        assert "Secret redacted" in posted
+        assert "`answer`:3 (github-oauth)" in posted
 
 
 @pytest.fixture(autouse=True)
