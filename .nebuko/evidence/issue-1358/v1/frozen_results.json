@@ -1,0 +1,26 @@
+{
+  "issue": 1317,
+  "commit_under_test": "bc4625ce597ec5b2b0bf87719aba9ec6222d87eb",
+  "branch": "feature/issue-1317-quoting-a-bot-agent-marker-makes-an-agent-re-trigg",
+  "merge_tree_commit": "25cd897db846a6f1b8a18e3a2a7b8fb203c79ba7",
+  "workflow_reported": {"failed": 31, "passed": 4177, "subtests_passed": 6, "duration_s": 124.06},
+  "ci_reported": {"failed": 4, "passed": 4292, "subtests_passed": 14, "duration_s": 101.22},
+  "measured_branch_head_run": {
+    "command": "uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf",
+    "failed": 37, "passed": 4171, "subtests_passed": 6, "duration_s": 126.26,
+    "env": "engine session env (VIRTUAL_ENV=.nebuko-engine/.venv, --no-dev venv)"
+  },
+  "measured_branch_head_run_clean_env": {
+    "command": "VIRTUAL_ENV= uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=no -rf",
+    "failed": 37, "passed": 4171, "subtests_passed": 6, "duration_s": 115.48,
+    "env": "clean CI-style env (no VIRTUAL_ENV, system PATH)"
+  },
+  "measured_merged_tree_run": {
+    "command": "uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=no",
+    "failed": 10, "passed": 4354, "subtests_passed": 14, "duration_s": 124.05,
+    "env": "same session machine, tree = branch+main merge (git read-tree of merge-tree commit)"
+  },
+  "measured_main_run": {"failed": 6, "passed": 4354, "subtests_passed": 14},
+  "failing_ids_branch_head": 37,
+  "note": "The env counterfactual (clean env at same SHA) gives identical counts, ruling out the engine-venv/path hypothesis. The checkout counterfactual (merged tree at same machine) drops failures 37->10 and subtests 6->14, matching CI's shape. CI tests the merge commit GitHub creates for a PR; the workflow's use-session-branch.sh checks out the branch head."
+}
