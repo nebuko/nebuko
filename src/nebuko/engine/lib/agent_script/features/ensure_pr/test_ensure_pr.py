@@ -683,6 +683,8 @@ def _patch_git(
             return "abc1234"
         if joined.startswith("rev-parse"):
             return "sha1"
+        if joined.startswith("fetch --no-tags origin +refs/heads/"):
+            return ""  # the read-only base-conflict check after the push
         raise AssertionError(f"unexpected git call: {joined}")
 
     run_git.calls = calls

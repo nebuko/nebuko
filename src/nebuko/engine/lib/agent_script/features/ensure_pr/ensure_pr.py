@@ -7,10 +7,10 @@ commits, pushes and opens PRs, so the agent never has to (and cannot push).
   1. Refuse to publish while merge conflicts remain unresolved.
   2. Split the delta by path — ``.github/workflows/*`` is patch-only.
   3. Commit everything else the agent left (if any), named after the issue.
-  4. Merge ``origin/<base>`` into the branch, skipped when the base is
-     already contained; a conflict refuses the publish.
-  5. Push the current branch to origin.
-  6. Open a PR if none exists for the branch (idempotent).
+  4. Push the current branch to origin. The base is never merged here: the
+     scaffold owns the conflict merge (issue #1242).
+  5. Open a PR if none exists for the branch (idempotent).
+  6. Comment when the base has moved into a conflict with the pushed branch.
   7. Deliver the workflow delta as a patch: committed on the branch and
      commented on the PR (issue #1080).
 
@@ -628,6 +628,42 @@ def _parse_conflict_paths(merge_tree_output: str) -> list[str]:
     return paths
 
 
+def _report_base_conflict(
+    branch: str,
+    base: str,
+    remote: str,
+    *,
+    pr_url: str,
+    transport: Optional[GitHubTransport] = None,
+) -> None:
+    """Comment when the base has moved into a conflict (issue #1242).
+
+    The work is already pushed, so this only informs: the next agent run's
+    scaffold merges the base and hands over the conflicts. A failed check or
+    comment is logged and never fails the publish. The base is fetched first,
+    because the probe reads ``origin/<base>`` and the base may have moved since
+    the scaffold ran.
+    """
+    try:
+        _run_git(
+            ["fetch", "--no-tags", remote, f"+refs/heads/{base}:refs/remotes/{remote}/{base}"]
+        )
+        conflicts = _base_conflict_paths(branch, base)
+        if not conflicts:
+            return
+        listed = "\n".join(f"- `{path}`" for path in conflicts)
+        _post_patch_comment(
+            f"**Base conflict.** `{base}` has moved, and merging it into `{branch}` "
+            f"would conflict in:\n\n{listed}\n\n"
+            f"The branch was pushed as it is, without merging `{base}`. "
+            "Run the agent again on this issue to resolve the conflict.",
+            pr_url=pr_url,
+            transport=transport,
+        )
+    except (RuntimeError, TimeoutExpired) as exc:
+        logger.warning(f"ensure_pr: base-conflict check failed: {exc}")
+
+
 def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
     args = ["push", remote, branch]
     try:
@@ -1121,6 +1157,11 @@ def _ensure_pr_impl(
 
     if pr_url:
         ensure_issue_link(pr_url, issue_number, repo=repo, transport=transport)
+
+    if pushed:
+        _report_base_conflict(
+            branch, base, remote, pr_url=pr_url, transport=transport
+        )
 
     if held_back:
         try:
