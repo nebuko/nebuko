@@ -19,6 +19,7 @@ For the high-level pitch and quick overview, see the root
 | [getting-started.md](./getting-started.md) | New users | Prerequisites, setup, first workflow run, troubleshooting. |
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
+| [workflows/red-test-review-loop.md](./workflows/red-test-review-loop.md) | Contributors | Which tree the red-test loop's `run_tests` executes: the `NEBUKO_MERGE_MAIN` merge of `origin/main`, conflicts, and the `tested:` line. |
 | [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L11, CLI usage, exit codes, CI integration. |
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 5 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
