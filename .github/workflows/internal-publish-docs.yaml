@@ -41,12 +41,19 @@ jobs:
             exit 1
           fi
 
+      # Feature docs live next to their code; gather them into one flat docs/
+      # tree (old page names kept via `publish_as`) before packaging.
+      - name: Gather docs
+        run: python3 scripts/docs_tool.py gather --out "$RUNNER_TEMP/site"
+
       - name: Build the tarball
         env:
           TARBALL: ${{ steps.names.outputs.tarball }}
         run: |
           mtime="$(git log -1 --format=%ct)"
-          tar -czf "$TARBALL" --sort=name --owner=0 --group=0 \
+          mkdir -p "$RUNNER_TEMP/site/logo"
+          cp -r logo/final "$RUNNER_TEMP/site/logo/final"
+          tar -czf "$TARBALL" -C "$RUNNER_TEMP/site" --sort=name --owner=0 --group=0 \
             --numeric-owner --mtime="@$mtime" docs logo/final
           # awk keeps the listing short without breaking the pipe under pipefail.
           tar -tzf "$TARBALL" | awk -F/ 'NF <= 2' | head -20
