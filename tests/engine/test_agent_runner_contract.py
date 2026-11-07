@@ -47,6 +47,7 @@ def _stub_entry_point(script: Path) -> None:
     )
 
 
+@pytest.mark.slow
 def test_real_entry_point_imports_its_package_and_rejects_conflicting_prompts() -> None:
     """The real entry point must get past its imports under the seam's child env.
 
