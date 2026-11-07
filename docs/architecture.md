@@ -1,10 +1,16 @@
+---
+sidebar_group: "Concepts"
+sidebar_label: "How it works"
+sidebar_order: 10
+---
+
 # Architecture
 
 High-level system architecture of nebuko: how a GitHub event becomes an
 agent run, the 5-agent model, the orchestration loop, state management, and
 the routing cascade. For the internal DDD package layout, see
 [architecture_code.md](./architecture_code.md). For step-by-step details of
-the GitHub Actions job, see [default-workflow.md](./default-workflow.md).
+the GitHub Actions job, read `.github/workflows/nebuko-workflow.yaml` (it installs the engine and runs `python -m nebuko.engine.run`).
 
 ---
 
@@ -20,7 +26,7 @@ state store.
 ┌────────────┐   ┌────────────────────────── GHA Orchestrator ──────────────────────────┐   ┌──────────────┐
 │            │   │                                                                      │   │              │
 │  GitHub    │   │  event_normalizer.py → resolve_config.py → loop_guard /             │   │  Issue       │
-│  Event     ├──►│  circuit_breaker → query_context.py → agent_script.py               ├──►│  Comment     │
+│  Event     ├──►│  circuit_breaker → context_selection.py → agent_script.py               ├──►│  Comment     │
 │ (issue /   │   │  (OpenHands Agent + Conversation via arun())                        │   │ (bot marker, │
 │  comment)  │   │  → prepare_comment.py → github_client.py                            │   │  state JSON, │
 │            │   │                                                                      │   │  metrics)    │
@@ -39,7 +45,7 @@ own runners).
 ## The 5-Agent Model
 
 Each agent's one-line role is **declared in config** (`role:` in
-[`agent-config.yaml`](../defaults/agents/agent-config.yaml)) and rendered into
+[`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml)) and rendered into
 the others' "Your Team" section; the table below mirrors it.
 
 | Agent | Role (config `role:`) | Tools |
@@ -51,7 +57,7 @@ the others' "Your Team" section; the table below mirrors it.
 | `po` | Product owner — writes WHEN/IF/THEN specs and refines issue drafts with humans. | think, finish |
 
 Each agent = a prompt file (`defaults/prompts/{agent}.md`) + a model reference +
-a tool whitelist, declared in [`agent-config.yaml`](../defaults/agents/agent-config.yaml).
+a tool whitelist, declared in [`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml).
 Tools are a security boundary: planning agents (`architect`, `review`, `po`)
 physically cannot touch files, while execution agents (`dev`, `context`)
 can. The prompt holds personality and core rules only; procedural playbooks and
@@ -76,12 +82,12 @@ Each trigger runs the following sequence inside the `run-task` job:
    (`DELETE_COMMENTS=true` / `RUN_SCRIPT=true`), the engine executes it
    directly and ends the run with a success exit (issue #724); ordinary
    agent runs pass through unchanged.
-5. **Build context** — `query_context.py` fetches issue comments, extracts
+5. **Build context** — the engine (`run_loop.py`, `context_selection.py`, `context_entries.py`) fetches issue comments, extracts
    the latest `WORKFLOW_STATE`, builds the history section, and formats the
    agent prompt against the template.
 6. **Execute** — `agent_script.py` loads the prompt, resolves the LLM config,
    and runs an OpenHands `Agent` + `Conversation` under a soft-timeout watchdog
-   (see [features.md — Execution Layer](./features.md#execution-layer)).
+   (see [Execution Layer](../src/nebuko/engine/lib/agent_script/features/run_agent/execution-layer.md)).
 7. **Validate output** — `validate_output.py` checks the dispatch sentinel and
    forbidden sections.
 8. **Post comment** — `prepare_comment.py` strips internal tags; the cleaned
@@ -110,7 +116,7 @@ tagged `<!-- bot-agent-{role} -->` exactly like the monolith's
 (that double-posts), and a failed notice is logged, never fatal to the run.
 
 The platform adapter surface (typed `post()`, capabilities, degradation) is
-documented in [docs/adapters.md](adapters.md).
+documented in [docs/adapters.md](../src/nebuko/adapters/adapters.md).
 
 ---
 
@@ -118,7 +124,7 @@ documented in [docs/adapters.md](adapters.md).
 
 State lives in issue comments as collapsed JSON between
 `<!-- WORKFLOW_STATE_START -->` / `<!-- WORKFLOW_STATE_END -->` markers (schema:
-[reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1)).
+[WORKFLOW_STATE v1](../src/nebuko/engine/lib/workflow_state/workflow-state-schema.md)).
 
 Key properties:
 - **Full snapshots** — every step posts a complete state (with accumulated
@@ -134,8 +140,8 @@ Key properties:
   (or a short excerpt when no summary marker is present). A comment is verbatim
   when its id is listed in `pinned_comment_ids` **or** it belongs to a history
   entry with `pin=True`. The retention policy lives in
-  `features/select_history_comments/` (`HistorySelection`); `query_context.py`
-  consumes it when building the `## History` section. Summaries keep the context
+  `context_selection.py`, which the engine
+  consumes when building the `## History` section. Summaries keep the context
   small (and its cost bounded) while pinned comments preserve high-fidelity text.
 
 ---
@@ -287,7 +293,7 @@ the GitHub event (`TRIGGER_AUTHOR_*` env), never from comment-body markers — s
 agent-authored text, machine tokens, and a bot-authored command are all inert.
 The decision routes the workflow directly (via the gated step's `on_result`
 conditions) and is single-shot per hold instance. See
-[workflows.md — Human Gates](./workflows.md#human-gates).
+[Human Gates](../src/nebuko/engine/lib/resolve_config/features/resolve_route/human-gates.md).
 
 A persisted `human_gate` hold also **blocks auto-advance on every bot routing
 path** (issues #885, #887): the resolver checks the gate-hold precedence
@@ -400,6 +406,6 @@ so the unwind can re-enter it. See
 The sub-workflow path may be **runtime-generated**: the `plan-orchestration`
 workflow has its `scaffold` step generate `tmp_impl/workflow.yaml` from the
 approved plan, which `sub_impl` then mounts (see
-[workflows.md — plan-orchestration](./workflows.md#plan-orchestration)).
+[plan-orchestration](built-in-workflows.md#plan-orchestration)).
 Local `workflows/` files take precedence over zero-copy fetched ones; see
-[features.md — Remote Workflows](./features.md#remote-workflows-zero-copy).
+[Remote Workflows](remote-workflows.md).

@@ -1,3 +1,12 @@
+---
+covers:
+  - src/nebuko/engine/verify.py
+  - src/nebuko/engine/finalize.py
+sidebar_group: "Concepts"
+sidebar_label: "Claims verification"
+sidebar_order: 60
+---
+
 # Claims verification (issue #1250)
 
 @@architect attaches the external facts its plan depends on to the

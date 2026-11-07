@@ -1,3 +1,11 @@
+---
+title: Branch base sync policy
+audience: contributor
+sidebar_group: "How the engine publishes"
+sidebar_label: "Branch base sync policy"
+sidebar_order: 40
+---
+
 # Branch base sync policy: merge only on conflict, never at publish time
 
 Issue: [#1242](https://github.com/nebuko/nebuko/issues/1242) — PRs polluted by

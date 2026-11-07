@@ -1,3 +1,9 @@
+---
+sidebar_group: "Contributing"
+sidebar_label: "Code architecture"
+sidebar_order: 10
+---
+
 # DDD Package-by-Feature Architecture
 
 > **Status:** In progress — canonical implementation in PR #335 (open).  
@@ -100,7 +106,7 @@ The root `workflow_state.py` serves as the **single import point**. It:
 
 ### Preferred: Facade Imports
 
-External consumers (e.g., `agent_script.py`, `query_context.py`) should import from the facade:
+External consumers (e.g., `agent_script.py`, `run_loop.py`) should import from the facade:
 
 ```python
 from workflow_state import (
@@ -221,7 +227,7 @@ engine/lib/config/
   - Inline partial ref (`"prefix_${llms.x.model_path}"`) → string-only substitution.
   - Recurses through dicts and lists; an undefined ref raises at load time.
 
-**Note:** the workflow grammar documented in [reference.md](./reference.md#workflow-yaml-grammar) is enforced here by the `workflow_*` sub-domain entities.
+**Note:** the workflow grammar documented in [workflow-yaml-grammar.md](../src/nebuko/engine/lib/config/sub_domains/workflow_definition/workflow-yaml-grammar.md) is enforced here by the `workflow_*` sub-domain entities.
 
 ---
 
@@ -267,4 +273,4 @@ arun() under watchdog ──budget elapsed──► conversation.interrupt()
 
 - `sub_domains/` here are *pure function modules* (e.g., `split_message`) rather than Pydantic entities — the "entity vs behavior" split of §2 still applies, the entities simply have shape.
 - All external side effects (LLM calls, git, gh CLI) are confined to the feature layer; sub-domain functions are pure I/O and unit-tested in isolation.
-- Feature details for users are in [features.md — Execution Layer](./features.md#execution-layer).
+- Feature details for users are in [Execution Layer](../src/nebuko/engine/lib/agent_script/features/run_agent/execution-layer.md).

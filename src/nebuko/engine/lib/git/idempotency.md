@@ -1,3 +1,12 @@
+---
+title: Git idempotency
+audience: contributor
+publish_as: git-idempotency.md
+sidebar_group: "How the engine publishes"
+sidebar_label: "Git idempotency"
+sidebar_order: 30
+---
+
 # Git idempotency: why work is never re-applied
 
 ## Symptom

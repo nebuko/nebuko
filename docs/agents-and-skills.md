@@ -1,7 +1,13 @@
+---
+sidebar_group: "Guides"
+sidebar_label: "Agents and skills"
+sidebar_order: 20
+---
+
 # Agents & Skills
 
 The system ships with 5 agents and 13 reusable skills. Each agent is declared
-in [`agent-config.yaml`](../defaults/agents/agent-config.yaml) (model, one-line
+in [`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml) (model, one-line
 `role`, prompt file, skills, tool whitelist) and defined by a system prompt in
 `defaults/prompts/{agent}.md`. Skills are standalone prompt files in
 `defaults/skills/` that can be attached to an agent by default (`skills:` in
@@ -65,8 +71,8 @@ Its web-search phase reads each selected reference **in full** (3 for LOW,
 relevant excerpts (≤ ~2K tokens per article), a short relevance summary, and a
 0.0–1.0 interest score — emitted as a fenced JSON block inside
 `### EXTERNAL REFERENCES` alongside the human-readable entries
-(schema: [reference.md — External Reference JSON](./reference.md#external-reference-json),
-sharing contract: [features.md — External Reference Sharing](./features.md#external-reference-sharing)).
+(schema: [External Reference JSON](external-references.md),
+sharing contract: [External Reference Sharing](external-references.md)).
 
 ### dev — Execution Developer
 Implements approved plans, writes and runs tests, and commits/pushes under
@@ -94,7 +100,7 @@ rephrases first, asks 1–5 grouped questions per round with proposed answers,
 and may delegate context collection to `@@context` (max one call per round),
 tracking progress across stateless runs via `<!-- po-agent-state -->`
 markers (see
-[reference.md — Bot Marker Conventions](./reference.md#bot-marker-conventions)).
+[Bot Marker Conventions](../src/nebuko/engine/lib/workflow_state/features/classify_comment/bot-markers.md)).
 
 ---
 
@@ -153,11 +159,11 @@ the prompt through the two modes above.
 | `retrospective` | [`retrospective.md`](../defaults/skills/retrospective.md) | Issue retrospective mode for `review`. |
 | `issue-refinement` | [`issue-refinement.md`](../defaults/skills/issue-refinement.md) | Issue refinement behavior contract (question format, state markers, delegation) for `po`. |
 | `stub-only` | [`stub-only.md`](../defaults/skills/stub-only.md) | Constrains `dev` to fill existing function stubs + write spec-matching tests. No new logic, no new files beyond helpers/tests. Used by `spec-driven` and `spec-driven-impl`. |
+| `plan-orchestration` | [`plan-orchestration.md`](../defaults/skills/plan-orchestration.md) | Plan Orchestration Mode: for an approved plan of 2+ sequential steps sharing one PR, the `architect` emits a `<planWorkflow>` block that the engine scaffolds into a branch-mounted workflow. Used by `plan-orchestration`. |
 | `scaffold-plan` | [`scaffold-plan.md`](../defaults/skills/scaffold-plan.md) | Converts the approved `<planWorkflow>` JSON block into a runnable per-step `tmp_impl/workflow.yaml` sub-workflow. Used by `plan-orchestration` (issue #462). |
 | `plan-cleanup` | [`plan-cleanup.md`](../defaults/skills/plan-cleanup.md) | Removes the `tmp_impl/` scaffolding after all plan steps are done. Used by `plan-orchestration`. |
 | `final-fix` | [`final-fix.md`](../defaults/skills/final-fix.md) | Addresses the final whole-PR review feedback across all plan steps. Used by `plan-orchestration`. |
 | `complexity` | [`complexity.md`](../defaults/skills/complexity.md) | Complexity tier rubric and the `complexity_review` re-tier contract. Discovered (not injected) by every agent (issue #955). |
-| `python` | [`python.md`](../defaults/skills/python.md) | Generic Python style/testing guidance (PEP 8, type hints, pytest). |
 
 Agents carry default `skills` in their `agent-config.yaml` stanza; step-level
 `skill` entries are merged in, and the step's mode wins for a name it repeats.
@@ -233,5 +239,5 @@ from the individual prompt files), so each built prompt contains exactly one
 exit-rules section and exactly one team section. An unreadable roster degrades
 to no team section rather than failing the run, mirroring
 `config.load_agent_names`. See
-[handoff-and-callback.md](./handoff-and-callback.md) for the delegation and
+[handoff-and-callback.md](../src/nebuko/engine/lib/resolve_config/features/resolve_route/handoff-and-callback.md) for the delegation and
 callback contract this section describes.

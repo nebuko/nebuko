@@ -1,3 +1,11 @@
+---
+title: Platform adapters
+audience: contributor
+sidebar_group: "Guides"
+sidebar_label: "Platform adapters"
+sidebar_order: 80
+---
+
 # Platform adapters
 
 How to connect a hosting platform (GitHub, GitLab, Codeberg, Jira, a local

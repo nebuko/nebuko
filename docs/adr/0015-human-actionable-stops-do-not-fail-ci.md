@@ -2,7 +2,7 @@
 
 **Status:** Accepted — 2026-10-21
 **Decider:** olivier-norture
-**Related:** #1057 (this change), #1003 (armed gate hold), #1012 (gate no-op), #804 (command error notice), #793 (soft-kill halt) — **supersedes** [ADR-0004](./0004-propagate-human-command-errors-to-the-thread.md) clause 3 ("exit-code contract unchanged")
+**Related:** #1057 (this change), #1003 (armed gate hold), #1012 (gate no-op), #804 (command error notice), #793 (soft-kill halt) — **supersedes** [ADR-0004](./0004-propagate-human-command-errors-to-thread.md) clause 3 ("exit-code contract unchanged")
 
 ## Context
 

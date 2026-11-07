@@ -1,3 +1,9 @@
+---
+sidebar_group: "Get started"
+sidebar_label: "Adopt Nebuko"
+sidebar_order: 20
+---
+
 # How to Adopt Nebuko
 
 Nebuko runs a multi-agent workflow on **your** issues and pull requests:
@@ -107,7 +113,7 @@ install link (`https://github.com/apps/nebuko/installations/new`); pass
 `GH_PAT` (fallback mode only). In App mode `init` writes the caller workflow;
 the workflow reads the broker endpoint from the optional `NEBUKO_BROKER_URL`
 repository variable and falls back to the published broker when it is unset. See
-[nebuko-init.md](./nebuko-init.md).
+[nebuko-init.md](../src/nebuko/engine/init/nebuko-init.md).
 
 It uses **your own `gh` authentication** to create the branch, the pull request
 and the secrets. `init` needs the GitHub CLI (`gh`) on your `PATH` — it stops with an install hint before doing anything else when it is
@@ -540,5 +546,5 @@ installed on), use the PAT fallback in
 
 - [getting-started.md](./getting-started.md) — the first run, in detail.
 - [configuration.md](./configuration.md) — the full `agent-config.yaml` schema.
-- [features.md](./features.md) — human commands, safety mechanisms, metrics.
+- [safety-mechanisms.md](./safety-mechanisms.md) — loop guard and circuit breaker; see the [documentation index](./README.md) for human commands, metrics and more.
 - [subscription-plans.md](./subscription-plans.md) — run on a subscription plan.

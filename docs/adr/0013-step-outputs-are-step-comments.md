@@ -35,7 +35,7 @@ output object: naming a step in data-flow position is the entire protocol.
   `<step>.<out>` reference form are **removed**; a leftover key or dotted ref
   fails at load time with a migration hint (see *Migration*).
   *Amended by #973:* a step may now declare the **shape of its own comment**
-  with `steps[].output` (see [workflows.md](../workflows.md#declared-step-output--the-output-shape-issue-973)),
+  with `steps[].output` (see [typed-inputs-and-outputs.md](../typed-inputs-and-outputs.md#declared-step-output--the-output-shape-issue-973)),
   and the dotted form is re-introduced **only** for a field that declaration
   names — `<step>.<field>` addresses one declared section. A dotted ref to an
   undeclared field is still a lint error.

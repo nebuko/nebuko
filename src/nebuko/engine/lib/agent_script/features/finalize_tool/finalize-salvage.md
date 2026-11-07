@@ -1,3 +1,11 @@
+---
+title: Finalize reports and salvage
+audience: contributor
+sidebar_group: "How the engine publishes"
+sidebar_label: "Finalize reports and salvage"
+sidebar_order: 60
+---
+
 # Finalize reports and salvage
 
 How an agent closes a run with the `finalize` tool, and what the engine does

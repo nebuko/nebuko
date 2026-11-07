@@ -1,3 +1,11 @@
+---
+title: nebuko init
+audience: operator
+sidebar_group: "Get started"
+sidebar_label: "Run `nebuko init` setup"
+sidebar_order: 30
+---
+
 # `nebuko init` — App-aware setup
 
 `nebuko init` prepares a repository for Nebuko. When the Nebuko GitHub App is

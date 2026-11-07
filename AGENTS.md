@@ -185,3 +185,31 @@ Useful facts when touching this area:
   skills. Both modes resolve through one value object,
   `resolve_config/features/skill_context/skill_context.py`; the entry grammar
   (`SkillSpec`) is shared with the linter's C5 rule.
+
+## Documentation layout
+A doc that describes one feature lives **in that feature's folder** (e.g.
+`src/nebuko/engine/lib/git/idempotency.md`), so changing the code means editing
+the doc in the same directory. `docs/` keeps only cross-cutting and user-facing
+pages plus `docs/adr/` (ADRs are historical records; never rewrite them).
+
+- A colocated `*.md` under `src/` or `tests/` needs frontmatter `title` and
+  `audience` (`user` / `operator` / `contributor`); `publish_as: <name>.md`
+  keeps a published page name stable when the file is renamed.
+- Every published page (all of `docs/` except `README.md` and `docs/adr/`, plus
+  every colocated doc) places itself in the website sidebar with
+  `sidebar_group` (`Get started` / `Guides` / `Concepts` /
+  `How the engine publishes` / `Reference` / `Contributing`), `sidebar_label`
+  (task-based, never a filename) and optional `sidebar_order`. The website
+  (`nebuko/website`, Astro Starlight) builds its sidebar from these keys, so a
+  new doc needs no change in that repo. ADRs are grouped from their folder.
+- A doc whose code is not in its own folder declares `covers:` (list of globs).
+  Optional `verified_at: <sha>` makes `check` warn when covered files changed
+  since that commit; bump it only after actually re-reading the doc.
+- `python scripts/docs_tool.py check` (also run by `tests/test_docs_tool.py`)
+  fails on broken relative links, `docs/*.md` paths mentioned in code that do
+  not exist, missing frontmatter, and `covers` globs that match nothing.
+- `python scripts/docs_tool.py gather --out DIR` builds the flat `docs/` tree
+  the website consumes (`internal-publish-docs.yaml` runs it).
+- Changed a feature? Update the doc next to it in the same PR, or say in the PR
+  why no doc change is needed. Delete a doc you cannot verify rather than leave
+  it misleading.

@@ -1,3 +1,9 @@
+---
+sidebar_group: "Guides"
+sidebar_label: "The root-cause workflow"
+sidebar_order: 40
+---
+
 # Root-cause workflow
 
 `/nebuko run workflow --name root-cause` is for issues that ask **why**

@@ -1,3 +1,11 @@
+---
+title: Agent answer triggering
+audience: contributor
+sidebar_group: "Concepts"
+sidebar_label: "Agent answer triggering"
+sidebar_order: 50
+---
+
 # Agent answer triggering
 
 How a comment the nebuko bot itself publishes — an agent's answer — can

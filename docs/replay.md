@@ -1,3 +1,12 @@
+---
+covers:
+  - src/nebuko/engine/lib/replay.py
+  - src/nebuko/engine/lib/fixtures/*
+sidebar_group: "Reference"
+sidebar_label: "Replay engine decisions"
+sidebar_order: 30
+---
+
 # Replaying engine decisions
 
 `nebuko.engine.lib.replay` answers "what tier / agent / config would the engine

@@ -1,3 +1,11 @@
+---
+title: Session handoff
+audience: contributor
+sidebar_group: "Concepts"
+sidebar_label: "Session handoff"
+sidebar_order: 40
+---
+
 # Session handoff
 
 When a run ends early (soft kill, crash, CI timeout) the next run starts

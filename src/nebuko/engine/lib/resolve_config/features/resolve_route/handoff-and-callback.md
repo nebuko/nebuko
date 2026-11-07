@@ -1,3 +1,11 @@
+---
+title: Hand-off and callback
+audience: contributor
+sidebar_group: "Concepts"
+sidebar_label: "Handoff and callback"
+sidebar_order: 30
+---
+
 # Hand-off and Callback
 
 How agents hand work to each other and how control returns. This document is
@@ -5,9 +13,9 @@ the normative contract for the `AGENT_RUN_CONFIG` sentinel, the `dispatch` vs
 `function_call` distinction, and the **callback** return address introduced in
 issue #765.
 
-For the raw schema tables see [reference.md](./reference.md). For the routing
+For the raw schema tables see [agent-run-config.md](../../../../../../../docs/agent-run-config.md). For the routing
 cascade that consumes these decisions see
-[architecture.md](./architecture.md).
+[architecture.md](../../../../../../../docs/architecture.md).
 
 ---
 
@@ -65,7 +73,7 @@ Two invariants are enforced at validation time:
   pulling in `context`) rather than following the workflow edge.
 
 They are documented as a skill in
-[`skills/call-agent.md`](../defaults/skills/call-agent.md).
+[`skills/call-agent.md`](../../../../../../../defaults/skills/call-agent.md).
 
 ---
 
@@ -220,7 +228,7 @@ prompt gains one **"Your Team"** section listing the agent's own role, its
 teammates' roles (from each agent's config `role:`), and two rules:
 
 - work outside your own tool scope must be delegated through the `call_agent`
-  mechanism (see [`call-agent.md`](../defaults/skills/call-agent.md)) — `@@`
+  mechanism (see [`call-agent.md`](../../../../../../../defaults/skills/call-agent.md)) — `@@`
   mentions are for humans only (issue #478);
 - when a teammate calls you, your answer is returned to them by the engine's
   callback (precedence rule 3) — treat it as a conversation turn, not
@@ -229,4 +237,4 @@ teammates' roles (from each agent's config `role:`), and two rules:
 When the run was started by a bot call, the section also names the caller:
 `You were called by <caller> — your result returns to <caller>.` The reminder is
 worded to match this contract literally; it adds no mechanism of its own. See
-[agents-and-skills.md — Team Context Injection](./agents-and-skills.md#team-context-injection).
+[agents-and-skills.md — Team Context Injection](../../../../../../../docs/agents-and-skills.md#team-context-injection).

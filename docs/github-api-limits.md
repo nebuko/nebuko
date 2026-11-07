@@ -1,3 +1,12 @@
+---
+covers:
+  - src/nebuko/engine/lib/github_client.py
+  - src/nebuko/engine/lib/config/sub_domains/comment_size/**
+sidebar_group: "Guides"
+sidebar_label: "GitHub API limits"
+sidebar_order: 70
+---
+
 # GitHub Issue API Limits
 
 > **Last updated:** 2026-10-08

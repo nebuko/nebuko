@@ -1,3 +1,9 @@
+---
+sidebar_group: "Guides"
+sidebar_label: "Model providers and plans"
+sidebar_order: 60
+---
+
 # Subscription Plans (CommandCode, OpenCode Go)
 
 Run nebuko on a **subscription plan** instead of a metered API key. If you
@@ -173,7 +179,7 @@ Once a subscription's limits are reached, the metered **OpenCode Zen** provider
   completed from an OpenRouter-backed default price table (fetched once, cached
   under `~/.nebuko/cache/prices/`, fail-open). Cost reads `0` only when neither
   the config nor the service knows the model. See
-  [features.md — Metrics](./features.md#metrics).
+  [Metrics](../src/nebuko/engine/lib/agent_script/features/collect_metrics/metrics.md).
 - **OpenCode Go is not wired yet** — see the client-identity requirement above.
 
 ---

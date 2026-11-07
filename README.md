@@ -268,8 +268,9 @@ and the App's private key never leaves the App owner / broker
 ([trust note](docs/adoption.md#8-trust-and-security-the-github-app)). If you run
 in PAT fallback mode, narrow `GH_PAT` to the repositories you use and give it an
 expiration ([PAT fallback](docs/adoption.md#pat-fallback)).
-Mechanisms: [features.md](docs/features.md#safety-mechanisms). Machine contracts:
-[reference.md](docs/reference.md).
+Mechanisms: [safety-mechanisms.md](docs/safety-mechanisms.md). Machine contracts:
+[agent-run-config.md](docs/agent-run-config.md),
+[workflow-state-schema.md](src/nebuko/engine/lib/workflow_state/workflow-state-schema.md).
 
 ## Status: what to expect
 
@@ -277,7 +278,7 @@ Mechanisms: [features.md](docs/features.md#safety-mechanisms). Machine contracts
 end-to-end on real issues, with human gates, conditional routing, per-step
 metrics, remote (zero-copy) workflows and a deterministic command surface
 (`@@agent`, `/nebuko run workflow`, `force-step`, `resume`, `delete comments`).
-Full inventory: [features.md](docs/features.md).
+Full inventory: [documentation index](docs/README.md).
 
 **Know before you adopt.**
 - The config schema and `WORKFLOW_STATE` format still move (legacy state loads

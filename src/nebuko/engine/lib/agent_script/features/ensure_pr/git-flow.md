@@ -1,3 +1,11 @@
+---
+title: Git flow
+audience: contributor
+sidebar_group: "How the engine publishes"
+sidebar_label: "Git flow: agents commit, the engine publishes"
+sidebar_order: 20
+---
+
 # Git flow: agents commit, the engine publishes
 
 Agents never touch a remote. They work and commit on a branch the engine
@@ -9,9 +17,11 @@ linked to the issue.
 
 The publish pipeline is engine-owned end to end, in this order:
 
-1. **Branch scaffold** — before the run, the engine creates or rebases the
-   feature branch `feature/issue-<n>-<slug>` on the base branch and hands it
-   to the agent as the working branch (`BranchScaffold`).
+1. **Branch scaffold** — before the run, the engine creates the feature
+   branch `feature/issue-<n>-<slug>` from the base branch, or reuses the
+   existing one (merging the base only when a read-only probe finds a conflict,
+   see [branch-base-sync-policy.md](../../../git/branch-base-sync-policy.md)),
+   and hands it to the agent as the working branch (`BranchScaffold`).
 2. **Agent works and commits only** — the agent edits files, runs tests and
    commits with `git commit`. Any `git push` is denied by the engine's
    terminal deny-list before it reaches the shell: the statement is not

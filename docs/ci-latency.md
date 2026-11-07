@@ -1,3 +1,12 @@
+---
+covers:
+  - .github/workflows/nebuko-workflow.yaml
+  - src/nebuko/engine/lib/secret_env.py
+sidebar_group: "How the engine publishes"
+sidebar_label: "CI latency"
+sidebar_order: 50
+---
+
 # CI latency: how the workflow installs and runs the engine
 
 Every agent run pays a setup cost between the triggering comment and the

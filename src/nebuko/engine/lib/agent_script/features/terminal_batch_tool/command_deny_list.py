@@ -1,6 +1,6 @@
 """Command deny-list: engine-owned statement blocking for agent terminals.
 
-The engine owns the publish pipeline (see ``docs/git-flow.md``): agents commit,
+The engine owns the publish pipeline (see ``src/nebuko/engine/lib/agent_script/features/ensure_pr/git-flow.md``): agents commit,
 the engine pushes and opens the pull request. This module holds the ordered
 deny rules consulted by ``terminal_batch_tool`` before each statement is
 replayed into the SDK ``TerminalExecutor`` — a matched statement is never

@@ -1,4 +1,4 @@
-"""``python -m engine lint`` — the offline workflow-YAML lint command (issue #751).
+"""``python -m nebuko.engine lint`` — the offline workflow-YAML lint command (issue #751).
 
 Kept separate from ``nebuko.engine.lint`` (the pure rule engine) and ``nebuko.engine.run_loop``
 (the adapter-driven runner) so each module keeps a single responsibility. The
@@ -56,7 +56,7 @@ def _print_text(issues: Iterable[LintIssue]) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m engine lint",
+        prog="python -m nebuko.engine lint",
         description="Lint workflow YAML for graph-level defects (issue #751).",
     )
     parser.add_argument("paths", nargs="+", help="workflow YAML file(s) or directory")

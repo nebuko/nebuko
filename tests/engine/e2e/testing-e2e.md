@@ -1,3 +1,11 @@
+---
+title: End-to-end tests
+audience: contributor
+sidebar_group: "Guides"
+sidebar_label: "End-to-end tests"
+sidebar_order: 100
+---
+
 # End-to-end tests
 
 ## Overview

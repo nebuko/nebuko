@@ -1,3 +1,9 @@
+---
+sidebar_group: "Get started"
+sidebar_label: "Getting started"
+sidebar_order: 10
+---
+
 # Getting Started
 
 Set up nebuko in your repository and run your first multi-agent workflow.
@@ -60,7 +66,7 @@ Copy the **complete** file — the `on:` triggers, `permissions:`, and the
 `with:`/`secrets:` blocks — from
 [adoption.md — The entrypoint (copy-paste)](./adoption.md#3-the-entrypoint-copy-paste).
 You never vendor the workflow file itself (zero-copy, see
-[features.md — Remote Workflows](./features.md#remote-workflows-zero-copy)).
+[Remote Workflows](remote-workflows.md)).
 All inputs are optional and listed in
 [adoption.md — Inputs](./adoption.md#inputs).
 
@@ -106,7 +112,7 @@ agents:
 
 For the full schema (all fields, `${ref}` rules, sampling parameters), see
 [configuration.md](./configuration.md). You can start from this repository's
-[`defaults/agents/agent-config.yaml`](../defaults/agents/agent-config.yaml) as a
+[`defaults/agents/agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml) as a
 reference.
 
 Using a subscription plan instead of a metered API key? See
@@ -132,7 +138,7 @@ all. To customize one, add a file with the same agent name under
 
 Each file describes the agent's role, responsibilities, output contract (how it
 must emit its `AGENT_RUN_CONFIG` dispatch — see
-[reference.md](./reference.md#agent_run_config)), and constraints. You can start
+[agent-run-config.md](agent-run-config.md)), and constraints. You can start
 from the shipped prompts in this repository's
 [`defaults/prompts/`](../defaults/prompts/) and refine them iteratively.
 
@@ -149,7 +155,7 @@ from the shipped prompts in this repository's
 
 That's it. The trigger condition matches the `@@architect` mention, the
 orchestrator runs, and the `default` workflow starts
-(see [workflows.md — default](./workflows.md#default)).
+(see [default](built-in-workflows.md#default)).
 
 ---
 
@@ -174,7 +180,7 @@ Where to look when something goes wrong:
 - **Metrics** — every agent comment's `workflow_state` snapshot carries the
   per-step metrics in its `history` entries; on issue close, `agent-metrics`
   posts an aggregated table.
-  Details in [features.md — Metrics](./features.md#metrics).
+  Details in [Metrics](../src/nebuko/engine/lib/agent_script/features/collect_metrics/metrics.md).
 
 ---
 
@@ -229,6 +235,6 @@ where any GitHub user is intended to trigger runs.
 |---------|-----------|
 | No response at all | If using a self-hosted runner (`runs_on: "self-hosted"`), is it online? Are the secrets set? Does the issue body contain a recognized trigger (`@@agent` or `/nebuko`)? Check the run's `if:` condition result in the GHA run. |
 | Wrong agent ran | Check the routing cascade ([architecture.md](./architecture.md#routing-cascade)) and the `WORKFLOW_STATE` section of the triggering comment. Use `/nebuko run workflow --name <name>` or `/nebuko force-step step --name <step>` to correct course. |
-| Stuck in a loop | The circuit breaker (default 15 bot markers) should have stopped it and posted a warning. Review the last few comments, then use `/nebuko resume` with instructions. See [features.md — Safety Mechanisms](./features.md#safety-mechanisms). |
+| Stuck in a loop | The circuit breaker (default 15 bot markers) should have stopped it and posted a warning. Review the last few comments, then use `/nebuko resume` with instructions. See [Safety Mechanisms](safety-mechanisms.md). |
 | Agent ran but did nothing useful | Your prompts are too thin — give the agent an explicit role and output contract (step 3). |
 | Config errors at startup | The workflow fails fast on undefined `${ref}`s or missing prompt files — read the *Resolve Agent Configuration* step log. |

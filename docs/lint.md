@@ -1,13 +1,24 @@
+---
+covers:
+  - src/nebuko/engine/lint.py
+  - src/nebuko/engine/lint_cli.py
+  - src/nebuko/engine/config_lint.py
+  - src/nebuko/engine/config_lint_cli.py
+sidebar_group: "Reference"
+sidebar_label: "Workflow linter"
+sidebar_order: 20
+---
+
 # Linting workflows
 
-`python -m engine lint` validates workflow YAML for **graph-level** defects —
+`python -m nebuko.engine lint` validates workflow YAML for **graph-level** defects —
 the problems that only appear once the whole step graph is assembled and that
 the per-field schema loader cannot see. It is offline and read-only: it never
 runs an agent, mutates a workflow, or touches GitHub.
 
 | | |
 |---|---|
-| **Entry point** | `python -m engine lint <paths…>` |
+| **Entry point** | `python -m nebuko.engine lint <paths…>` |
 | **Exit codes** | `0` clean (or warnings only) · `1` at least one error · `2` usage/load failure |
 | **Rule set** | `L1`–`L11` (see [Rule reference](#rule-reference)) |
 | **Source** | `engine/lint.py` (rules) + `engine/lint_cli.py` (command) |
@@ -39,16 +50,16 @@ the lint verdict and the runtime behaviour can never drift apart.
 
 ```bash
 # one file
-python -m engine lint workflows/spec-driven-impl.yaml
+python -m nebuko.engine lint defaults/workflows/spec-driven-impl.yaml
 
 # every *.yaml / *.yml in a directory
-python -m engine lint workflows/
+python -m nebuko.engine lint defaults/workflows/
 
 # promote warnings to errors (and flip the exit code)
-python -m engine lint --strict workflows/
+python -m nebuko.engine lint --strict defaults/workflows/
 
 # machine-readable output
-python -m engine lint --format json workflows/
+python -m nebuko.engine lint --format json defaults/workflows/
 ```
 
 ### Text output
@@ -56,12 +67,12 @@ python -m engine lint --format json workflows/
 One line per issue, followed by a summary:
 
 ```
-$ python -m engine lint workflows/
+$ python -m nebuko.engine lint defaults/workflows/
 0 issue(s): 0 error(s), 0 warning(s)
 ```
 
 ```
-$ python -m engine lint tests/engine/lint_fixtures/l1_dangling_next.yaml
+$ python -m nebuko.engine lint tests/engine/lint_fixtures/l1_dangling_next.yaml
 [L1-dangling-next] error step=analyze step 'analyze' routes to unknown step 'ghost' (tests/engine/lint_fixtures/l1_dangling_next.yaml:6)
 [L2-unreachable-step] warning step=review step 'review' is unreachable from the entry step 'analyze' (tests/engine/lint_fixtures/l1_dangling_next.yaml:9)
 2 issue(s): 1 error(s), 1 warning(s)
@@ -300,7 +311,7 @@ step whose posted comment is the value; ADR-0013) that is not in scope. A step
 named `input` is flagged too: `input.` is a reserved namespace. Second, a
 declared input is never consumed or forwarded by any step (even via a nested
 call), so the parameter is dead. A file-level `outputs` entry must name a
-declared step � a workflow's results are the comments of the steps it names.
+declared step — a workflow's results are the comments of the steps it names.
 
 ```yaml
 # 'run_test' is declared but no step ever references input.run_test
@@ -336,7 +347,7 @@ output is its posted comment; see [ADR-0013](./adr/0013-step-outputs-are-step-co
 ## Human gates
 
 Rule **L6** is the linter's contribution to the gate contract described in
-[workflows.md](./workflows.md#human-gates): a `human_gate: true` step pauses the
+[human-gates.md](../src/nebuko/engine/lib/resolve_config/features/resolve_route/human-gates.md): a `human_gate: true` step pauses the
 workflow until a human releases it with `/workflow resume`. That release
 re-dispatches the step with the human's decision as the result key, so the step
 *must* have somewhere to go. A terminal gate is therefore always an error — the
@@ -360,12 +371,12 @@ cover the resume decision:
 
 ## CI integration
 
-`.github/workflows/lint-workflows.yaml` runs the linter on every pull request
+`.github/workflows/internal-lint-workflows.yaml` runs the linter on every pull request
 that touches `workflows/`, `engine/`, or the workflow schema:
 
 ```yaml
 - name: Lint workflow YAML
-  run: python -m engine lint workflows/
+  run: python -m nebuko.engine lint defaults/workflows/
 ```
 
 Add `--strict` to treat warnings (L2) as failures, or `--format json` to feed
@@ -433,7 +444,7 @@ rather than stopping at the first.
 python -m nebuko.engine lint-config
 
 # one file …
-python -m nebuko.engine lint-config defaults/agents/agent-config.yaml
+python -m nebuko.engine lint-config defaults/agents/agent-config-openrouter.yaml
 
 # … or every *.yaml / *.yml in a directory
 python -m nebuko.engine lint-config defaults/agents/
@@ -635,7 +646,7 @@ providers:
 
 ## CI integration
 
-`.github/workflows/lint-agent-config.yaml` runs the linter on every pull request
+`.github/workflows/internal-lint-agent-config.yaml` runs the linter on every pull request
 that touches the shipped agent configs or the linter itself:
 
 ```yaml

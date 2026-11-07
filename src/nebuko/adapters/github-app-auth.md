@@ -1,3 +1,11 @@
+---
+title: GitHub App tokens
+audience: operator
+sidebar_group: "Guides"
+sidebar_label: "GitHub App authentication"
+sidebar_order: 90
+---
+
 # GitHub App tokens: why agent-start comments were delayed (issue #1220)
 
 ## What you see

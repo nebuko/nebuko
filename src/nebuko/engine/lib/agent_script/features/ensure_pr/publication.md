@@ -1,3 +1,11 @@
+---
+title: Publication
+audience: contributor
+sidebar_group: "How the engine publishes"
+sidebar_label: "From agent work to pull request"
+sidebar_order: 10
+---
+
 # Publication: how the engine turns agent work into a PR
 
 Every approved write step must end with its work **published**: committed,

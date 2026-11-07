@@ -210,7 +210,7 @@ def extract_plain_mention_agent(trigger_body: str) -> Optional[str]:
 
 #: Deprecated agent names kept resolvable for a transition window (issue #828).
 #: ``genius``/``ctx`` were renamed to ``architect``/``context``; the published
-#: external reference contract (docs/reference.md) and historical ``@@``
+#: external reference contract (docs/external-references.md) and historical ``@@``
 #: mentions may still use the old spellings, so they are accepted and mapped.
 LEGACY_AGENT_NAMES: dict[str, str] = {"genius": "architect", "ctx": "context"}
 

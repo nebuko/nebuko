@@ -864,7 +864,7 @@ def _callback_return_target(
     Returns ``(agent, step)`` when the callback should route the run, else
     ``None``. The callback is an *advance-only* fallback: an explicit
     ``turn_outcome.agent_call`` hand-off or a deliberate ``hold`` always wins,
-    which is the precedence documented in ``docs/handoff-and-callback.md``.
+    which is the precedence documented in ``src/nebuko/engine/lib/resolve_config/features/resolve_route/handoff-and-callback.md``.
     """
     if prev_state is None:
         return None
@@ -1285,7 +1285,7 @@ def _resolve_outcome_path(
     # dispatch — the engine must perform no action on it, never follow the
     # forward edge. Hoisted above the forward-edge and callback resolution
     # because those would otherwise advance (`implement -> review`) and silently
-    # discard the stop (precedence rule 2 of docs/handoff-and-callback.md §3).
+    # discard the stop (precedence rule 2 of src/nebuko/engine/lib/resolve_config/features/resolve_route/handoff-and-callback.md §3).
     # ``INTERRUPTED`` is *not* a stop: the amended #964 policy routes it through
     # the soft-kill retry path above (retry-in-place, halt once the budget is
     # spent), so it stays with ``SOFT_TIMEOUT``/``AGENT_CHECKPOINT``.

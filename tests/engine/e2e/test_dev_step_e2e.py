@@ -8,7 +8,7 @@ on a local bare remote); the run completes; and a malformed ``finalize`` (missin
 
 Only the LLM (``agent_runner._load_pipeline``) and PR creation
 (``ensure_pr.ensure_pr``) are replaced — the git machinery, the finalize
-executor and the run loop all run for real. See ``docs/testing-e2e.md``.
+executor and the run loop all run for real. See ``tests/engine/e2e/testing-e2e.md``.
 """
 
 from __future__ import annotations

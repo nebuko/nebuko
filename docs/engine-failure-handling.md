@@ -1,3 +1,12 @@
+---
+covers:
+  - src/nebuko/engine/run_loop.py
+  - src/nebuko/engine/finalize.py
+sidebar_group: "How the engine publishes"
+sidebar_label: "Engine failure handling"
+sidebar_order: 70
+---
+
 # Engine failure handling
 
 What happens when a workflow step's *engine* fails — the agent answered, but

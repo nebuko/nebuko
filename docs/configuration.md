@@ -1,3 +1,9 @@
+---
+sidebar_group: "Guides"
+sidebar_label: "Configuration"
+sidebar_order: 50
+---
+
 # Configuration
 
 The system is configured by a single layered YAML file (`agent-config.yaml`):
@@ -6,7 +12,7 @@ reference the one below it, so adding an agent is a short stanza with no other
 file changes.
 
 For the machine-readable dispatch overrides applied at invocation time, see
-[reference.md — AGENT_RUN_CONFIG](./reference.md#agent_run_config).
+[AGENT_RUN_CONFIG](agent-run-config.md).
 
 ---
 
@@ -135,7 +141,7 @@ providers:
 > when no provider/SDK cost is reported — e.g. a subscription backend, or a
 > self-hosted model. Where the estimate applies, each tier falls back per field
 > to the default price service (an OpenRouter-backed table; see
-> [features.md — Metrics](./features.md#metrics)) and then to `input_price`.
+> [Metrics](../src/nebuko/engine/lib/agent_script/features/collect_metrics/metrics.md)) and then to `input_price`.
 >
 > The issue-close **`agent-metrics` job** additionally fills entries whose
 > recorded cost is still `0` at report time, pricing their stored tokens
@@ -429,7 +435,7 @@ agents:
     tools: ["terminal", "file_editor", "task_tracker", "think", "finish"]
 ```
 
-See this repo's [`agent-config.yaml`](../defaults/agents/agent-config.yaml) for the full
+See this repo's [`agent-config-openrouter.yaml`](../defaults/agents/agent-config-openrouter.yaml) for the full
 5-agent configuration.
 
 ---
@@ -452,7 +458,7 @@ The `complexity` tier used for a run is resolved as **explicit dispatch
 `complexity` > `steps[].complexity` (workflow YAML) > `"medium"`** (issue
 #787) and exported as `CONFIG_COMPLEXITY`. A workflow step can therefore
 declare a default tier for its own invocation — see
-[workflows.md](./workflows.md#per-step-complexity).
+[per-step-complexity.md](../src/nebuko/engine/lib/complexity_governor/per-step-complexity.md).
 
 ### Dynamic Complexity-Based Temperature
 

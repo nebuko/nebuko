@@ -349,7 +349,7 @@ _USAGE_UNKNOWN_ACTION = (
 
 #: Usage shown for a leading ``/`` that is not a ``/nebuko`` invocation.
 _USAGE_UNKNOWN_COMMAND = (
-    "unrecognized / command; see the Human Commands table in docs/features.md "
+    "unrecognized / command; see the Human Commands table in human-commands.md "
     "(e.g. /nebuko run workflow --name <workflow>, /nebuko resume)"
 )
 
