@@ -3042,6 +3042,25 @@ class TestRunLogArtifacts:
         staged = engine.adapter.artifact_dir() / "console.txt"
         assert staged.read_text(encoding="utf-8") == "[phase:normalize] ok\n"
 
+    def test_a_run_stages_its_context_plan_prompt_and_output(self, tmp_path, monkeypatch):
+        from nebuko.engine.artifacts import CONTEXT_PLAN_FILE, OUTPUT_FILE, PROMPT_FILE
+        from nebuko.engine.context_ir import ContextPlan
+
+        engine = _engine(tmp_path)
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*")
+        )
+
+        outcome = engine.run()
+
+        staging = engine.adapter.artifact_dir()
+        plan = ContextPlan.from_dict(
+            json.loads((staging / CONTEXT_PLAN_FILE).read_text(encoding="utf-8"))
+        )
+        assert plan.sections
+        assert (staging / PROMPT_FILE).read_text(encoding="utf-8") == outcome.prompt
+        assert (staging / OUTPUT_FILE).read_text(encoding="utf-8") == outcome.posted_body
+
     def test_a_staging_failure_never_aborts_the_run(self, tmp_path, monkeypatch, caplog):
         engine = _engine(tmp_path)
         monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: _agent_result("*Dev answer*"))
@@ -3526,9 +3545,164 @@ class TestHistoryWindowInjection:
         assert "<!-- bot-agent-dev -->" not in rendered
 
 
+class TestContextPlan:
+    """The prompt is rendered from an ordered, provenance-carrying plan (#1346)."""
+
+    def _resolved(self, tmp_path, *, step: str = "plan") -> dict:
+        role = tmp_path / "role.md"
+        role.write_text("ROLE PROMPT", encoding="utf-8")
+        step_prompt = tmp_path / f"{step}.md"
+        step_prompt.write_text(f"STEP {step.upper()} PROMPT", encoding="utf-8")
+        return {
+            "PROMPT_LOCATION": str(role),
+            "STEP_PROMPT_FILE": str(step_prompt),
+            "WORKFLOW_NAME": "default",
+            "WORKFLOW_STEP": step,
+            "ROLE_NAME": "architect",
+            "TASK": "do the thing",
+        }
+
+    def test_render_matches_build_prompt_byte_for_byte(self, tmp_path):
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path)
+
+        plan = engine.build_context_plan(resolved, [])
+
+        assert plan.render() == engine.build_prompt(resolved, [])
+        assert plan.step == "plan"
+        assert plan.agent == "architect"
+
+    def test_sections_follow_the_canonical_order(self, tmp_path):
+        from nebuko.engine.context_ir import ContextSectionKind
+
+        engine = _engine(tmp_path)
+
+        plan = engine.build_context_plan(self._resolved(tmp_path), [])
+
+        kinds = [section.kind for section in plan.sections]
+        assert kinds == [
+            ContextSectionKind.ROLE_PROMPT,
+            ContextSectionKind.STEP_PROMPT,
+            ContextSectionKind.USER_REQUEST_HEADER,
+            ContextSectionKind.TASK,
+            ContextSectionKind.RECENT_THREAD,
+        ]
+        assert kinds == sorted(
+            kinds, key=ContextSectionKind.ORDER.index
+        )
+
+    def test_sections_carry_their_provenance(self, tmp_path):
+        from nebuko.engine.context_ir import ContextSectionKind
+
+        engine = _engine(tmp_path)
+
+        plan = engine.build_context_plan(self._resolved(tmp_path), [])
+        by_kind = {section.kind: section for section in plan.sections}
+
+        assert by_kind[ContextSectionKind.ROLE_PROMPT].source == "role:architect"
+        assert by_kind[ContextSectionKind.STEP_PROMPT].source == "step:plan"
+        assert by_kind[ContextSectionKind.TASK].source == "task"
+        assert by_kind[ContextSectionKind.RECENT_THREAD].source.startswith(
+            "selection:"
+        )
+
+    def test_prompt_replace_drops_the_role_section(self, tmp_path):
+        from nebuko.engine.context_ir import ContextSectionKind
+
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path)
+        resolved["STEP_PROMPT_REPLACE"] = "true"
+
+        plan = engine.build_context_plan(resolved, [])
+
+        assert ContextSectionKind.ROLE_PROMPT not in [
+            section.kind for section in plan.sections
+        ]
+
+    def test_the_scaffold_note_is_prepended(self, tmp_path):
+        from nebuko.engine.context_ir import ContextSection, ContextSectionKind
+
+        engine = _engine(tmp_path)
+        plan = engine.build_context_plan(self._resolved(tmp_path), [])
+
+        prefixed = plan.prepended(
+            ContextSection(
+                kind=ContextSectionKind.SCAFFOLD_CONFLICT,
+                text="CONFLICT NOTE",
+                source="scaffold:conflict",
+            )
+        )
+
+        assert prefixed.sections[0].kind == ContextSectionKind.SCAFFOLD_CONFLICT
+        assert prefixed.render().startswith("CONFLICT NOTE\n\n")
+
+    def test_manifest_is_body_free_and_ordered(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        rows = engine.build_context_plan(self._resolved(tmp_path), []).manifest()
+
+        assert [row.order for row in rows] == list(range(len(rows)))
+        assert all(row.chars > 0 for row in rows)
+        assert all(len(row.sha256) == 64 for row in rows)
+
+    def test_the_manifest_is_handed_to_the_agent_child(self, tmp_path):
+        """The child persists the rows on the advancing HistoryEntry (#1346)."""
+        engine = _engine(tmp_path)
+        plan = engine.build_context_plan(self._resolved(tmp_path), [])
+        engine._context_plan_state["plan"] = plan
+
+        env = engine._agent_env()
+
+        rows = json.loads(env["CONTEXT_MANIFEST"])
+        assert [row["kind"] for row in rows] == [
+            section.kind for section in plan.sections
+        ]
+        assert "text" not in rows[0]
+
+
+class TestContextPlanThreadProvenance:
+    """The thread section names the selected comments and the selection rule (#1346)."""
+
+    def test_thread_section_carries_selected_comment_ids(self, tmp_path):
+        from nebuko.engine.context_ir import ContextSectionKind
+
+        engine = _engine(tmp_path)
+        engine._context_state["entries"] = [
+            ContextEntry(
+                kind="issue-body",
+                sequence=0,
+                body="ISSUE TEXT",
+                source_comment_id="1",
+            ),
+            ContextEntry(
+                kind="agent-output",
+                sequence=1,
+                body="PLAN OUTPUT",
+                step="plan",
+                source_comment_id="77",
+            ),
+        ]
+        resolved = {
+            "PROMPT_LOCATION": "",
+            "STEP_PROMPT_FILE": "",
+            "WORKFLOW_NAME": "default",
+            "WORKFLOW_STEP": "implement",
+        }
+
+        plan = engine.build_context_plan(resolved, [])
+        thread = next(
+            section
+            for section in plan.sections
+            if section.kind == ContextSectionKind.RECENT_THREAD
+        )
+
+        assert thread.comment_ids == ("77",)
+        assert thread.source == f"selection:{plan.selection_mode}"
+        assert plan.selection_mode
+
+
 class TestBuildPromptStepReplacement:
     """A step's prompt can replace the role prompt (issue #784)."""
-
     def _resolved(self, tmp_path, base_text: str, step_text: str, replace: str) -> dict:
         base = tmp_path / "dev.md"
         base.write_text(base_text, encoding="utf-8")

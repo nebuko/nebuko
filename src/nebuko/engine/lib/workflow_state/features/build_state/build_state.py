@@ -26,6 +26,7 @@ from ...sub_domains.gate_lock.gate_lock import GateLock
 from ...step_output_record import StepOutputRecord
 from ...sub_domains.thread_record.thread_record import ThreadRecord
 from ...sub_domains.step_input_record.step_input_record import StepInputRecord
+from ...sub_domains.context_manifest_row.context_manifest_row import ContextManifestRow
 from ...sub_domains.turn_outcome.turn_outcome import IncompleteReason, TurnOutcome
 
 
@@ -101,6 +102,7 @@ def build_state(
     complexity_policy: Optional[ComplexityPolicy] = None,
     thread: Optional[list[ThreadRecord]] = None,
     inputs: Optional[list[StepInputRecord]] = None,
+    context: Optional[list[ContextManifestRow]] = None,
 ) -> WorkflowState:
     """
     Build a new WorkflowState by advancing from a previous state.
@@ -179,6 +181,9 @@ def build_state(
         inputs: Deterministically materialized step inputs of THIS step
             (issue #872), recorded verbatim on the new history entry. None/empty
             for a step that declares none.
+        context: Ordered, body-free manifest of the context this step's prompt
+            was built from (issue #1346), recorded on the new history entry.
+            None/empty for legacy callers and steps that recorded no plan.
 
     Returns:
         A new WorkflowState instance.
@@ -256,6 +261,7 @@ def build_state(
         complexity_adjustment=complexity_adjustment,
         complexity_review_request=complexity_review_request,
         inputs=inputs or [],
+        context=context or [],
     )
     new_history = base_history + [entry]
 

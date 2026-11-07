@@ -12,15 +12,23 @@ logs can be fetched raw without any unzip step.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from nebuko.engine.context_ir import ContextPlan
 
 __all__ = [
     "APP_LOG_FILE",
     "ArtifactFile",
     "CONSOLE_LOG_FILE",
+    "CONTEXT_PLAN_FILE",
     "EVENT_LOG_FILE",
+    "OUTPUT_FILE",
     "PERSISTENCE_DIR_NAME",
+    "PROMPT_FILE",
     "RunArtifactStager",
     "RunArtifacts",
     "SDK_APP_LOG_FILE",
@@ -49,6 +57,16 @@ PERSISTENCE_DIR_NAME = "persistence"
 
 # The browser-viewable bundle of the persisted event log (issue #1120).
 EVENT_LOG_FILE = "events.jsonl"
+
+# The ordered intermediate representation of the prompt this run's agent was
+# built from (issue #1346): full section text plus provenance.
+CONTEXT_PLAN_FILE = "context_plan.json"
+
+# The exact prompt text handed to the agent (issue #1346).
+PROMPT_FILE = "prompt.md"
+
+# The run's posted output (issue #1346); absent when the run posted nothing.
+OUTPUT_FILE = "output.md"
 
 # The SDK's per-conversation layout: ``<id>/events/event-<idx>-<event_id>.json``
 # (``persistence_const.EVENTS_DIR`` / ``EVENT_FILE_PATTERN``), plus dot-prefixed
@@ -147,7 +165,7 @@ class RunArtifactStager:
     # @stub-protected
     def artifact_files(self) -> tuple[ArtifactFile, ...]:
         """The per-file unzipped upload manifest (``console.txt``, ``app.txt``,
-        ``events.jsonl``).
+        ``events.jsonl``, ``context_plan.json``, ``prompt.md``, ``output.md``).
 
         The workflow uploads each entry as its own unzipped artifact; the
         filename-derived artifact name is what the debug prompt fetches raw.
@@ -162,8 +180,34 @@ class RunArtifactStager:
         """
         return tuple(
             ArtifactFile(name=name, path=self._base_dir / name)
-            for name in (CONSOLE_LOG_FILE, APP_LOG_FILE, EVENT_LOG_FILE)
+            for name in (
+                CONSOLE_LOG_FILE,
+                APP_LOG_FILE,
+                EVENT_LOG_FILE,
+                CONTEXT_PLAN_FILE,
+                PROMPT_FILE,
+                OUTPUT_FILE,
+            )
         )
+
+    # @stub-protected
+    def write_context(
+        self, plan: "ContextPlan", prompt: str, output: str | None
+    ) -> None:
+        """Persist the run's context plan, the prompt and its output (#1346).
+
+        ``output.md`` is skipped when the run posted nothing, so the artifact
+        never claims a deliverable that never existed. Best-effort: the caller
+        treats a staging failure as a warning, never a run failure.
+        """
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        (self._base_dir / CONTEXT_PLAN_FILE).write_text(
+            json.dumps(plan.to_dict(), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        (self._base_dir / PROMPT_FILE).write_text(prompt, encoding="utf-8")
+        if output is not None:
+            (self._base_dir / OUTPUT_FILE).write_text(output, encoding="utf-8")
 
     # @stub-protected
     def bundle(self, console_log: str) -> RunArtifacts:

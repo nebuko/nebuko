@@ -395,6 +395,206 @@ class TestReplayEntry:
         assert rows[0].step == "implement"
 
 
+def _state_with_context(workflow="wf"):
+    """A two-entry run whose last entry recorded a context manifest + output."""
+    from nebuko.engine.lib.workflow_state import ContextManifestRow
+
+    state = build_state(
+        None,
+        workflow=workflow,
+        step="analyze",
+        agent="architect",
+        position=[{"workflow": workflow, "step": "analyze"}],
+        turn_outcome=replay_turn_outcome(),
+    )
+    return build_state(
+        state,
+        workflow=workflow,
+        step="plan",
+        agent="architect",
+        position=[{"workflow": workflow, "step": "plan"}],
+        turn_outcome=replay_turn_outcome(),
+        comment_ids=[4242],
+        summary="a plan summary",
+        result="approved",
+        context=[
+            ContextManifestRow(
+                order=0, kind="role_prompt", source="role:architect", chars=12,
+                sha256="a" * 64,
+            ),
+            ContextManifestRow(
+                order=1,
+                kind="recent_thread",
+                source="selection:declared",
+                comment_ids=["7"],
+                chars=99,
+                sha256="b" * 64,
+            ),
+        ],
+    )
+
+
+class TestContextView:
+    """Replay shows the recorded input context and output, opt-in (#1346)."""
+
+    def test_default_json_keys_unchanged(self, tmp_path, capsys):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(_state_with_context().model_dump_json())
+        workflows = _linear_workflow(tmp_path)
+
+        code = main(
+            [
+                "--state",
+                str(state_path),
+                "--entry",
+                "1",
+                "--json",
+                "--workflows-dir",
+                str(workflows),
+                "--local-workflows-dir",
+                "",
+                "--prompt-base",
+                PROMPT_BASE,
+            ]
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert "context" not in payload[0]
+        assert "output" not in payload[0]
+
+    def test_context_flag_reports_the_ordered_manifest(self, tmp_path, capsys):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(_state_with_context().model_dump_json())
+        workflows = _linear_workflow(tmp_path)
+
+        code = main(
+            [
+                "--state",
+                str(state_path),
+                "--entry",
+                "1",
+                "--context",
+                "--workflows-dir",
+                str(workflows),
+                "--local-workflows-dir",
+                "",
+                "--prompt-base",
+                PROMPT_BASE,
+            ]
+        )
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "role_prompt" in out
+        assert "recent_thread" in out
+        assert out.index("role_prompt") < out.index("recent_thread")
+        assert "selection:declared" in out
+        assert "[7]" in out
+
+    def test_context_flag_reports_the_output(self, tmp_path, capsys):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(_state_with_context().model_dump_json())
+        workflows = _linear_workflow(tmp_path)
+
+        code = main(
+            [
+                "--state",
+                str(state_path),
+                "--entry",
+                "1",
+                "--context",
+                "--json",
+                "--workflows-dir",
+                str(workflows),
+                "--local-workflows-dir",
+                "",
+                "--prompt-base",
+                PROMPT_BASE,
+            ]
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert [row["kind"] for row in payload[0]["context"]] == [
+            "role_prompt",
+            "recent_thread",
+        ]
+        assert payload[0]["output"] == {
+            "comment_ids": [4242],
+            "summary": "a plan summary",
+            "result": "approved",
+        }
+
+    def test_legacy_state_without_context_still_loads(self, tmp_path, capsys):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(_state().model_dump_json())
+        workflows = _linear_workflow(tmp_path)
+
+        code = main(
+            [
+                "--state",
+                str(state_path),
+                "--entry",
+                "1",
+                "--context",
+                "--json",
+                "--workflows-dir",
+                str(workflows),
+                "--local-workflows-dir",
+                "",
+                "--prompt-base",
+                PROMPT_BASE,
+            ]
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert payload[0]["context"] == []
+
+    def test_context_plan_file_prints_the_ordered_sections(self, tmp_path, capsys):
+        plan_path = tmp_path / "context_plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "step": "plan",
+                    "agent": "architect",
+                    "selection_mode": "declared",
+                    "missing": ["agent-output:context"],
+                    "sections": [
+                        {
+                            "kind": "role_prompt",
+                            "text": "ROLE TEXT",
+                            "source": "role:architect",
+                            "comment_ids": [],
+                        },
+                        {
+                            "kind": "recent_thread",
+                            "text": "THREAD TEXT",
+                            "source": "selection:declared",
+                            "comment_ids": ["7"],
+                        },
+                    ],
+                }
+            )
+        )
+
+        code = main(["--context-plan", str(plan_path)])
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "ROLE TEXT" in out
+        assert "THREAD TEXT" in out
+        assert out.index("ROLE TEXT") < out.index("THREAD TEXT")
+        assert "agent-output:context" in out
+
+    def test_context_plan_file_missing_is_a_usage_error(self, tmp_path, capsys):
+        code = main(["--context-plan", str(tmp_path / "absent.json")])
+
+        assert code == 2
+        assert "cannot read a context plan" in capsys.readouterr().err
+
+
 class TestRendering:
     def test_table_has_one_row_per_entry(self, tmp_path):
         workflows = _linear_workflow(tmp_path)

@@ -54,6 +54,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Sequence
 
+from nebuko.engine.context_ir import ContextPlan
 from nebuko.engine.lib.complexity_governor.complexity_governor import (
     ComplexityAdjustment,
     tier_index,
@@ -91,6 +92,9 @@ __all__ = [
     "replay_entries",
     "render_table",
     "render_provenance",
+    "render_context",
+    "render_context_plan",
+    "load_context_plan",
     "main",
 ]
 
@@ -520,6 +524,10 @@ class ReplayRow:
     #: How the invocation was started: ``seed``, ``bot``, ``resume`` or ``gate``.
     trigger_kind: str = ""
     note: str = ""
+    #: The recorded, body-free context manifest of this invocation (#1346).
+    context: tuple[dict[str, Any], ...] = ()
+    #: The run's recorded output facts (``comment_ids``/``summary``/``result``).
+    output: Optional[dict[str, Any]] = None
 
     @property
     def matches(self) -> bool:
@@ -530,8 +538,8 @@ class ReplayRow:
             self.resolved_step == self.step and self.resolved_agent == self.agent
         )
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
+    def as_dict(self, include_context: bool = False) -> dict[str, Any]:
+        payload = {
             "entry": self.entry,
             "step": self.step,
             "agent": self.agent,
@@ -550,6 +558,10 @@ class ReplayRow:
             "matches": self.matches,
             "note": self.note,
         }
+        if include_context:
+            payload["context"] = [dict(row) for row in self.context]
+            payload["output"] = self.output
+        return payload
 
 
 def _base_tier(effective: str, adjustment: Optional[ComplexityAdjustment]) -> str:
@@ -560,6 +572,29 @@ def _base_tier(effective: str, adjustment: Optional[ComplexityAdjustment]) -> st
         return effective
     index = max(0, min(len(TIERS) - 1, tier_index(effective) - adjustment.delta))
     return TIERS[index]
+
+
+def _recorded_context(entry) -> tuple[dict[str, Any], ...]:
+    """The body-free context manifest the run recorded (#1346).
+
+    A legacy entry carries no manifest, so the tuple is empty rather than an
+    invented reconstruction.
+    """
+    return tuple(
+        row.model_dump(mode="json") for row in (getattr(entry, "context", None) or ())
+    )
+
+
+def _recorded_output(entry) -> dict[str, Any] | None:
+    """The output facts the run recorded, or ``None`` when it recorded none."""
+    if entry is None:
+        return None
+    comment_ids = list(entry.comment_ids or [])
+    summary = entry.summary or ""
+    result = entry.result
+    if not comment_ids and not summary and result is None:
+        return None
+    return {"comment_ids": comment_ids, "summary": summary, "result": result}
 
 
 def _entry_step(entry) -> str:
@@ -620,6 +655,8 @@ def replay_entry(
     recorded_base = _base_tier(recorded_tier, recorded_adjustment)
     recorded_next = history[index + 1] if index + 1 < len(history) else None
     recorded_next_step = _entry_step(recorded_next) if recorded_next else ""
+    recorded_context = _recorded_context(recorded)
+    recorded_output = _recorded_output(recorded)
 
     if index == 0:
         return ReplayRow(
@@ -636,6 +673,8 @@ def replay_entry(
             next_agent=recorded_next.agent if recorded_next else "",
             trigger_kind="seed",
             note="seed invocation (no prior state to replay)",
+            context=recorded_context,
+            output=recorded_output,
         )
 
     prev_state = rebuild_prev_state(state, index, workflows_dir, local_workflows_dir)
@@ -677,6 +716,8 @@ def replay_entry(
             skip_kind=skip_kind,
             trigger_kind=trigger.kind,
             note=note,
+            context=recorded_context,
+            output=recorded_output,
         )
 
     raw_adjustment = result.get("COMPLEXITY_ADJUSTMENT", "")
@@ -729,6 +770,8 @@ def replay_entry(
         resolved_agent=resolved_agent,
         trigger_kind=trigger.kind,
         note="; ".join(notes),
+        context=recorded_context,
+        output=recorded_output,
     )
 
 
@@ -839,6 +882,80 @@ def _delta(value: Optional[int]) -> str:
     return f"{value:+d}" if value else "0"
 
 
+def render_context(rows: Sequence[ReplayRow]) -> str:
+    """Per-entry context manifest and output (the ``--context`` view, #1346).
+
+    Reads only what the state recorded: the ordered, body-free manifest rows
+    and the output facts. A legacy entry that recorded neither says so instead
+    of showing an invented reconstruction.
+    """
+    lines: list[str] = []
+    for row in rows:
+        lines.append(f"entry {row.entry}  {row.step or '-'} ({row.agent or '-'})")
+        if row.context:
+            lines.append("  context:")
+            for item in row.context:
+                ids = ",".join(item.get("comment_ids") or [])
+                source = item.get("source") or "-"
+                if ids:
+                    source = f"{source} [{ids}]"
+                lines.append(
+                    f"    {item.get('order', 0):>2}  {item.get('kind', '-'):<20} "
+                    f"{source:<32} {item.get('chars', 0):>6} chars  "
+                    f"{str(item.get('sha256', ''))[:12]}"
+                )
+        else:
+            lines.append("  context: (not recorded for this entry)")
+        output = row.output
+        if output is None:
+            lines.append("  output: (not recorded for this entry)")
+        else:
+            ids = ",".join(str(cid) for cid in output.get("comment_ids") or [])
+            lines.append(f"  output: comment_ids={ids or '-'}")
+            summary = output.get("summary") or ""
+            if summary:
+                lines.append(f"    summary: {summary}")
+            result = output.get("result")
+            if result:
+                lines.append(f"    result: {result}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def render_context_plan(plan: ContextPlan) -> str:
+    """The full ordered sections of a recorded ``context_plan.json`` (#1346)."""
+    header = [
+        f"Context plan: step={plan.step or '-'} agent={plan.agent or '-'}",
+        (
+            f"  selection: {plan.selection_mode or '-'}"
+            + (f"; missing: {', '.join(plan.missing)}" if plan.missing else "")
+        ),
+        f"  sections: {len(plan.sections)}",
+    ]
+    blocks = ["\n".join(header)]
+    for order, section in enumerate(plan.sections):
+        ids = ",".join(section.comment_ids)
+        meta = f"[{order}] {section.kind} ({section.source or '-'}"
+        meta += f"; {ids})" if ids else ")"
+        blocks.append(f"{meta}\n\n{section.text}")
+    return "\n\n".join(blocks)
+
+
+def load_context_plan(path: str) -> Optional[ContextPlan]:
+    """Load a downloaded ``context_plan.json``; ``None`` when unreadable."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return ContextPlan.from_dict(data)
+    except Exception:  # noqa: BLE001 - a malformed artifact is a user error
+        return None
+
+
 def render_table(rows: Sequence[ReplayRow]) -> str:
     """Fixed-width table, one row per invocation."""
     headers = [
@@ -915,7 +1032,7 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
             "complexity decisions from a workflow state (no LLM, no writes)."
         ),
     )
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group(required=False)
     source.add_argument(
         "--issue", type=int, help="Issue number to fetch the state from"
     )
@@ -942,6 +1059,23 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         "--json", action="store_true", help="Emit rows as JSON instead of a table"
     )
     parser.add_argument(
+        "--context",
+        action="store_true",
+        help=(
+            "Also show each entry's recorded context manifest and output "
+            "(no LLM, no rebuild)"
+        ),
+    )
+    parser.add_argument(
+        "--context-plan",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Print the full ordered sections of a downloaded context_plan.json "
+            "artifact (needs no state)"
+        ),
+    )
+    parser.add_argument(
         "--workflows-dir",
         default=None,
         help="Shipped workflows dir (default: the checkout's defaults/workflows)",
@@ -957,6 +1091,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         help="Prompt files directory (default: the checkout's defaults/prompts)",
     )
     args = parser.parse_args(argv)
+    if not args.context_plan and not (args.issue or args.state):
+        parser.error("one of --issue, --state or --context-plan is required")
     if args.workflows_dir is None or args.local_workflows_dir is None:
         shipped, local = default_paths.workflow_dirs()
         if args.workflows_dir is None:
@@ -971,6 +1107,17 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry point. Returns a process exit code."""
     args = _parse_args(argv)
+
+    if args.context_plan:
+        plan = load_context_plan(args.context_plan)
+        if plan is None:
+            print(
+                f"error: cannot read a context plan from {args.context_plan}",
+                file=sys.stderr,
+            )
+            return 2
+        print(render_context_plan(plan))
+        return 0
 
     if args.state:
         try:
@@ -1016,13 +1163,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     if args.json:
-        print(json.dumps([row.as_dict() for row in rows], indent=2))
+        print(
+            json.dumps(
+                [row.as_dict(include_context=args.context) for row in rows], indent=2
+            )
+        )
         return 0
 
     provenance = policy_provenance(state)
     print(render_provenance(provenance, state, source))
     print()
     print(render_table(rows))
+    if args.context:
+        print()
+        print(render_context(rows))
     return 0
 
 
