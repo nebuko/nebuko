@@ -30,6 +30,7 @@ from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool imp
     record_function_call,
 )
 from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+    record_refused_call,
     record_turn_outcome,
 )
 from nebuko.engine.finalize import (
@@ -141,8 +142,11 @@ route_to_prefs = outcome_to_prefs
 
 
 class FinalizeExecutor(ToolExecutor):
-    def __init__(self, conversation_id: str = "default") -> None:
+    def __init__(
+        self, conversation_id: str = "default", consult_budget_exhausted: bool = False
+    ) -> None:
         self._conversation_id = conversation_id
+        self._consult_budget_exhausted = consult_budget_exhausted
 
     def __call__(
         self,
@@ -165,6 +169,14 @@ class FinalizeExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
+        handoff = outcome.to_function_call()
+        if self._consult_budget_exhausted and handoff is not None:
+            record_refused_call(self._conversation_id, handoff)
+            return FinalizeObservation.from_text(
+                text="finalize rejected: the gate consult budget is exhausted; "
+                "the requested agent cannot run. Revise the outcome without an agent_call.",
+                is_error=True,
+            )
         # In the engine's closing turn the report is the turn's markdown text,
         # not an argument. A call made with no report text is refused here,
         # while the agent can still act on it: an accepted call would record
@@ -183,7 +195,6 @@ class FinalizeExecutor(ToolExecutor):
             outcome_to_turn_outcome(outcome),
             outcome_to_prefs(outcome),
         )
-        handoff = outcome.to_function_call()
         if handoff is not None:
             record_function_call(self._conversation_id, handoff)
         return FinalizeObservation.from_text(
@@ -208,6 +219,7 @@ class FinalizeTool(ToolDefinition[FinalizeAction, FinalizeObservation]):
         cls,
         conv_state: "ConversationState | None" = None,
         conversation_id: str = "default",
+        consult_budget_exhausted: bool = False,
         **params: Any,
     ) -> Sequence[Self]:
         """Create a FinalizeTool bound to a run-scoped conversation id.
@@ -229,7 +241,10 @@ class FinalizeTool(ToolDefinition[FinalizeAction, FinalizeObservation]):
             description=FINALIZE_DESCRIPTION,
             action_type=FinalizeAction,
             observation_type=FinalizeObservation,
-            executor=FinalizeExecutor(conversation_id=conversation_id),
+            executor=FinalizeExecutor(
+                conversation_id=conversation_id,
+                consult_budget_exhausted=consult_budget_exhausted,
+            ),
             annotations=ToolAnnotations(
                 readOnlyHint=True,
                 destructiveHint=False,

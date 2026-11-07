@@ -271,6 +271,7 @@ def resolve_toolset(
     role_name: str,
     token_budget: "TokenBudgetPolicy | None" = None,
     context_bodies: Mapping[str, str] | None = None,
+    consult_budget_exhausted: bool = False,
 ) -> ResolvedToolset:
     """Map configured tool names to SDK/builtin specs.
 
@@ -344,7 +345,12 @@ def resolve_toolset(
             )
         elif tool_name == "finalize":
             _ensure_finalize_tool_registered()
-            sdk_tools.append(Tool(name=_FINALIZE_TOOL_NAME))
+            sdk_tools.append(
+                Tool(
+                    name=_FINALIZE_TOOL_NAME,
+                    params={"consult_budget_exhausted": consult_budget_exhausted},
+                )
+            )
             # ``finalize`` is the terminal tool of every step (issue #1033), so
             # its presence is what enables the bounded missing-outcome recall.
             dispatch_tool_enabled = True

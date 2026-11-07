@@ -67,6 +67,82 @@ def _answer(headline: str = "Wired the format", changes: str = "- a.py") -> str:
 
 
 class TestFinalizeToolRegistration:
+    @pytest.fixture(autouse=True)
+    def _clear_test_records(self):
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
+            clear_run as clear_call,
+        )
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+            clear_run as clear_outcome,
+        )
+
+        yield
+        for conversation_id in ("spent-gate", "available-gate"):
+            clear_call(conversation_id)
+            clear_outcome(conversation_id)
+
+    def test_spent_gate_rejects_handoff_before_recording_outcome(self) -> None:
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
+            get_recorded_function_call,
+        )
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+            get_recorded_turn_outcome,
+            get_refused_calls,
+        )
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+            FinalizeTool,
+        )
+
+        tool = FinalizeTool.create(conversation_id="spent-gate", consult_budget_exhausted=True)[0]
+        action = tool.action_from_arguments({"turn_outcome": {
+            "appreciation": "approved",
+            "agent_call": {"agent_name": "context", "task": "check facts"},
+        }})
+        result = tool.executor(action)
+        assert result.is_error
+        assert "budget" in result.text.lower()
+        assert get_recorded_function_call("spent-gate") is None
+        assert get_recorded_turn_outcome("spent-gate") is None
+        assert tool.executor(action).is_error
+        other = tool.action_from_arguments({"turn_outcome": {
+            "appreciation": "rejected",
+            "agent_call": {"agent_name": "review", "task": "review facts"},
+        }})
+        assert tool.executor(other).is_error
+        assert [call.agent_name for call in get_refused_calls("spent-gate")] == ["context", "review"]
+        assert get_refused_calls("available-gate") == []
+
+        revised = tool.action_from_arguments({"turn_outcome": {"appreciation": "hold", "hold_kind": "awaiting_input"}})
+        assert not tool.executor(revised).is_error
+
+    def test_available_gate_accepts_handoff(self) -> None:
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
+            get_recorded_function_call,
+        )
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+            FinalizeTool,
+        )
+
+        tool = FinalizeTool.create(conversation_id="available-gate")[0]
+        action = tool.action_from_arguments({"turn_outcome": {
+            "appreciation": "approved",
+            "agent_call": {"agent_name": "context", "task": "check facts"},
+        }})
+        assert not tool.executor(action).is_error
+        assert get_recorded_function_call("available-gate").agent_name == "context"
+
+    def test_hold_with_inert_agent_call_does_not_raise(self) -> None:
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+            FinalizeTool,
+        )
+
+        tool = FinalizeTool.create(conversation_id="spent-gate", consult_budget_exhausted=True)[0]
+        action = tool.action_from_arguments({"turn_outcome": {
+            "appreciation": "hold", "hold_kind": "awaiting_input",
+            "agent_call": {"agent_name": "context", "task": "check facts"},
+        }})
+        assert not tool.executor(action).is_error
+
     def test_finalize_is_the_terminal_gate(self) -> None:
         spec = DEFAULT_ENGINE_TOOLS.tools["finalize"]
         assert spec.payload_kind == "finalize"
@@ -718,7 +794,7 @@ def _host_for(
     classify_event: Callable[[object], bool] | None = None,
 ) -> InProcessAgentHost:
     def _run_agent(
-        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None
+        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None, prev_state=None
     ):
         return conversation
 

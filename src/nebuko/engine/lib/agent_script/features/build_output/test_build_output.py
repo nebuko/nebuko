@@ -2163,6 +2163,151 @@ class TestStartedByCapture(unittest.TestCase):
         self.assertIsNone(_started_by_from_env())
 
 
+def test_release_supersedes_a_refused_pending_call(tmp_path, monkeypatch):
+    from nebuko.engine.lib.agent_script.features.build_output.build_output import (
+        build_output,
+    )
+    from nebuko.engine.lib.metrics_schema import Metrics
+    from nebuko.engine.lib.workflow_state import FunctionCall, GateLock, WorkflowState
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORKFLOW_NAME", "wf")
+    monkeypatch.setenv("WORKFLOW_STEP", "implement")
+    monkeypatch.setenv("ROLE_NAME", "dev")
+    monkeypatch.setenv("GATE_RELEASED", "true")
+    monkeypatch.setenv("GATE_CONSULT", "")
+    prior = WorkflowState(
+        workflow="wf", step="plan", agent="architect",
+        gate=GateLock(step="plan", consult_rounds=3),
+        function_call=FunctionCall(agent_name="context", task="verify facts"),
+    )
+    conversation = SimpleNamespace(state=SimpleNamespace(events=[_msg_event("done")]))
+    result = build_output(conversation, Metrics(agent_role="dev"), None, prev_state=prior)
+    assert result["workflow_state"].function_call is None
+    assert prior.function_call.agent_name == "context"
+
+
+def test_refused_finalize_survives_retry_and_state_roundtrip(tmp_path, monkeypatch):
+    from nebuko.engine.lib.agent_script.features.build_output.build_output import (
+        build_output,
+    )
+    from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        get_refused_calls,
+    )
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+        FinalizeTool,
+    )
+    from nebuko.engine.lib.metrics_schema import Metrics
+    from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+        _consult_exhausted_note,
+    )
+    from nebuko.engine.lib.workflow_state import FunctionCall, GateLock, WorkflowState
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORKFLOW_NAME", "wf")
+    monkeypatch.setenv("WORKFLOW_STEP", "plan")
+    monkeypatch.setenv("ROLE_NAME", "architect")
+    monkeypatch.setenv("GATE_CONSULT", "")
+    monkeypatch.setenv("GATE_RELEASED", "")
+    monkeypatch.setattr(
+        "nebuko.engine.lib.agent_script.features.build_output.build_output._load_gated_step_def",
+        lambda *_args: True,
+    )
+    conversation = SimpleNamespace(id="refused-roundtrip", state=SimpleNamespace(events=[_msg_event("done")]))
+    tool = FinalizeTool.create(conversation_id=conversation.id, consult_budget_exhausted=True)[0]
+    rejected = tool.action_from_arguments({"turn_outcome": {
+        "appreciation": "approved",
+        "agent_call": {"agent_name": "context", "task": "verify the contract"},
+    }})
+    assert tool.executor(rejected).is_error
+    assert tool.executor(rejected).is_error
+    revised = tool.action_from_arguments({"turn_outcome": {"appreciation": "approved"}})
+    assert not tool.executor(revised).is_error
+
+    prior = WorkflowState(workflow="wf", step="plan", gate=GateLock(
+        step="plan", consult_rounds=3,
+    ), gate_refused_calls=[FunctionCall(agent_name="review", task="review the design")])
+    result = build_output(conversation, Metrics(agent_role="architect"), None, prev_state=prior)
+    state = WorkflowState.model_validate_json(state_to_json(result["workflow_state"]))
+    assert state.function_call is None
+    assert [call.agent_name for call in state.gate_refused_calls] == ["review", "context"]
+    assert "refused" in state.turn_outcome.note.lower()
+    note = _consult_exhausted_note(state)
+    assert "context" in note and "verify the contract" in note
+    assert get_refused_calls(conversation.id) == []
+
+    conversation.id = "refused-roundtrip-next"
+    next_tool = FinalizeTool.create(conversation_id=conversation.id, consult_budget_exhausted=True)[0]
+    assert not next_tool.executor(revised).is_error
+    next_state = build_output(conversation, Metrics(agent_role="architect"), None, prev_state=state)["workflow_state"]
+    assert [call.agent_name for call in next_state.gate_refused_calls] == ["review", "context"]
+    assert "refused" in next_state.turn_outcome.note.lower()
+
+    monkeypatch.setenv("GATE_RELEASED", "true")
+    conversation.id = "refused-roundtrip-release"
+    released = build_output(conversation, Metrics(agent_role="architect"), None, prev_state=next_state)["workflow_state"]
+    assert released.gate_refused_calls == []
+
+    from datetime import datetime, timezone
+    from nebuko.engine.lib.workflow_state import GateDecision
+
+    decision = GateDecision(
+        status="rejected", workflow="wf", target_step="plan", decided_by="user",
+        decided_at=datetime.now(timezone.utc), feedback="revise", comment_id=1,
+    )
+    monkeypatch.setattr(
+        "nebuko.engine.lib.agent_script.features.build_output.build_output._parse_gate_decision_env",
+        lambda: decision,
+    )
+    conversation.id = "refused-roundtrip-rearmed"
+    rearmed = build_output(conversation, Metrics(agent_role="architect"), None, prev_state=next_state)["workflow_state"]
+    assert rearmed.gate.armed()
+    assert rearmed.gate_refused_calls == []
+
+
+def test_refusal_survives_failed_run_without_a_retry(tmp_path, monkeypatch):
+    from nebuko.engine.lib.agent_script.features.build_output.build_output import (
+        build_output,
+    )
+    from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+        get_refused_calls,
+    )
+    from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (
+        FinalizeTool,
+    )
+    from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
+        OutcomeStatus,
+        RunOutcome,
+    )
+    from nebuko.engine.lib.metrics_schema import Metrics
+    from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+        _consult_exhausted_note,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORKFLOW_NAME", "wf")
+    monkeypatch.setenv("WORKFLOW_STEP", "plan")
+    monkeypatch.setenv("ROLE_NAME", "architect")
+    monkeypatch.setenv("GATE_CONSULT", "")
+    monkeypatch.setenv("GATE_RELEASED", "")
+    conversation = SimpleNamespace(
+        id="refused-failure", state=SimpleNamespace(events=[_msg_event("done")]),
+        run_outcome=RunOutcome(status=OutcomeStatus.FAILURE),
+    )
+    tool = FinalizeTool.create(conversation_id=conversation.id, consult_budget_exhausted=True)[0]
+    action = tool.action_from_arguments({"turn_outcome": {
+        "appreciation": "approved",
+        "agent_call": {"agent_name": "context", "task": "verify the contract"},
+    }})
+    assert tool.executor(action).is_error
+    prior = WorkflowState(workflow="wf", step="plan", gate=GateLock(step="plan", consult_rounds=3))
+    state = build_output(conversation, Metrics(agent_role="architect"), None, prev_state=prior)["workflow_state"]
+    assert state.function_call is None
+    assert state.turn_outcome.status is TurnStatus.INCOMPLETE
+    assert "context" in _consult_exhausted_note(state)
+    assert get_refused_calls(conversation.id) == []
+
+
 class TestBuildOutputPrevStateIntegration(unittest.TestCase):
     """The recovery seam must live *inside* ``build_output`` (issue #671).
 

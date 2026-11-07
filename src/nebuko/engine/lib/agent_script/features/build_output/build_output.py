@@ -67,6 +67,9 @@ from nebuko.engine.lib.agent_script.features.dispatch_next_tool import (
     get_recorded_run_prefs,
     get_recorded_turn_outcome,
 )
+from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+    get_refused_calls,
+)
 from nebuko.engine.lib.agent_script.features.call_agent_tool import (
     clear_run as clear_call_agent_run,
     get_recorded_function_call,
@@ -1329,6 +1332,8 @@ def build_output(
     # Clear the run-scoped dispatch registry on every exit path (issue #524):
     # build_output runs exactly once per agent run, so this must not leak into
     # the next run in a long-lived process.
+    conversation_id = getattr(conversation, "id", None)
+    refused_calls = get_refused_calls(conversation_id) if conversation_id is not None else []
     clear_run(getattr(conversation, "id", None))
     # Typed call_agent hand-off registry (issue #876) — same lifecycle.
     clear_call_agent_run(getattr(conversation, "id", None))
@@ -1411,17 +1416,27 @@ def build_output(
     # ``config_gate_released=true`` on the re-run path too. An unconditional
     # release here used to flip the fresh lock straight back to RELEASED and
     # let the workflow advance without a new human approval.
+    previous_gate = prev_state.gate if prev_state is not None else None
     gate = resolve_post_decision_gate(
         gate,
         workflow_step,
         _parse_gate_decision_env(),
         _parse_gate_released_env(),
     )
+    same_gate = gate is not None and gate is previous_gate and gate.armed()
+    all_refused_calls = list(prev_state.gate_refused_calls) if same_gate and prev_state else []
+    if gate is not None and gate.armed():
+        all_refused_calls.extend(call for call in refused_calls if call not in all_refused_calls)
     if gate_consult and gate is not None:
         # This run is the delegated consult (issue #1003): spend one round from
         # the root lock so the persisted ``consult_rounds`` actually counts the
         # delegation and ``MAX_CONSULT_ROUNDS`` bounds the fan-out.
         gate = gate.consume_consult(gate_consult)
+    if all_refused_calls:
+        note = "Consultation refused because the gate budget was exhausted."
+        turn_outcome = turn_outcome.model_copy(
+            update={"note": f"{turn_outcome.note} {note}".strip()}
+        )
     # Consistency fix (issues #887, #1033): a step that parks on an armed gate
     # must not keep advertising the ungated forward edge (``next_step`` from
     # WORKFLOW_NEXT) — no reader may follow it while the lock blocks the
@@ -1494,6 +1509,7 @@ def build_output(
         complexity_policy=_parse_complexity_policy_env(),
         inputs=_parse_step_input_records_env(),
     )
+    new_state.gate_refused_calls = all_refused_calls
     logger.info(f"Built workflow state run {new_state.run_id} for step={workflow_step}")
 
     # ── Scaffold branch marker strip (issue #604; #636) ──────────
