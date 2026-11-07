@@ -8,6 +8,7 @@ from nebuko.engine.lib.complexity_governor.complexity_governor import (
     ComplexityReviewRequest,
 )
 
+from ..context_manifest_row.context_manifest_row import ContextManifestRow
 from ..run_prefs.run_prefs import RunPrefs
 from ..state_metrics.state_metrics import StateMetrics
 from ..step_input_record.step_input_record import StepInputRecord
@@ -44,6 +45,11 @@ class HistoryEntry(BaseModel):
     # value the agent was handed is auditable in workflow state. Empty for steps
     # that declare no inputs and for legacy snapshots.
     inputs: list[StepInputRecord] = Field(default_factory=list)
+    # The ordered, body-free manifest of the context this step's prompt was
+    # built from (issue #1346): kind / provenance / chars / sha256 per section,
+    # so replay can show what the agent received and in which order. Empty for
+    # legacy snapshots and for runs that recorded no plan.
+    context: list[ContextManifestRow] = Field(default_factory=list)
     # Metrics of THIS step's agent invocation. This is the single metrics
     # authority (issue #792): the former top-level ``WorkflowState.metrics``
     # snapshot was removed so each step keeps its own record.

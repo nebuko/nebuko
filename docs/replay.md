@@ -26,6 +26,12 @@ uv run python -m nebuko.engine.lib.replay --issue 1299 --entry 14
 # Replay every invocation from a saved state file, offline
 uv run python -m nebuko.engine.lib.replay --state state.json --all-entries
 
+# Also show each entry's recorded input context and its output
+uv run python -m nebuko.engine.lib.replay --state state.json --context
+
+# Print the full ordered sections of a downloaded context_plan.json artifact
+uv run python -m nebuko.engine.lib.replay --context-plan context_plan.json
+
 # Machine-readable rows (no header block)
 uv run python -m nebuko.engine.lib.replay --state state.json --json
 
@@ -73,6 +79,33 @@ entry  step     agent      base    recΔ  replayΔ  CONFIG_COMPLEXITY  next     
 `base_tier`, `recorded_delta`, `replay_delta`, `trigger`, `rationale`,
 `config_complexity`, `next_step`, `next_agent`, `resolved_step`,
 `resolved_agent`, `skip_kind`, `trigger_kind`, `matches`, `note`).
+
+## Input context and output (`--context`)
+
+Every run records the ordered, body-free manifest of the context its prompt was
+built from on the advancing `HistoryEntry` (`context`: one row per section with
+`order`, `kind`, `source`, `comment_ids`, `chars` and `sha256`), plus its output
+facts (`comment_ids`, `summary`, `result`). `--context` prints both, opt-in:
+
+```
+entry 1  plan (architect)
+  context:
+     0  role_prompt          role:architect                      4210 chars  5f1c…
+     1  step_prompt          step:plan                           1820 chars  9a02…
+     2  recent_thread        selection:declared [1834]           6330 chars  77be…
+  output: comment_ids=1834
+    summary: the plan and its coverage table
+```
+
+A legacy entry that recorded neither says so — the replay never invents a
+reconstruction. With `--json`, `--context` adds `context` and `output` keys;
+without it the JSON shape is unchanged.
+
+`--context-plan PATH` reads a downloaded `context_plan.json` run artifact and
+prints its **full** ordered sections (kind, provenance, comment ids and text).
+The engine writes three such artifacts per run: `context_plan.json` (the IR),
+`prompt.md` (the exact prompt the agent received) and `output.md` (what the run
+posted, absent when it posted nothing).
 
 ## Policy provenance
 

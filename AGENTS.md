@@ -66,11 +66,17 @@ uv run python -m nebuko.engine.lib.replay --issue 1299 --entry 14
 # from a saved state, fully offline
 uv run python -m nebuko.engine.lib.replay --state state.json --all-entries
 uv run python -m nebuko.engine.lib.replay --state state.json --json
+uv run python -m nebuko.engine.lib.replay --state state.json --context
+uv run python -m nebuko.engine.lib.replay --context-plan context_plan.json
 ```
 
 One row per invocation: step, agent, base tier, recorded vs replayed delta,
 governor trigger + rationale, final `CONFIG_COMPLEXITY`, next step/agent. The
-header prints the policy and env overrides used. Rules of thumb:
+header prints the policy and env overrides used. `--context` additionally shows
+each entry's recorded context manifest (order / kind / source / chars / sha) and
+its output; `--context-plan` prints the full ordered sections of a downloaded
+`context_plan.json` run artifact (`prompt.md` / `output.md` sit next to it).
+Rules of thumb:
 
 - A `recΔ` / `replayΔ` mismatch, or a `*` on the step name, means the replay
   disagrees with the live run — report it, do not paper over it.

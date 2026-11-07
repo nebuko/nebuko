@@ -17,6 +17,7 @@ from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.gate_lock.gate_lock import MAX_CONSULT_ROUNDS, GateLock, GateStatus
 from .sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from .sub_domains.step_input_record.step_input_record import StepInputRecord
+from .sub_domains.context_manifest_row.context_manifest_row import ContextManifestRow
 from .sub_domains.run_prefs.run_prefs import RunPrefs
 from .sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
@@ -78,6 +79,7 @@ __all__ = [
     "ThreadRecord",
     "ThreadRecordKind",
     "StepInputRecord",
+    "ContextManifestRow",
     "Appreciation",
     "HoldKind",
     "IncompleteReason",
