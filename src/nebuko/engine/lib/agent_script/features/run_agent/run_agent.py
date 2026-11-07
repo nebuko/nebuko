@@ -11,7 +11,10 @@ import asyncio
 import dataclasses
 import json
 import os
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
+
+if TYPE_CHECKING:
+    from nebuko.engine.lib.workflow_state import WorkflowState
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
@@ -363,6 +366,7 @@ def run_agent(
     agent_cfg=None,
     workspace=None,
     context_bodies: "dict[str, str] | None" = None,
+    prev_state: "WorkflowState | None" = None,
 ) -> Conversation:
     """
     Create an agent, start a conversation, send a prompt, and run the agent.
@@ -380,6 +384,7 @@ def run_agent(
         context_bodies: The run's cached thread-comment bodies by id (issue #748),
                    bound to ``fetch_comment_bodies``'s executor when configured.
                    Defaults to the engine's ``CONTEXT_BODIES`` env hand-off.
+        prev_state: Previous workflow state used to enforce the gate budget.
 
     Returns:
         The completed Conversation object.
@@ -408,9 +413,30 @@ def run_agent(
     if "finalize" not in agent_tools:
         agent_tools = [*agent_tools, "finalize"]
 
+    gate = prev_state.gate if prev_state is not None else None
+    gate_consult = os.environ.get("GATE_CONSULT", "").strip()
+    if gate is not None and gate_consult:
+        gate = gate.consume_consult(gate_consult)
+    workflow_step = os.environ.get("WORKFLOW_STEP", "")
+    gate_released = os.environ.get("GATE_RELEASED", "").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    consult_budget_exhausted = bool(
+        gate is not None
+        and gate.armed()
+        and not gate.can_consult()
+        and (
+            (bool(workflow_step) and gate.step == workflow_step)
+            or bool(gate_consult)
+        )
+        and not gate_released
+    )
     resolved = resolve_toolset(
         agent_tools,
         role_name,
+        consult_budget_exhausted=consult_budget_exhausted,
         token_budget=resolve_token_budget_policy(agent_cfg),
         context_bodies=(
             context_bodies

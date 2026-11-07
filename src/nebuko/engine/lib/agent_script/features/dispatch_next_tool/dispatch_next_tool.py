@@ -23,7 +23,7 @@ from openhands.sdk.tool.tool import (
 from pydantic import Field, field_validator
 from rich.text import Text
 
-from nebuko.engine.lib.workflow_state import Appreciation, HoldKind, RunPrefs, TurnOutcome
+from nebuko.engine.lib.workflow_state import Appreciation, FunctionCall, HoldKind, RunPrefs, TurnOutcome
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.base import BaseConversation
@@ -150,6 +150,19 @@ answer. The parameters above are factual metadata only; never stuff the report i
 _registry_lock = Lock()
 _outcome_registry: dict[str, TurnOutcome] = {}
 _prefs_registry: dict[str, RunPrefs] = {}
+_refused_calls: dict[str, list[FunctionCall]] = {}
+
+
+def record_refused_call(conversation_id: str, call: FunctionCall) -> None:
+    with _registry_lock:
+        calls = _refused_calls.setdefault(str(conversation_id), [])
+        if call not in calls:
+            calls.append(call)
+
+
+def get_refused_calls(conversation_id: str) -> list[FunctionCall]:
+    with _registry_lock:
+        return list(_refused_calls.get(str(conversation_id), []))
 
 
 def record_turn_outcome(
@@ -192,6 +205,7 @@ def clear_run(conversation_id: str) -> None:
     with _registry_lock:
         _outcome_registry.pop(key, None)
         _prefs_registry.pop(key, None)
+        _refused_calls.pop(key, None)
 
 
 def reset_registry() -> None:
@@ -199,6 +213,7 @@ def reset_registry() -> None:
     with _registry_lock:
         _outcome_registry.clear()
         _prefs_registry.clear()
+        _refused_calls.clear()
 
 
 def action_to_payload(action: TurnOutcomeAction) -> dict[str, Any]:

@@ -613,9 +613,19 @@ def _consult_exhausted_note(
     gate = _armed_gate(prev_state)
     if gate is None or gate.can_consult():
         return ""
-    if getattr(prev_state, "function_call", None) is None:
+    if prev_state is None:
         return ""
-    return f"consult budget {gate.consult_rounds}/{MAX_CONSULT_ROUNDS} spent"
+    calls = prev_state.gate_refused_calls or ([prev_state.function_call] if prev_state.function_call else [])
+    if not calls:
+        return ""
+    note = (
+        f"consult budget {gate.consult_rounds}/{MAX_CONSULT_ROUNDS} spent"
+    )
+    for call in calls:
+        note += f"; hand-off to {call.agent_name or 'unknown'} did not run"
+        if call.task:
+            note += f"; requested task: {call.task}"
+    return note
 
 
 def _resolve_gate_decision_path(
@@ -1305,6 +1315,10 @@ def _resolve_outcome_path(
         )
         if consult is not None:
             return consult
+        if _consult_exhausted_note(prev_state):
+            return _human_gate_hold_result(
+                armed.step or prev_state.step or "", _consult_exhausted_note(prev_state)
+            )
         reject_route = _gate_reject_verdict_route(
             prev_state, armed, outcome, workflows_dir, local_workflows_dir
         )
@@ -2446,6 +2460,11 @@ def _resolve_bot_fallback_path(
         )
         if consult is not None:
             return consult
+        if _consult_exhausted_note(prev_state):
+            return _human_gate_hold_result(
+                armed.step or getattr(prev_state, "step", "") or "",
+                _consult_exhausted_note(prev_state),
+            )
         reject_route = _gate_reject_verdict_route(
             prev_state, armed, outcome, workflows_dir, local_workflows_dir
         )
