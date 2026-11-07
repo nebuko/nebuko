@@ -1,0 +1,4 @@
+<!-- bot-agent-dev -->
+Dev report on issue #1288.
+
+Ran the workflow tests; one failed with an assertion error (details trimmed).

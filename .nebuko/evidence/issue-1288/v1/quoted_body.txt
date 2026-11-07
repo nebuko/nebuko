@@ -1,0 +1,6 @@
+<!-- bot-agent-dev -->
+Dev report on issue #1288.
+
+Ran the workflow tests; one failed:
+
+E  AssertionError: assert '<!-- workflow-continue -->' in '<!-- bot-agent-unknown -->'

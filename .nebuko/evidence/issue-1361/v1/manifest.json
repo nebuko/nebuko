@@ -1,0 +1,8 @@
+{
+  "files": {
+    "clean_body.txt": "3af1465750fe7d74e8f6f021194abf22adb49713657e4f566a80f4c793cdeccb",
+    "expected.json": "f1aec35daf158d7a80b93b95e1af21971950af425a6a1e5b94d13ff526fe96fc",
+    "quoted_body.txt": "bc6c1d851e6ed063e5df5a6c9a0e15d11e0385c092c7cdbdfa4c8df08fe78a49",
+    "repro.sh": "ed8d0214119eecd81ddbfc27ed305a2c4b5426dd583773e19f81244beaaadd63"
+  }
+}

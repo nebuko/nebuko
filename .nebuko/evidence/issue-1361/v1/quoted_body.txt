@@ -1,0 +1,273 @@
+<!-- bot-workflow-terminal --><!-- workflow-continue -->
+<!-- bot-agent-dev -->
+<details>
+<summary><picture><source srcset="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-dark.svg" media="(prefers-color-scheme: dark)"><img src="https://raw.githubusercontent.com/nebuko/nebuko/main/logo/final/mark-light.svg" alt="Nebuko" width="16" height="16"></picture> Workflow State (run 2)</summary>
+
+```json
+<!-- WORKFLOW_STATE_START -->
+{
+  "run_id": 2,
+  "schema_version": 6,
+  "agent": "dev",
+  "history": [
+    {
+      "step": "",
+      "agent": "dev",
+      "summary": "The fix is complete and the report has been posted.",
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Regression fixed (publish verdict from this run only), two regression tests added, targeted tests 31/31 green, full suite at 27 failed (better than the 32 ceiling) with pre-existing failures only."
+      },
+      "comment_ids": [6657084677],
+      "metrics": {
+        "run_id": "f749e55c-13fe-408c-8dbf-590a777c527c",
+        "model_name": "mistral/zai-glm-5-3-flash",
+        "agent_role": "dev",
+        "input_tokens": 517474,
+        "output_tokens": 5707,
+        "max_context_window": 1048576,
+        "cache_hit_rate": 0.7034788221243966,
+        "cache_hit_tokens": 364032,
+        "reasoning_tokens": 1007,
+        "cost": 0.036790760000000006,
+        "tool_call_latency_ms": 3384.322623411814,
+        "agent_runtime_ms": 81223.74,
+        "nb_tool_calls": 23,
+        "tool_call_error_rate": 21.73913043478261,
+        "complexity": "medium",
+        "start_time": "2026-11-05T11:37:00.971474",
+        "end_time": "2026-11-05T11:41:38.158206+00:00",
+        "agent_runtimes_per_call_ms": [2331.41, 1107.73, 898.3, 5160.05, 1160.36, 4305.6, 7654.75, 1060.77, 1498.83, 9099.6, 4664.02, 8607.0, 5480.14, 3772.99, 1852.22, 1220.41, 1207.1, 2693.37, 1879.47, 1561.03, 4138.54, 1589.91, 4461.69, 3818.48],
+        "tool_calls_per_tool": {
+          "terminal_batch": 14,
+          "read": 2,
+          "edit": 5,
+          "finalize": 2
+        },
+        "errors_per_tool": {
+          "read": 2,
+          "edit": 1,
+          "terminal_batch": 2
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 517474,
+            "output": 5707,
+            "cache_hit": 364032,
+            "reasoning": 1007
+          }
+        },
+        "tool_time_per_tool": {
+          "terminal_batch": {
+            "total_ms": 193984.8,
+            "count": 14.0
+          },
+          "read": {
+            "total_ms": 11.61,
+            "count": 2.0
+          },
+          "edit": {
+            "total_ms": 37.37,
+            "count": 5.0
+          },
+          "finalize": {
+            "total_ms": 16.44,
+            "count": 2.0
+          }
+        },
+        "tool_runtime_ms": 194050.22,
+        "wall_clock_ms": 277186.73,
+        "tokens_per_second": 206.10390882752338,
+        "time_to_first_token": 1.5244515289166631
+      }
+    },
+    {
+      "step": "",
+      "agent": "dev",
+      "summary": "Final report posted: commit `a347b3c` strips the `state` from both regression tests' agent results, with verified failure against `d00d06d` and 21/21 passing on the fixed code.",
+      "turn_outcome": {
+        "status": "completed",
+        "appreciation": "approved",
+        "note": "Both tests now run stateless agent results and the green-run test verifiably fails against d00d06d with the requested assertion."
+      },
+      "metrics": {
+        "run_id": "56d65a6d-1464-4de3-ac9c-0d65c15cb821",
+        "model_name": "mistral/zai-glm-5-3-flash",
+        "agent_role": "dev",
+        "input_tokens": 173319,
+        "output_tokens": 2891,
+        "max_context_window": 1048576,
+        "cache_hit_rate": 0.5849099060114586,
+        "cache_hit_tokens": 101376,
+        "reasoning_tokens": 222,
+        "cost": 0.015278229999999999,
+        "tool_call_latency_ms": 6735.732515652974,
+        "agent_runtime_ms": 80828.79,
+        "nb_tool_calls": 10,
+        "tool_call_error_rate": 30.0,
+        "complexity": "high",
+        "start_time": "2026-11-05T11:49:45.816356",
+        "end_time": "2026-11-05T11:51:59.486127+00:00",
+        "agent_runtimes_per_call_ms": [2362.94, 3054.21, 7295.5, 4737.63, 2702.11, 3604.39, 1130.97, 6118.83, 5993.92, 927.23, 21660.83, 21240.23],
+        "tool_calls_per_tool": {
+          "terminal_batch": 7,
+          "write": 1,
+          "finalize": 2
+        },
+        "errors_per_tool": {
+          "terminal_batch": 3
+        },
+        "tokens_per_tool": {
+          "unknown": {
+            "input": 173319,
+            "output": 2891,
+            "cache_hit": 101376,
+            "reasoning": 222
+          }
+        },
+        "tool_time_per_tool": {
+          "terminal_batch": {
+            "total_ms": 51894.0,
+            "count": 7.0
+          },
+          "write": {
+            "total_ms": 6.24,
+            "count": 1.0
+          },
+          "finalize": {
+            "total_ms": 12.16,
+            "count": 2.0
+          }
+        },
+        "tool_runtime_ms": 51912.4,
+        "wall_clock_ms": 133669.77,
+        "tokens_per_second": 150.80458228939673,
+        "time_to_first_token": 3.2561136222500076
+      },
+      "complexity_adjustment": {
+        "delta": 1,
+        "trigger": "evidence-drift",
+        "evidence": {
+          "llm": {
+            "input_tokens": 517474.0,
+            "output_tokens": 5707.0,
+            "nb_tool_calls": 23.0,
+            "cost": 0.036790760000000006,
+            "tool_call_error_rate": 21.73913043478261,
+            "review_fix_requests": 0.0,
+            "dispatch_recall_count": 0.0
+          }
+        },
+        "rationale": "evidence drift medium -> high"
+      }
+    }
+  ],
+  "current_context": {
+    "last_run_status": "success"
+  },
+  "turn_outcome": {
+    "status": "completed",
+    "appreciation": "approved",
+    "note": "Both tests now run stateless agent results and the green-run test verifiably fails against d00d06d with the requested assertion."
+  },
+  "resolution": {
+    "task": "dev",
+    "input_complexity": "high",
+    "role_name": "dev",
+    "prompt_location": "/home/runner/work/nebuko/nebuko/.nebuko-engine/defaults/prompts/dev.md",
+    "agent_selected": "true",
+    "reasoning": "none",
+    "timestamp": "2026-11-05T11:52:00.458241+00:00"
+  },
+  "workflow_ref": "nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@refs/heads/main",
+  "complexity_policy": {
+    "bands": {
+      "low": {
+        "min_score": 1,
+        "guidance": "LOW \u2014 localized, single-concern change: one file or a tight cluster, no design ambiguity, no cross-module contract change, no open questions. If it fits in a single focused edit, it is LOW."
+      },
+      "medium": {
+        "min_score": 1,
+        "guidance": "MEDIUM \u2014 the default working tier: a bounded multi-file change with a clear approach, a couple of touch points, no unresolved design choice. Most feature work and bug fixes belong here."
+      },
+      "high": {
+        "min_score": 3,
+        "any_of": ["multi-issue-linkage", "reopened-issue", "high-token-burn", "large-scope", "human-friction"],
+        "guidance": "HIGH \u2014 reserved for genuinely heavy work: multiple linked issues or reopened problem, cross-module/architectural change, sustained large context burn, or repeated human change-requests. Reach for HIGH only when the evidence below actually fires; an unproven HIGH erodes the cost/value of the tier."
+      }
+    },
+    "signal_rules": [
+      {
+        "signal": "multi-issue-linkage",
+        "family": "context",
+        "field": "linked_issues",
+        "threshold": 2.0
+      },
+      {
+        "signal": "reopened-issue",
+        "family": "context",
+        "field": "reopened",
+        "threshold": 1.0
+      },
+      {
+        "signal": "high-token-burn",
+        "family": "llm",
+        "field": "input_tokens",
+        "threshold": 150000.0
+      },
+      {
+        "signal": "large-scope",
+        "family": "llm",
+        "field": "nb_tool_calls",
+        "threshold": 40.0
+      },
+      {
+        "signal": "human-friction",
+        "family": "human",
+        "field": "changes_requested",
+        "threshold": 2.0
+      }
+    ],
+    "target_distribution": {
+      "low": 0.35,
+      "medium": 0.5,
+      "high": 0.15
+    }
+  }
+}
+<!-- WORKFLOW_STATE_END -->
+```
+
+</details>
+
+*Developer answer*
+
+## Regression tests fixed — commit `a347b3c`
+
+**Commit:** `a347b3c` — `test: strip agent state from the green-run regression tests (#1288)` (on `feature/issue-1288-a-crashed-engine-run-still-advances-the-workflow-a`; the engine pushes the branch and updates the PR). Only `tests/engine/test_post_publish_crash.py` changed (6+/6−), per the request.
+
+### Change
+Both tests in `TestPreviousFailureDoesNotFailAGreenRun` now use an agent result with no `state`, exactly as asked:
+
+```python
+result = _agent_result()
+result.pop("state")
+monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: result)
+```
+
+Previously `_agent_result()` included a `state`, so the tests never reached the case being fixed by `6838a7c`.
+
+### Old-code verification
+With `run_loop.py` restored from `d00d06d` (temporarily, not committed — reverted immediately), `test_a_green_run_after_a_failure_keeps_the_token` fails at the requested assertion:
+
+```
+>       assert CONTINUE_TOKEN in answers[-1]["body"].splitlines()[0]
+E       AssertionError: assert '<!-- workflow-continue -->' in '<!-- bot-agent-unknown -->'
+```
+
+i.e. the old code consulted the previous state, framed the green run as a failure and stripped the continue token. `test_a_git_finalize_failure_after_a_failure_is_still_a_failure` passes on both old and new code (it asserts a real failure, which both handle).
+
+### Results
+- `uv run pytest tests/engine/test_post_publish_crash.py`: **21 passed** (after `uv sync --extra runtime` fixed the `ModuleNotFoundError: openhands` environment issue that had left 14 tests unrunnable).
+- Working tree clean; the `d00d06d` restore was reverted before committing.
