@@ -8,7 +8,7 @@ as an argument and never prompts or prints.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
@@ -82,6 +82,7 @@ class InitPlan:
         Literal["create", "update", "skip_existing", "add_repo_access", "report_inaccessible"],
     ]
     conflicts: tuple[str, ...]
+    request_access: dict[str, SecretAccess] = field(default_factory=dict)  # org-scope access facts
 
 
 @dataclass(frozen=True)
@@ -150,7 +151,66 @@ def plan_init(
     # (N31). Org-scope action mapping per Decision §1 (N32); org != repo owner
     # ⇒ ValueError (N34); never emits "update" for a secret the repo cannot read
     # and cannot be made to (private + public repo stays "report_inaccessible").
-    raise NotImplementedError
+    if request.target.scope == "org":
+        if not request.target.org or request.target.org != request.target.repo.split("/")[0]:
+            raise ValueError(
+                f"org {request.target.org!r} is not the owner of repo "
+                f"{request.target.repo!r}"
+            )
+    rendered = {
+        AGENT_CONFIG_PATH: agent_config,
+        WORKFLOW_PATH: _render_workflow(
+            caller_template, request, manifest, manifest.providers[request.provider].secret_names
+        ),
+    }
+    secret_actions: dict[str, str] = {}
+    secret_names = tuple(manifest.providers[request.provider].secret_names)
+    if request.pat_mode:
+        secret_names = (*secret_names, "GH_PAT")
+    for name in secret_names:
+        if name == "GH_PAT" and not request.pat_mode:
+            continue
+        secret_actions[name] = _secret_action(
+            name,
+            existing_secrets=existing_secrets,
+            secret_access=secret_access,
+            force=request.force,
+        )
+    conflicts = tuple(
+        path for path, exists in sorted(existing_files.items()) if exists
+    )
+    return InitPlan(
+        request=request,
+        rendered=rendered,
+        secret_actions=secret_actions,
+        conflicts=conflicts,
+        request_access=dict(secret_access) if secret_access else {},
+    )
+
+
+def _secret_action(
+    name: str,
+    *,
+    existing_secrets: frozenset[str],
+    secret_access: dict[str, SecretAccess] | None,
+    force: bool,
+) -> str:
+    if name in existing_secrets:
+        if not force:
+            return "skip_existing"
+        access = (secret_access or {}).get(name)
+        if access is not None and not access.visible:
+            if access.visibility == "private" and not access.repo_listed:
+                return "report_inaccessible"
+            return "add_repo_access"
+        return "update"
+    if secret_access is not None and name in secret_access:
+        access = secret_access[name]
+        if not access.visible:
+            if access.visibility == "private" and not access.repo_listed:
+                return "report_inaccessible"
+            return "add_repo_access"
+    return "create"
 
 
 def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, SecretValue]) -> InitOutcome:
@@ -159,7 +219,60 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
     # success=False; update at org scope passes the existing visibility/repo list
     # to put_secret; individual secret failure ⇒ status="failed", continue;
     # branch/PR errors raise.
-    raise NotImplementedError
+    statuses: list[SecretStatus] = []
+    for name, action in plan.secret_actions.items():
+        if action == "add_repo_access":
+            client.add_repo_access(plan.request.target, name)
+            statuses.append(SecretStatus(name=name, status="add_repo_access", detail=""))
+            continue
+        if action == "report_inaccessible":
+            statuses.append(
+                SecretStatus(
+                    name=name,
+                    status="report_inaccessible",
+                    detail="the target repository cannot read this org secret (private and not listed)",
+                )
+            )
+            continue
+        try:
+            if name not in secrets:
+                raise KeyError(f"no value provided for {name}")
+            value = secrets[name]
+            access = (plan.request_access or {}).get(name) if plan.request.target.scope == "org" else None
+            if access is not None and access.visibility is not None:
+                client.put_secret(
+                    plan.request.target,
+                    name,
+                    value,  # type: ignore[arg-type]
+                    visibility=access.visibility,
+                    repos=plan.request.target.selected_repos or None,
+                )
+            else:
+                client.put_secret(plan.request.target, name, value)  # type: ignore[arg-type]
+        except Exception as error:
+            statuses.append(SecretStatus(name=name, status="failed", detail=f"{type(error).__name__}: {error}"))
+            continue
+        statuses.append(SecretStatus(name=name, status="created" if action == "create" else "updated", detail=""))
+    client.upsert_branch_and_commit(plan.request.target, BRANCH, plan.rendered)
+    pr_url: str | None = None
+    pr_error: str | None = None
+    try:
+        pr_url = client.get_or_open_pull_request(
+            plan.request.target,
+            BRANCH,
+            PR_TITLE,
+            _pr_body(plan),
+        )
+    except Exception as error:
+        pr_error = f"{type(error).__name__}: {error}"
+    success = pr_error is None and not any(s.status == "failed" for s in statuses)
+    return InitOutcome(
+        pr_url=pr_url,
+        branch=BRANCH,
+        files=tuple(sorted(plan.rendered)),
+        secrets=tuple(statuses),
+        success=success,
+    )
 
 
 def _render_workflow(caller_template: str, request: InitRequest, provider, names: tuple[str, ...]) -> str:
