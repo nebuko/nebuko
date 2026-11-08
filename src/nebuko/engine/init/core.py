@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from nebuko.engine.init.ports import SetupError
+
 if TYPE_CHECKING:
     from nebuko.engine.init.manifest import Manifest
 
@@ -23,7 +25,13 @@ class SecretTarget:
     repo: str  # owner/name; always the repo receiving the PR
     org: str | None = None  # required when scope == "org"; must equal repo's owner
     visibility: Literal["all", "private", "selected"] = "selected"
-    selected_repos: tuple[str, ...] = ()  # repo NAMES; org "create" default: (repo,)
+    # repo NAMES; None means "derive the target repo". An explicit empty tuple is
+    # rejected below, mirroring gh's refusal of `--visibility selected` with no repos.
+    selected_repos: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.visibility == "selected" and self.selected_repos is not None and not self.selected_repos:
+            raise ValueError("visibility='selected' requires at least one selected repository")
 
 
 @dataclass(frozen=True)
@@ -195,21 +203,15 @@ def _secret_action(
     secret_access: dict[str, SecretAccess] | None,
     force: bool,
 ) -> str:
+    # Access facts win over existence: an existing org secret the repo cannot
+    # read must be made readable (or reported), never silently skipped.
+    access = (secret_access or {}).get(name)
+    if access is not None and not access.visible:
+        if access.visibility == "private" and not access.repo_listed:
+            return "report_inaccessible"
+        return "update" if force else "add_repo_access"
     if name in existing_secrets:
-        if not force:
-            return "skip_existing"
-        access = (secret_access or {}).get(name)
-        if access is not None and not access.visible:
-            if access.visibility == "private" and not access.repo_listed:
-                return "report_inaccessible"
-            return "add_repo_access"
-        return "update"
-    if secret_access is not None and name in secret_access:
-        access = secret_access[name]
-        if not access.visible:
-            if access.visibility == "private" and not access.repo_listed:
-                return "report_inaccessible"
-            return "add_repo_access"
+        return "update" if force else "skip_existing"
     return "create"
 
 
@@ -221,6 +223,9 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
     # branch/PR errors raise.
     statuses: list[SecretStatus] = []
     for name, action in plan.secret_actions.items():
+        if action == "skip_existing":
+            statuses.append(SecretStatus(name=name, status="skipped_existing", detail=""))
+            continue
         if action == "add_repo_access":
             client.add_repo_access(plan.request.target, name)
             statuses.append(SecretStatus(name=name, status="add_repo_access", detail=""))
@@ -234,21 +239,31 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
                 )
             )
             continue
+        if name not in secrets:
+            statuses.append(
+                SecretStatus(name=name, status="failed", detail=f"no value provided for {name}")
+            )
+            continue
+        value = secrets[name]
         try:
-            if name not in secrets:
-                raise KeyError(f"no value provided for {name}")
-            value = secrets[name]
-            access = (plan.request_access or {}).get(name) if plan.request.target.scope == "org" else None
-            if access is not None and access.visibility is not None:
+            if plan.request.target.scope == "org" and action == "update":
+                # Keep the secret's existing visibility and repo list: gh's
+                # defaults would replace the access list.
+                access = (plan.request_access or {}).get(name)
+                visibility = access.visibility if access and access.visibility else None
                 client.put_secret(
                     plan.request.target,
                     name,
                     value,  # type: ignore[arg-type]
-                    visibility=access.visibility,
-                    repos=plan.request.target.selected_repos or None,
+                    visibility=visibility,
+                    repos=plan.request.target.selected_repos,
                 )
             else:
                 client.put_secret(plan.request.target, name, value)  # type: ignore[arg-type]
+        except SetupError as error:
+            # SetupError messages are client-facing; keep them verbatim.
+            statuses.append(SecretStatus(name=name, status="failed", detail=str(error)))
+            continue
         except Exception as error:
             statuses.append(SecretStatus(name=name, status="failed", detail=f"{type(error).__name__}: {error}"))
             continue
@@ -265,7 +280,9 @@ def execute_init(plan: InitPlan, client: GitHubInitClient, secrets: dict[str, Se
         )
     except Exception as error:
         pr_error = f"{type(error).__name__}: {error}"
-    success = pr_error is None and not any(s.status == "failed" for s in statuses)
+    success = pr_error is None and not any(
+        s.status in ("failed", "report_inaccessible") for s in statuses
+    )
     return InitOutcome(
         pr_url=pr_url,
         branch=BRANCH,

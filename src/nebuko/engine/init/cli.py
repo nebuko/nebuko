@@ -165,10 +165,9 @@ def _run(args: argparse.Namespace) -> int:
     if target.org:
         if args.force:
             raise UsageError(
-                "--force cannot update org secrets yet; org secret updates are not "
-                "supported in this version (see #1315)"
+                "org secrets cannot be force-updated yet (see #1315)"
             )
-        if target.org.lower() != target.owner.lower():
+        if target.org != target.owner:
             raise UsageError(
                 f"organization {target.org!r} does not match the repository owner "
                 f"{target.owner!r}; org secrets can only be written for the owner's org"

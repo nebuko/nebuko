@@ -107,8 +107,8 @@ def run_init(
     host: GitHubInitClient,
     prompter: Prompter,
     *,
-    pat_mode: bool,
-    non_interactive: bool,
+    pat_mode: bool = False,
+    non_interactive: bool = False,
 ) -> SetupOutcome:
     """Run the setup flow: plan (pure), then execute through the client."""
     target = _secret_target(answers.target)
@@ -125,7 +125,7 @@ def run_init(
         pat_mode=pat_mode,
         force=answers.force,
     )
-    paths = sorted({AGENT_CONFIG_PATH, WORKFLOW_PATH})
+    paths = [AGENT_CONFIG_PATH, WORKFLOW_PATH]
     plan: InitPlan = plan_init(
         request=request,
         manifest=manifest,
@@ -158,8 +158,9 @@ def run_init(
                 print(PAT_INSTRUCTIONS)
             value = prompter.ask_secret(name)
             if not value:
+                # An empty answer is final: never ask again for another secret.
                 print(f"No value for {name}; skipping.")
-                continue
+                break
         secrets[name] = value
     outcome: InitOutcome = execute_init(plan, host, secrets)
     # One message per secret, printed after execute_init from the status rows (D6).

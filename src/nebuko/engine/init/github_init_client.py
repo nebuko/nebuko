@@ -122,13 +122,24 @@ class GhInitClient:
         raise SetupError(f"gh pr create failed: {(created.stderr or created.stdout).strip()}")
 
     # @stub-protected
-    def put_secret(self, target: SecretTarget, name: str, value: SecretValue) -> None:
+    def put_secret(
+        self,
+        target: SecretTarget,
+        name: str,
+        value: SecretValue,
+        visibility: str | None = None,
+        repos: tuple[str, ...] | None = None,
+    ) -> None:
         """Store ``name``; the value travels on stdin, never in argv."""
         if not isinstance(value, str):
             raise SetupError("gh cannot store a sealed secret; provide the plaintext value")
         args = ["secret", "set", name]
         if target.scope == "org":
+            # A new org secret defaults to "selected" with only the target repo;
+            # an update passes the secret's existing visibility and repo list.
             args += ["--org", target.org or ""]
+            args += ["--visibility", visibility or target.visibility]
+            args += ["--repos", ",".join(repos or target.selected_repos or (target.repo,))]
         else:
             args += ["--repo", target.repo]
         self._gh(args, input=value, check=True)
