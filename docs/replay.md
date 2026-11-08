@@ -1,6 +1,7 @@
 ---
 covers:
   - src/nebuko/engine/lib/replay.py
+  - src/nebuko/engine/lib/replay_context.py
   - src/nebuko/engine/lib/fixtures/*
 sidebar_group: "Reference"
 sidebar_label: "Replay engine decisions"
@@ -82,6 +83,47 @@ entry  step     agent      base    recΔ  replayΔ  CONFIG_COMPLEXITY  next     
 `base_tier`, `recorded_delta`, `replay_delta`, `trigger`, `rationale`,
 `config_complexity`, `next_step`, `next_agent`, `resolved_step`,
 `resolved_agent`, `skip_kind`, `trigger_kind`, `matches`, `note`).
+
+## Input context and recorded output (`--context`)
+
+`--context` adds, for each replayed invocation, the **prompt plan** the engine
+would assemble (ordered sections and where each came from, see
+[the prompt plan](../src/nebuko/engine/prompt_plan.md)), the **rendered prompt**,
+and the **output the live run recorded** for that step.
+
+```bash
+# plan + prompt + recorded output, offline, with a recorded thread
+uv run python -m nebuko.engine.lib.replay --state state.json --entry 2 \
+    --context --thread thread.json
+
+# only the section list and sizes; machine-readable
+uv run python -m nebuko.engine.lib.replay --issue 1299 --entry 2 \
+    --context --no-content --json
+```
+
+```
+== entry 2: plan (architect) ==
+
+Prompt plan (order = prompt order):
+   1 - scaffold_conflict omitted  <- branch scaffold
+   2 + role_prompt       414 chars  <- defaults/prompts/architect.md
+   ...
+  13 + thread            812 chars  <- typed thread (context selection)
+        . agent-output 6656093 agent output — context
+Recorded output: comments [6656093725] (1204 chars)
+```
+
+- `--issue` fetches the issue and comments once and uses them for both the state
+  and the context. `--state` has no thread: pass `--thread FILE`
+  (`{"issue": {...}, "comments": [...]}` in GitHub REST shape, or a bare comment
+  list), otherwise the plan is built with an empty thread and a note says so.
+- The thread is cut at the invocation: only comments posted before the entry's
+  own output comments are input. Those output comments are the **recorded
+  output** (state-stripped bodies); without a thread only their ids are shown.
+- Nothing is executed: step `inputs:` providers are not run (the `inputs`
+  section is empty and a note says so) and the session handoff is not
+  reconstructed. A role/step prompt is read from the checkout, so a changed
+  prompt file replays differently from the live run.
 
 ## Policy provenance
 

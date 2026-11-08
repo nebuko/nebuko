@@ -542,3 +542,126 @@ class TestIssueLoading:
         loaded = replay.load_state_from_issue(1299, "o/r")
         assert loaded is not None
         assert loaded.workflow == "wf"
+
+
+class TestContextReplay:
+    """``--context``: the prompt plan and recorded output of an invocation."""
+
+    ENTRY = 2  # 'plan' in the run-19 fixture; it posted comment 6656093725
+
+    @pytest.fixture(autouse=True)
+    def _hermetic_env(self, monkeypatch):
+        # The plan depends on the resolved agent config; do not inherit one
+        # leaked by an earlier test (resolve_llm_config tests leave
+        # AGENT_CONFIG_PATH behind).
+        for name in ("AGENT_CONFIG_PATH", "WORKFLOWS_DIR", "LOCAL_WORKFLOWS_DIR"):
+            monkeypatch.delenv(name, raising=False)
+
+    def _state(self):
+        from pathlib import Path
+
+        path = Path(replay.__file__).parent / "fixtures" / (
+            "workflow_state_issue1299_spec_tdd.json"
+        )
+        return load_state_from_text(path.read_text())
+
+    def _thread(self):
+        from nebuko.engine.lib.replay_context import ReplayThread
+
+        return ReplayThread(
+            {"body": "ISSUE BODY"},
+            (
+                {
+                    "id": 1,
+                    "body": "please fix it",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "user": {"login": "olivier", "type": "User"},
+                },
+                {
+                    "id": 6656093725,
+                    "body": "the architect plan",
+                    "created_at": "2026-01-01T01:00:00Z",
+                    "user": {"login": "nebuko[bot]", "type": "Bot"},
+                },
+            ),
+        )
+
+    def _rows(self, **kwargs):
+        import nebuko.engine.lib.default_paths as default_paths
+
+        shipped, local = default_paths.workflow_dirs()
+        return replay_entries(
+            self._state(),
+            workflows_dir=shipped,
+            local_workflows_dir=local,
+            prompt_base=default_paths.config_dir("prompts", "PROMPT_BASE"),
+            entries=[self.ENTRY],
+            with_context=True,
+            **kwargs,
+        )
+
+    def test_plan_lists_sections_in_prompt_order_with_sources(self):
+        (row,) = self._rows()
+
+        plan = row.context.plan
+        assert plan.kinds() == [
+            "role_prompt",
+            "step_prompt",
+            "output_contract",
+            "request_header",
+            "trigger",
+            "task",
+            "engine_status",
+            "thread",
+        ]
+        from nebuko.engine.prompt_plan import SectionKind
+
+        assert plan.get(SectionKind.ROLE_PROMPT).source.endswith("architect.md")
+        assert plan.get(SectionKind.STEP_PROMPT).source.endswith("step_prompt.md")
+
+    def test_rendered_prompt_is_the_plan_joined(self):
+        from nebuko.engine.prompt_plan import render_prompt
+
+        (row,) = self._rows()
+
+        assert row.context.prompt == render_prompt(row.context.plan)
+        # The rebuilt trigger carries the state block; the prompt must not.
+        assert "WORKFLOW_STATE" not in row.context.prompt
+
+    def test_without_a_thread_the_gap_is_reported(self):
+        (row,) = self._rows()
+
+        assert any("no recorded thread" in note for note in row.context.notes)
+        assert row.context.output.available is False
+        assert row.context.output.comment_ids == (6656093725,)
+
+    def test_thread_fills_context_and_recorded_output(self):
+        (row,) = self._rows(thread=self._thread())
+
+        assert row.context.output.available is True
+        assert row.context.output.bodies == ("the architect plan",)
+        prompt = row.context.prompt
+        assert "please fix it" in prompt
+        # The invocation's own output was posted after it ran: not input.
+        assert "the architect plan" not in prompt
+
+    def test_cli_context_json(self, capsys, tmp_path):
+        from pathlib import Path
+
+        fixture = Path(replay.__file__).parent / "fixtures" / (
+            "workflow_state_issue1299_spec_tdd.json"
+        )
+        thread = tmp_path / "thread.json"
+        thread.write_text(json.dumps(
+            {"issue": {"body": "ISSUE"}, "comments": list(self._thread().comments)}
+        ))
+
+        code = main([
+            "--state", str(fixture), "--entry", str(self.ENTRY),
+            "--context", "--json", "--thread", str(thread),
+        ])
+
+        assert code == 0
+        (row,) = json.loads(capsys.readouterr().out)
+        assert row["context"]["output"]["bodies"] == ["the architect plan"]
+        assert row["context"]["plan"]["sections"][0]["kind"] == "scaffold_conflict"

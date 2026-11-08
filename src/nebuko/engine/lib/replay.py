@@ -52,7 +52,10 @@ import os
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence
+
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    from nebuko.engine.lib.replay_context import ContextReplay, ReplayThread
 
 from nebuko.engine.lib.complexity_governor.complexity_governor import (
     ComplexityAdjustment,
@@ -164,7 +167,19 @@ def load_state_from_issue(
     markers; the issue body itself is included so a state seeded in the
     description is found too. Network access happens only here.
     """
+    thread = fetch_issue_thread(issue_number, repo, transport=transport)
+    return state_from_thread(thread)
+
+
+def fetch_issue_thread(
+    issue_number: int,
+    repo: Optional[str] = None,
+    *,
+    transport: Any = None,
+) -> "ReplayThread":
+    """Fetch an issue and its comments (the only network access in replay)."""
     from nebuko.engine.lib.github_client import get_issue, get_issue_comments
+    from nebuko.engine.lib.replay_context import ReplayThread
 
     repo = repo or os.environ.get("GITHUB_REPOSITORY", "")
     if not repo:
@@ -173,7 +188,12 @@ def load_state_from_issue(
         )
     issue = get_issue(repo, issue_number, transport=transport) or {}
     comments = get_issue_comments(repo, issue_number, transport=transport)
-    bodies = [{"body": issue.get("body") or ""}, *comments]
+    return ReplayThread(issue, tuple(comments))
+
+
+def state_from_thread(thread: "ReplayThread") -> Optional[WorkflowState]:
+    """The latest workflow state carried by an issue body or comment."""
+    bodies = [{"body": (thread.issue or {}).get("body") or ""}, *thread.comments]
     return extract_latest_state_from_comments(bodies)
 
 
@@ -520,6 +540,8 @@ class ReplayRow:
     #: How the invocation was started: ``seed``, ``bot``, ``resume`` or ``gate``.
     trigger_kind: str = ""
     note: str = ""
+    #: Replayed prompt plan + recorded output (``--context``); ``None`` otherwise.
+    context: Optional["ContextReplay"] = None
 
     @property
     def matches(self) -> bool:
@@ -550,6 +572,15 @@ class ReplayRow:
             "matches": self.matches,
             "note": self.note,
         }
+
+    def as_context_dict(self, *, with_content: bool = True) -> dict[str, Any]:
+        data = self.as_dict()
+        data["context"] = (
+            self.context.as_dict(with_content=with_content)
+            if self.context is not None
+            else None
+        )
+        return data
 
 
 def _base_tier(effective: str, adjustment: Optional[ComplexityAdjustment]) -> str:
@@ -600,8 +631,14 @@ def replay_entry(
     workflows_dir: str,
     prompt_base: str,
     local_workflows_dir: Optional[str] = None,
+    with_context: bool = False,
+    thread: Optional["ReplayThread"] = None,
 ) -> ReplayRow:
-    """Replay the engine's decision for the invocation at ``index``."""
+    """Replay the engine's decision for the invocation at ``index``.
+
+    With ``with_context`` the row also carries the prompt plan the engine would
+    assemble for the invocation and the output the live run recorded.
+    """
     history = list(state.history)
     if index < 0 or index >= len(history):
         raise IndexError(
@@ -713,6 +750,20 @@ def replay_entry(
     if trigger.note:
         notes.append(trigger.note)
 
+    context = None
+    if with_context and result.get("RUN_SCRIPT") != "true":
+        from nebuko.engine.lib.replay_context import replay_context
+
+        with _gate_author_env(trigger.decision):
+            context = replay_context(
+                state,
+                index,
+                prev_state=prev_state,
+                resolved=result,
+                trigger_body=trigger.body,
+                thread=thread,
+            )
+
     return ReplayRow(
         entry=index,
         step=recorded_step,
@@ -729,6 +780,7 @@ def replay_entry(
         resolved_agent=resolved_agent,
         trigger_kind=trigger.kind,
         note="; ".join(notes),
+        context=context,
     )
 
 
@@ -739,6 +791,8 @@ def replay_entries(
     prompt_base: str,
     local_workflows_dir: Optional[str] = None,
     entries: Optional[Sequence[int]] = None,
+    with_context: bool = False,
+    thread: Optional["ReplayThread"] = None,
 ) -> list[ReplayRow]:
     """Replay every history entry (or just ``entries``) of ``state``."""
     indices = (
@@ -751,6 +805,8 @@ def replay_entries(
             workflows_dir=workflows_dir,
             prompt_base=prompt_base,
             local_workflows_dir=local_workflows_dir,
+            with_context=with_context,
+            thread=thread,
         )
         for index in indices
     ]
@@ -905,6 +961,47 @@ def render_table(rows: Sequence[ReplayRow]) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 
+def render_contexts(rows: Sequence[ReplayRow], *, with_content: bool = True) -> str:
+    """The prompt plan, rendered prompt and recorded output of each row."""
+    blocks: list[str] = []
+    for row in rows:
+        title = f"== entry {row.entry}: {row.step} ({row.agent}) =="
+        context = row.context
+        if context is None:
+            blocks.append(f"{title}\n(no context: {row.note or 'not replayed'})")
+            continue
+        lines = [title, "", "Prompt plan (order = prompt order):"]
+        for position, section in enumerate(context.plan.sections, start=1):
+            status = "+" if section.included else "-"
+            detail = f"{len(section.content)} chars" if section.included else "omitted"
+            extra = f" [{section.reason}]" if section.reason else ""
+            source = f"  <- {section.source}" if section.source else ""
+            lines.append(
+                f"  {position:>2} {status} {section.kind:<17} {detail}{extra}{source}"
+            )
+            for part in section.parts:
+                lines.append(f"        . {part.kind} {part.source} {part.detail}".rstrip())
+        for note in context.notes:
+            lines.append(f"  note: {note}")
+        out = context.output
+        lines.append("")
+        if out.available:
+            lines.append(
+                f"Recorded output: comments {list(out.comment_ids)} "
+                f"({sum(len(b) for b in out.bodies)} chars)"
+            )
+        else:
+            lines.append(
+                f"Recorded output: comments {list(out.comment_ids)} (bodies unavailable)"
+            )
+        if with_content:
+            lines += ["", "--- rendered prompt ---", context.prompt, "--- end prompt ---"]
+            if out.available:
+                lines += ["", "--- recorded output ---", *out.bodies, "--- end output ---"]
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     import nebuko.engine.lib.default_paths as default_paths
 
@@ -940,6 +1037,27 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--json", action="store_true", help="Emit rows as JSON instead of a table"
+    )
+    parser.add_argument(
+        "--context",
+        action="store_true",
+        help=(
+            "Also show each invocation's prompt plan (ordered sections and "
+            "their sources), the rendered prompt and the recorded output"
+        ),
+    )
+    parser.add_argument(
+        "--thread",
+        default=None,
+        help=(
+            "JSON file with the recorded thread ({issue, comments} or a comment "
+            "list) used to fill the context offline; --issue fetches it itself"
+        ),
+    )
+    parser.add_argument(
+        "--no-content",
+        action="store_true",
+        help="With --context: list sections and sizes only, not their text",
     )
     parser.add_argument(
         "--workflows-dir",
@@ -981,12 +1099,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         state = load_state_from_text(text)
         source = f"state file {args.state}"
+        thread = None
+        if args.thread:
+            try:
+                from nebuko.engine.lib.replay_context import thread_from_text
+
+                with open(args.thread, "r", encoding="utf-8") as handle:
+                    thread = thread_from_text(handle.read())
+            except (OSError, ValueError) as exc:
+                print(f"error: cannot read {args.thread}: {exc}", file=sys.stderr)
+                return 2
     else:
         try:
-            state = load_state_from_issue(args.issue, args.repo)
+            thread = fetch_issue_thread(args.issue, args.repo)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+        state = state_from_thread(thread)
         source = f"issue #{args.issue} ({args.repo})"
 
     if state is None:
@@ -1013,16 +1142,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         prompt_base=args.prompt_base,
         local_workflows_dir=args.local_workflows_dir,
         entries=entries,
+        with_context=args.context,
+        thread=thread,
     )
 
     if args.json:
-        print(json.dumps([row.as_dict() for row in rows], indent=2))
+        if args.context:
+            payload = [
+                row.as_context_dict(with_content=not args.no_content) for row in rows
+            ]
+        else:
+            payload = [row.as_dict() for row in rows]
+        print(json.dumps(payload, indent=2))
         return 0
 
     provenance = policy_provenance(state)
     print(render_provenance(provenance, state, source))
     print()
     print(render_table(rows))
+    if args.context:
+        print()
+        print(render_contexts(rows, with_content=not args.no_content))
     return 0
 
 

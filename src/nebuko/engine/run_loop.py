@@ -58,6 +58,14 @@ from nebuko.engine.input_wiring import (
     render as render_inputs,
     to_records as step_input_records,
 )
+from nebuko.engine.prompt_plan import (
+    SECTION_SEPARATOR,
+    PromptPlan,
+    PromptSection,
+    SectionKind,
+    SectionPart,
+    render_prompt,
+)
 from nebuko.engine.models import (
     DeterministicStep,
     ExitCode,
@@ -1088,11 +1096,13 @@ class Engine:
                     self._scaffold_state["head_before"] = git_session.GitSessionGuard(
                         self._caller_root(), self._session_env()
                     ).head_sha()
-            prompt =self.build_prompt(resolved, history, input_results, step_scope)
-            conflict_note = self._render_scaffold_conflict()
-            if conflict_note:
-                # First, not last: resolving the merge comes before the task.
-                prompt = f"{conflict_note}\n\n{prompt}"
+            prompt = self.build_prompt(
+                resolved,
+                history,
+                input_results,
+                step_scope,
+                conflict_note=self._render_scaffold_conflict(),
+            )
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -2064,8 +2074,13 @@ class Engine:
         history: Sequence[CommentEntry],
         input_results: Sequence[Materialization] = (),
         step_scope: Mapping[str, str] | None = None,
+        conflict_note: str = "",
     ) -> str:
         """Build the agent prompt from the resolved config and history.
+
+        A thin composition of :meth:`plan_prompt` (what goes in, in which order)
+        and :func:`render_prompt` (the context builder). ``conflict_note`` is the
+        scaffold's merge-conflict block, rendered first.
 
         A step that declares prompt replacement drops the role prompt entirely:
         only the step prompt carries the instruction, so the role's generic flow
@@ -2086,26 +2101,71 @@ class Engine:
         ``step_scope`` in a single pass before assembly (issue #756): the value
         is the referenced step's state-stripped comment.
         """
+        return render_prompt(
+            self.plan_prompt(resolved, history, input_results, step_scope, conflict_note)
+        )
+
+    def plan_prompt(
+        self,
+        resolved: Any,
+        history: Sequence[CommentEntry],
+        input_results: Sequence[Materialization] = (),
+        step_scope: Mapping[str, str] | None = None,
+        conflict_note: str = "",
+    ) -> PromptPlan:
+        """Decide what the prompt contains and in which order (no joining).
+
+        The returned :class:`PromptPlan` is the intermediate representation the
+        context builder (:func:`render_prompt`) turns into the agent prompt.
+        Sections that were considered but dropped stay in the plan with an empty
+        ``content`` (and a ``reason`` when known), so a debugging tool can show
+        *why* a source is absent.
+        """
+        S = SectionKind
         step_prompt = self._render_step_prompt(self._step_prompt(resolved), step_scope)
         replacing = bool(step_prompt) and self._step_prompt_replaces(resolved)
-        sections = [] if replacing else [self._base_prompt(resolved)]
-        if step_prompt:
-            sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
-        output_block = self._render_step_output(resolved)
-        if output_block:
-            sections.append(output_block)
-        injected_skills = self._render_injected_skills(resolved)
-        if injected_skills:
-            sections.append(injected_skills)
-        rendered_inputs = render_inputs(list(input_results))
-        if rendered_inputs:
-            sections.append(rendered_inputs)
-        previous_handoff = self._render_previous_handoff()
-        if previous_handoff:
-            sections.append(previous_handoff)
-        sections.append(_USER_REQUEST_HEADER)
-        sections.append(self._render_context(resolved, history))
-        return "\n\n".join(section for section in sections if section)
+        role_source = str(self._get(resolved, "PROMPT_LOCATION") or "")
+        results = list(input_results)
+        sections: list[PromptSection] = [
+            # First, not last: resolving the merge comes before the task.
+            PromptSection(S.SCAFFOLD_CONFLICT, conflict_note, source="branch scaffold"),
+            PromptSection(
+                S.ROLE_PROMPT,
+                "" if replacing else self._base_prompt(resolved),
+                source=role_source,
+                reason="dropped by prompt_replace" if replacing else "",
+            ),
+            PromptSection(
+                S.STEP_PROMPT,
+                f"{_STEP_HEADER}\n\n{step_prompt}" if step_prompt else "",
+                source=str(self._get(resolved, "STEP_PROMPT_FILE") or ""),
+            ),
+            PromptSection(
+                S.OUTPUT_CONTRACT,
+                self._render_step_output(resolved),
+                source="step output:",
+            ),
+            PromptSection(
+                S.INJECTED_SKILLS,
+                self._render_injected_skills(resolved),
+                source="skills (inject mode)",
+            ),
+            PromptSection(
+                S.INPUTS,
+                render_inputs(results),
+                source="step inputs",
+                parts=tuple(
+                    SectionPart("input", str(getattr(result, "name", "") or ""))
+                    for result in results
+                ),
+            ),
+            PromptSection(
+                S.HANDOFF, self._render_previous_handoff(), source="session handoff"
+            ),
+            PromptSection(S.REQUEST_HEADER, _USER_REQUEST_HEADER),
+        ]
+        sections.extend(self._context_sections(resolved, history))
+        return PromptPlan(tuple(sections))
 
     def _render_step_output(self, resolved: Any) -> str:
         """The declared step-output section prompt block (issue #973).
@@ -3827,10 +3887,21 @@ class Engine:
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
     def _render_context(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
+        return SECTION_SEPARATOR.join(
+            section.content
+            for section in self._context_sections(resolved, history)
+            if section.content
+        )
+
+    def _context_sections(
+        self, resolved: Any, history: Sequence[CommentEntry]
+    ) -> list[PromptSection]:
+        """The user-request half of the prompt, one section per source."""
+        S = SectionKind
         trigger = self._get(resolved, _TRIGGER_KEY)
-        parts: list[str] = []
+        trigger_parts: list[str] = []
         if isinstance(trigger, Trigger):
-            parts.append(f"**Author:** {trigger.author}")
+            trigger_parts.append(f"**Author:** {trigger.author}")
             # An issue-trigger run's request reaches the prompt once (issue
             # #590, D11): its body *is* the user request, so it is never also
             # an agent-facing "recent thread" entry.
@@ -3838,21 +3909,37 @@ class Engine:
                 body = _agent_facing_body(trigger.body or self._issue_body_entry())
             else:
                 if trigger.issue_body:
-                    parts.append(f"**Issue body:**\n{trigger.issue_body}")
+                    trigger_parts.append(f"**Issue body:**\n{trigger.issue_body}")
                 body = _agent_facing_body(trigger.body)
             if body:
-                parts.append(body)
+                trigger_parts.append(body)
+        trigger_source = (
+            f"trigger:{trigger.type}" if isinstance(trigger, Trigger) else ""
+        )
         task = self._get(resolved, "TASK")
-        if task:
-            parts.append(f"**Task:** {task}")
-        engine_block = self._render_engine_status()
-        if engine_block:
-            parts.append(engine_block)
-        gate_section = _render_gate_decision(self._get(resolved, "GATE_DECISION"))
-        if gate_section:
-            parts.append(gate_section)
-        parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
-        return "\n\n".join(part for part in parts if part)
+        thread, parts, thread_source = self._recent_thread(history)
+        return [
+            PromptSection(
+                S.TRIGGER, SECTION_SEPARATOR.join(trigger_parts), source=trigger_source
+            ),
+            PromptSection(S.TASK, f"**Task:** {task}" if task else "", source="TASK"),
+            PromptSection(
+                S.ENGINE_STATUS,
+                self._render_engine_status(),
+                source="state.current_context.engine_failure",
+            ),
+            PromptSection(
+                S.GATE_DECISION,
+                _render_gate_decision(self._get(resolved, "GATE_DECISION")),
+                source="GATE_DECISION",
+            ),
+            PromptSection(
+                S.THREAD,
+                "## Recent thread\n\n" + thread,
+                source=thread_source,
+                parts=parts,
+            ),
+        ]
 
     def _render_engine_status(self) -> str:
         """The previous run's engine-side facts, as a prompt block (#1288).
@@ -3914,6 +4001,11 @@ class Engine:
         return ""
 
     def _render_recent_thread(self, history: Sequence[CommentEntry]) -> str:
+        return self._recent_thread(history)[0]
+
+    def _recent_thread(
+        self, history: Sequence[CommentEntry]
+    ) -> tuple[str, tuple[SectionPart, ...], str]:
         """Render ``## Recent thread`` from the single context selection (#889).
 
         The typed thread entries are narrowed by the step's contract (declared
@@ -3921,6 +4013,9 @@ class Engine:
         else may append to the prompt — the old reverse-history render is the
         #885 duplicate/injected-log bug. The bounded comment window remains only
         for a host that cannot supply a typed thread.
+
+        Returns the text, the entries that contributed (for the prompt plan) and
+        a label for where they were read from.
         """
         context = self._context_selection()
         if context is not None and not self._legacy_window_only():
@@ -3929,13 +4024,30 @@ class Engine:
                 entries = [
                     entry for entry in entries if entry.kind != ContextKind.ISSUE_BODY
                 ]
-            return _render_context_entries(
+            text = _render_context_entries(
                 entries,
                 self.render_limit,
                 self._context_bodies(),
                 self._context_entries() or (),
             )
-        return _render_history(history)
+            parts = tuple(
+                SectionPart(
+                    str(getattr(entry, "kind", "")),
+                    str(getattr(entry, "comment_id", "") or ""),
+                    _context_entry_heading(entry),
+                )
+                for entry in _rendered_entries(entries, self.render_limit)
+            )
+            return text, parts, "typed thread (context selection)"
+        parts = tuple(
+            SectionPart(
+                "comment",
+                str(getattr(entry, "comment_id", "") or ""),
+                f"{entry.author} — {entry.created_at}",
+            )
+            for entry in history
+        )
+        return _render_history(history), parts, "legacy comment window"
 
     def _request_carries_issue_body(self) -> bool:
         """The user-request block already shows the issue body (D11, #590).
@@ -4323,6 +4435,14 @@ def _render_gate_decision(raw: Any) -> str:
     return "\n\n".join(lines)
 
 
+def _rendered_entries(entries: Sequence[Any], limit: int | None) -> list[Any]:
+    """The entries ``## Recent thread`` shows: trusted ones, last ``limit``."""
+    selected = [entry for entry in entries if getattr(entry, "trusted", True)]
+    if limit is not None and limit > 0:
+        selected = selected[-limit:]
+    return selected
+
+
 def _render_context_entries(
     entries: Sequence[Any],
     limit: int | None,
@@ -4341,11 +4461,8 @@ def _render_context_entries(
     the body and ``bodies`` supplies the continuation rows, in thread order.
     Without ``bodies`` the first comment renders alone, as before.
     """
-    selected = [entry for entry in entries if getattr(entry, "trusted", True)]
-    if limit is not None and limit > 0:
-        selected = selected[-limit:]
     blocks: list[str] = []
-    for entry in selected:
+    for entry in _rendered_entries(entries, limit):
         heading = _context_entry_heading(entry)
         body = str(getattr(entry, "body", "") or "")
         rows = [body]

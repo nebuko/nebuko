@@ -3526,6 +3526,73 @@ class TestHistoryWindowInjection:
         assert "<!-- bot-agent-dev -->" not in rendered
 
 
+class TestPromptPlan:
+    """``build_prompt`` is ``render_prompt(plan_prompt(...))`` (prompt IR)."""
+
+    def _resolved(self, tmp_path, replace: str = "") -> dict:
+        base = tmp_path / "dev.md"
+        base.write_text("ROLE", encoding="utf-8")
+        step = tmp_path / "step.md"
+        step.write_text("STEP", encoding="utf-8")
+        return {
+            "PROMPT_LOCATION": str(base),
+            "STEP_PROMPT_FILE": str(step),
+            "STEP_PROMPT_REPLACE": replace,
+            "TASK": "dev",
+        }
+
+    def test_build_prompt_renders_the_plan_byte_for_byte(self, tmp_path):
+        from nebuko.engine.prompt_plan import render_prompt
+
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path)
+
+        plan = engine.plan_prompt(resolved, [], conflict_note="CONFLICT")
+
+        assert render_prompt(plan) == engine.build_prompt(
+            resolved, [], conflict_note="CONFLICT"
+        )
+
+    def test_sections_come_in_prompt_order_and_conflict_note_is_first(self, tmp_path):
+        engine = _engine(tmp_path)
+
+        plan = engine.plan_prompt(
+            self._resolved(tmp_path), [], conflict_note="CONFLICT"
+        )
+
+        assert plan.kinds() == [
+            "scaffold_conflict",
+            "role_prompt",
+            "step_prompt",
+            "request_header",
+            "task",
+            "thread",
+        ]
+
+    def test_prompt_replace_keeps_the_dropped_role_prompt_in_the_plan(self, tmp_path):
+        from nebuko.engine.prompt_plan import SectionKind
+
+        engine = _engine(tmp_path)
+
+        plan = engine.plan_prompt(self._resolved(tmp_path, replace="true"), [])
+
+        role = plan.get(SectionKind.ROLE_PROMPT)
+        assert role is not None and not role.included
+        assert role.reason == "dropped by prompt_replace"
+        assert "role_prompt" not in plan.kinds()
+
+    def test_sections_name_their_source(self, tmp_path):
+        from nebuko.engine.prompt_plan import SectionKind
+
+        engine = _engine(tmp_path)
+        resolved = self._resolved(tmp_path)
+
+        plan = engine.plan_prompt(resolved, [])
+
+        assert plan.get(SectionKind.ROLE_PROMPT).source == resolved["PROMPT_LOCATION"]
+        assert plan.get(SectionKind.STEP_PROMPT).source == resolved["STEP_PROMPT_FILE"]
+
+
 class TestBuildPromptStepReplacement:
     """A step's prompt can replace the role prompt (issue #784)."""
 
