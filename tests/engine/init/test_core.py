@@ -134,7 +134,10 @@ class FakeClient(GitHubInitClient):
         return "https://github.com/acme/widgets/pull/7"
 
     def put_secret(self, target, name, value, visibility=None, repos=None):
-        self.put_calls.append((name, value, visibility, repos))
+        if visibility is None and repos is None:
+            self.put_calls.append((name, value))
+        else:
+            self.put_calls.append((name, value, visibility, repos))
 
     def existing_secret_access(self, target, names):
         return {}

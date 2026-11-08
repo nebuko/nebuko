@@ -13,6 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from nebuko.engine.init import cli
+from nebuko.engine.init.core import AGENT_CONFIG_PATH
 from nebuko.engine.init.ports import PreflightReport, SetupError, SetupHost
 from nebuko.engine.init.refs import StaticRefResolver
 from nebuko.engine.init.setup import SetupContext
@@ -174,7 +175,7 @@ def test_the_pull_request_carries_the_config_and_the_pinned_workflow(monkeypatch
     assert cli.main(["--repo", "acme/widgets", "--pat", "--non-interactive"]) == 0
 
     files = client.committed
-    assert "defaults/agents/agent-config-openrouter.yaml" in files
+    assert AGENT_CONFIG_PATH in files
     assert ".github/workflows/nebuko.yaml" in files
     assert "key-123" not in files[".github/workflows/nebuko.yaml"] + client.pr_calls[0]["body"]
     assert f"nebuko-workflow.yaml@{PIN}" in files[".github/workflows/nebuko.yaml"]
@@ -446,33 +447,21 @@ def test_existing_org_secrets_are_skipped_and_reported(monkeypatch, capsys):
     assert "not set (no value provided)" not in out
 
 
-def test_existing_secrets_are_reported_right_after_the_scope_selection(monkeypatch, mocker):
+def test_existing_secrets_are_reported_from_the_outcome(monkeypatch, capsys):
     client = GhInitClient()
     client.existing = frozenset({"GH_PAT", "OPENROUTER_API_KEY"})
     prompter = FakePrompter(
-        texts=["acme/widgets", "acme-org", "ubuntu-latest"], choices=["organization"]
+        texts=["acme/widgets", "acme", "ubuntu-latest"], choices=["organization"]
     )
     _wire_pat(monkeypatch, FakeHost(), prompter, client=client)
-    printed: list[str] = []
-    mocker.patch.object(cli, "print", side_effect=lambda text: printed.append(text))
-    original_provider = cli._resolve_provider
-
-    def record_provider(*args, **kwargs):
-        printed.append("<provider prompt>")
-        return original_provider(*args, **kwargs)
-
-    mocker.patch.object(cli, "_resolve_provider", side_effect=record_provider)
 
     assert cli.main([]) == 0
 
-    assert printed.index(
-        "GH_PAT already setup in acme-org [ skipping, use --force to update value ]"
-    ) < printed.index("<provider prompt>")
-    assert (
-        "OPENROUTER_API_KEY already setup in acme-org [ skipping, use --force to update value ]"
-        in printed
-    )
+    out = capsys.readouterr().out
+    assert "Skipped: GH_PAT: already exists in acme" in out
+    assert "Skipped: OPENROUTER_API_KEY: already exists in acme" in out
     assert prompter.secret_values == []  # no value is asked for a skipped secret
+    assert client.secrets == {}
 
 
 def test_force_rewrites_existing_secrets(monkeypatch):

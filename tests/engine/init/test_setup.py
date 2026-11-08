@@ -128,7 +128,7 @@ def test_run_init_probed_prompted_and_written_path_is_agent_config_path():
             return frozenset()
 
         def upsert_branch_and_commit(self, target, branch, files):
-            recorded["written"] = sorted(files)
+            recorded["written"] = list(files)
             recorded["workflow"] = files[WORKFLOW_PATH]
 
         def get_or_open_pull_request(self, target, branch, title, body):

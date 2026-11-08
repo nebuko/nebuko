@@ -155,7 +155,8 @@ def test_org_scope_create_targets_the_org_and_the_repo_pr(monkeypatch):
 
     assert code == 0
     assert client.branch == "nebuko/init"
-    assert client.secrets == {"OPENROUTER_API_KEY": "key-123", "GH_PAT": "pat-456"}
+    # App mode: GH_PAT is never written (rev 18 — PAT mode only)
+    assert client.secrets == {"OPENROUTER_API_KEY": "key-123"}
 
 
 # ── value loop (D5) ──────────────────────────────────────────────────────────

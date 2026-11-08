@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nebuko.engine.init import cli
+from nebuko.engine.init.core import AGENT_CONFIG_PATH
 from nebuko.engine.init.ports import PreflightReport, SetupTarget
 from nebuko.engine.init.refs import StaticRefResolver
 from nebuko.engine.init.setup import SetupContext
@@ -145,7 +146,7 @@ def test_given_the_app_is_installed_when_init_runs_then_the_files_go_to_the_init
 
     assert client.branch == "nebuko/init"
     assert set(client.committed) == {
-        "defaults/agents/agent-config-openrouter.yaml",
+        AGENT_CONFIG_PATH,
         ".github/workflows/nebuko.yaml",
     }
 
