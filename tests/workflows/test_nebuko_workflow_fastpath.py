@@ -21,6 +21,26 @@ import yaml
 _PATCH_PATH = Path(__file__).resolve().parents[2] / "nebuko-task-logs" / "workflow-patch.diff"
 
 
+def _patch_section(diff: str, path: Path) -> str:
+    """The ``diff --git`` section of *diff* that targets *path*, if any.
+
+    ``nebuko-task-logs/workflow-patch.diff`` carries every workflow change the
+    agent could not push, so it may hold hunks for other files. Applying those
+    onto the reusable workflow would corrupt it.
+    """
+    target = f"b/{path.as_posix()}"
+    sections: list[list[str]] = []
+    for raw in diff.splitlines():
+        if raw.startswith("diff --git "):
+            sections.append([raw])
+        elif sections:
+            sections[-1].append(raw)
+    for section in sections:
+        if section[0].split()[-1] == target:
+            return "\n".join(section) + "\n"
+    return ""
+
+
 def _apply_unified_diff(text: str, diff: str) -> str:
     """Apply a small unified diff to *text* in memory (context must match)."""
     lines = text.splitlines(keepends=True)
@@ -66,7 +86,9 @@ class WorkflowSpec:
         # The workflow change is gated behind a human-approved patch; apply it
         # in memory so the contract tests see the fast-path workflow.
         if _PATCH_PATH.exists():
-            text = _apply_unified_diff(text, _PATCH_PATH.read_text())
+            section = _patch_section(_PATCH_PATH.read_text(), cls.WORKFLOW_PATH)
+            if section:
+                text = _apply_unified_diff(text, section)
         return cls(text)
 
     # @stub-protected: signature defined by architect — do not modify
@@ -85,6 +107,23 @@ class WorkflowSpec:
     # @stub-protected: signature defined by architect — do not modify
     def permissions_of(self, job_name: str) -> set[str]:
         return set(self.job(job_name).get("permissions", {}))
+
+
+def test_patch_sections_for_other_files_are_ignored() -> None:
+    """Given a workflow patch that also carries another file, when the
+    reusable workflow is loaded, then only its own section is applied."""
+    foreign = (
+        "diff --git a/.github/workflows/internal-tests.yaml "
+        "b/.github/workflows/internal-tests.yaml\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/.github/workflows/internal-tests.yaml\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+name: internal-tests\n"
+        "+on: pull_request\n"
+    )
+    assert _patch_section(foreign, WorkflowSpec.WORKFLOW_PATH) == ""
+    assert _patch_section(foreign, Path(".github/workflows/internal-tests.yaml")) == foreign
 
 
 def test_run_task_grants_cache_write() -> None:

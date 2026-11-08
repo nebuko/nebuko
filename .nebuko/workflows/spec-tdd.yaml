@@ -6,15 +6,61 @@ steps:
     agent: architect
     complexity: low
     prompt: |
-      Analysis turn: a human issue or request just arrived.
-      - Decide what context @@context must collect (files, docs, facts).
+      Analysis turn: a human issue or request just arrives. Before writing the
+      context request, think (`think` tool) through:
+      1. Sketch 2–3 candidate approaches, one line each. No plan yet.
+      2. List the external facts each approach depends on (build vs buy,
+         versions, capabilities, limits and pricing).
+      3. Think in opposites: for the preferred approach, state what you would
+         expect to find if it were WRONG, and ask @@context to confirm or refute that.
+      4. Keep only claims whose `if_wrong` would actually change the plan
+         (max 3 at low complexity, 5 medium, 8 high; at least one third must
+         be refuting claims).
+      5. Treat every version, price and limit as unverified until @@context
+         confirms it from a registry or the vendor's official page.
+      6. For performance or runtime-behaviour questions (slow, startup, memory,
+         "what runs when"), the context request must ask @@context to MEASURE:
+         name the experiment (profiler, timed run, cold vs warm, before/after a
+         candidate fix) and ask for the command and its output. A list of files
+         to read is not enough: reading code cannot show where time goes.
+      - Attach these as `agent_call.verify` (list of {id: "C1", claim, kind:
+        "support"|"refute", category: build_vs_buy|version|capability|
+        limits_pricing|alternatives|compatibility, if_wrong}) on the hand-off.
+        Never include the draft plan in the task — the claims are checked
+        independently of it.
       - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+      - Delegate to @@context in the SAME turn, and end with the typed hand-off:
+        finalize(
+          report="…this step's report…",
+          turn_outcome={
+            "appreciation": "approved",
+            "complexity": "low",            # optional: omit to inherit the step's
+            "agent_call": {"agent_name": "context", "task": "…exact files/facts to collect…", "verify": [{"id": "C1", "claim": "…", "kind": "refute", "category": "version", "if_wrong": "…what changes in the plan…"}]},
+          },
+        )
+        Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
+      - If the request needs more than one PR, scope this run to the first PR and
+        list the rest as follow-up issues in your assumptions.
+      - Do not plan yet. The engine's closing turn asks only for this step's report in its declared sections: the delegate has not run yet, so there is nothing to plan from.
+      - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
     next: context
     output:
       fields:
         - name: headline
           title: true
           description: One-line summary of the request and the analysis.
+        - name: approaches
+          type: table
+          collapsed: true
+          required: false
+          columns: [approach, dependencies, verdict]
+          description: The 2-3 candidate approaches sketched before planning.
+        - name: claims
+          type: table
+          collapsed: true
+          required: false
+          columns: [id, claim, kind, category, if_wrong]
+          description: The verification claims mirroring agent_call.verify, one row per claim.
         - name: context_request
           collapsed: true
           required: true
@@ -22,9 +68,21 @@ steps:
         - name: assumptions
           required: false
           description: Defaults you will proceed with if context is thin.
+        - name: requirements
+          collapsed: true
+          required: true
+          description: The requirements ledger (R/K/NG/Q table with source and origin). Every later step references these IDs.
 
   - name: context
     agent: context
+    prompt: |
+      Collect what the analyze step's context request (agent_call.task) asks
+      for, and return it as this step's report. The claims attached to the hand-off (agent_call.verify)
+      are checked independently: cite a source for every claim in your report.
+      Follow the context-research Evidence rules: tag every finding and claim
+      verdict `measured`, `read` or `inferred`; measure timing and behaviour
+      claims instead of inferring them from code; and fill `### MEASUREMENTS`,
+      `### SURPRISES` and `### NOT VERIFIED`.
     next: plan
 
   - name: plan
@@ -40,6 +98,11 @@ steps:
           description: One-line summary of the plan.
         - name: decision
           description: The chosen approach and the key rulings.
+        - name: evidence
+          type: table
+          collapsed: true
+          columns: [fact, type, source, used_by]
+          description: Every number and runtime-behaviour fact the decision relies on, one row each. `type` is the context tag (measured/read/inferred); `source` is the command+output excerpt, path:line or URL; `used_by` names the decision item. Only `measured` rows may carry a timing or saving figure. Inferred facts belong in questions, not in the decision.
         - name: design
           collapsed: true
           description: The Object Design Contract (classes, fields, method signatures) — the spec step materializes this 1:1.
@@ -49,6 +112,9 @@ steps:
         - name: questions
           required: false
           description: Open questions for the human gate.
+        - name: coverage
+          required: true
+          description: One row per ledger ID → the plan decision/step that covers it and the test or check that will verify it.
 
   - name: spec
     agent: dev
@@ -103,6 +169,15 @@ steps:
       not to approve them: it is to find the reasons they will fail, before any business
       logic is written. Be specific and evidence-based; politeness is not a goal.
 
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry (the engine stamps it when a run crashed after
+      publishing), the missing diff you are about to flag may be an ENGINE
+      failure, not agent fabrication. Check `pushed`, `branch` and `head_sha`
+      there before judging: a run whose branch was never pushed left no diff
+      by definition. Report such a case as an engine failure and do NOT route
+      it to `plan` — the plan is not the problem. Ask for the step to be
+      re-run instead.
+
       Inputs, in order of authority:
         1. The original issue and the human comments. This is the source of truth.
         2. The requirements ledger (R/K/NG/Q) from the analyze step, if present.
@@ -136,6 +211,10 @@ steps:
         most (library behaviour, version, platform limit, pricing, performance). Say whether
         it was verified, by what source, and whether the decision is one-way (dependency,
         schema, public API, vendor) or two-way.
+        Then RE-MEASURE: pick the measured fact the decision leans on most (the plan's
+        `evidence` table) and run that measurement yourself. Also run the cheapest check of
+        whether the chosen fix actually moves it (e.g. apply it in a scratch copy and time
+        again). Report both commands and their output under checks_run.
 
       5. PRE-MORTEM. Six months from now this feature failed or was reverted. Write the three
         most likely reasons, each tied to a specific section of the plan or file in the spec.
@@ -147,6 +226,13 @@ steps:
         - BLOCKING: an uncovered R/K, a violated NG, a contract that is not implementable or
           not type-correct, tests that do not exercise the requirement, an unverified one-way
           assumption that is likely false, or a materially simpler design that meets all R/K.
+          Also BLOCKING: a timing/saving figure in the decision with no `measured` evidence
+          row, a decision resting on an `inferred` fact, a re-measurement that contradicts
+          the plan, or a fix that moves only a metric or shifts the same cost later in the
+          run instead of improving the user's outcome.
+          Also BLOCKING, unless `engine_failure` explains it: no failing-test output for
+          this round's changes. Also BLOCKING: a test that pins behaviour the plan or a
+          human ruling says is wrong.
         - SHOULD-FIX: real risk or gap that does not invalidate the plan.
         - NIT: everything else. Keep at most three.
       Each finding states: where (plan section or file:line), what is wrong, why it matters,
@@ -217,10 +303,20 @@ steps:
   - name: review
     agent: review
     prompt: |
-      Review turn. Besides the usual review, verify the spec chain: (1) every doc claim
+      Review turn. Check the engine facts first: if the previous step's context
+      carries an `engine_failure` entry, a missing diff or missing commits are an
+      ENGINE failure (the run crashed after publishing; the branch was never
+      pushed), not agent fabrication — report it as such and do not route it to
+      `plan`; ask for the step to be re-run instead.
+      Besides the usual review, verify the spec chain: (1) every doc claim
       matches the shipped behaviour; (2) every spec test is green and still exercises
       the contract that was gated; (3) no `# @stub-protected` signature, doc section or
       test expectation was silently changed during implementation.
+      Run each requirement through the real code path, not only its tests. Treat these
+      as findings: tests using hand-built state the engine never writes, assertions that
+      cannot fail (for example `or True`), and a full test suite that did not finish.
+      If the contract itself is wrong, finish with appreciation 'hold' and name the
+      defect. Do not send it back to implement, which cannot change the contract.
     conditions:
       - on_result: approved
         next: null

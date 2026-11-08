@@ -2,7 +2,7 @@
 
 Ten phases, in order, each emitting one ``[phase:<name>]`` log marker:
 ``normalize -> resolve_config -> guards -> action -> prompt -> agent -> validate
--> publish -> state -> route``. The ``action`` phase executes the resolver's
+-> state -> publish -> route``. The ``action`` phase executes the resolver's
 agent-free deterministic-step contract (comment deletion / script) and is a
 no-op for ordinary agent runs. The engine orchestrates legacy outputs by
 reference to their existing types and contains no platform-mode branching.
@@ -75,6 +75,10 @@ from nebuko.engine.paths import (
     repo_root,
 )
 
+from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
+    GitActionStatus,
+    GitInfo,
+)
 from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
@@ -82,11 +86,15 @@ from nebuko.engine.lib.workflow_state import (
     TurnOutcome,
     TurnStatus,
 )
+from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
+    is_bot_login,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from pathlib import Path
 
-    from nebuko.adapters.base import PlatformAdapter
+    from nebuko.adapters.base import PlatformAdapter, RunStatus
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import ProviderFailure
     from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
     from nebuko.engine.lib.config import AgentStartNotice, HookSpec, HumanActionNotice, ScriptStartNotice
     from nebuko.engine.artifacts import RunArtifactStager
@@ -118,6 +126,12 @@ _LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
 # Outcome fields the engine measures (issue #1033): the recorded outcome the
 # engine hands back carries them, but an agent may never supply them.
 _ENGINE_MEASURED_OUTCOME_KEYS = frozenset({"status", "incomplete_reason"})
+
+# Env-var name fragments whose values are secrets a provider error may echo into
+# the public failure comment (issue #1322). Values shorter than the minimum are
+# skipped: they would redact ordinary words.
+_SECRET_ENV_MARKERS = ("TOKEN", "API_KEY", "APIKEY", "SECRET", "PASSWORD")
+_SECRET_MIN_LENGTH = 8
 
 # A resolver skip whose reason reports a failed ``/nebuko`` (or legacy
 # ``/workflow``) resolution — a missing/invalid workflow file or an unknown
@@ -153,14 +167,49 @@ PHASES: tuple[str, ...] = (
     "prompt",
     "agent",
     "validate",
-    "publish",
     "state",
+    "publish",
     "route",
 )
 
 
 def _is_true(value: Any) -> bool:
     return str(value).strip().lower() == "true"
+
+
+#: The engine events that carry a run status (issue #1336). One decision point
+#: maps each to a :class:`RunStatus`, so the labels can never disagree with the
+#: notices emitted alongside them.
+STATUS_EVENT_STARTED = "started"
+STATUS_EVENT_HUMAN_ACTION = "human_action"
+STATUS_EVENT_FAILURE = "failure"
+
+
+def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
+    """Map an engine event to the run status it publishes, or ``None``.
+
+    ``kind`` is the :class:`HumanActionNotice` classification: an approval or
+    input request means a human must act (``gated``), a finished workflow means
+    the result needs review. ``awaiting_input`` shares ``gated`` with
+    ``awaiting_approval`` for now — both mean a human has to act.
+    """
+    from nebuko.adapters.base import RunStatus
+    from nebuko.engine.lib.config.sub_domains.human_action_notice.human_action_notice import (
+        AWAITING_APPROVAL,
+        AWAITING_INPUT,
+        WORKFLOW_COMPLETE,
+    )
+
+    if event in (STATUS_EVENT_STARTED,):
+        return RunStatus.RUNNING
+    if event == STATUS_EVENT_FAILURE:
+        return RunStatus.FAILED
+    if event == STATUS_EVENT_HUMAN_ACTION:
+        if kind in (AWAITING_APPROVAL, AWAITING_INPUT):
+            return RunStatus.GATED
+        if kind == WORKFLOW_COMPLETE:
+            return RunStatus.REVIEW_NEEDED
+    return None
 
 
 def _script_exit_code(result: StepResult) -> int | None:
@@ -370,11 +419,12 @@ def _answer_of(agent_result: Any) -> str:
 def _posted_answer_of(agent_result: Any) -> str:
     """The body to post: the engine's captured deliverable when present.
 
-    Routing and validation keep reading :func:`_answer_of` (the legacy
+    Routing and output validation keep reading :func:`_answer_of` (the legacy
     ``latest_answer.md``), because they scan it for the ``AGENT_RUN_CONFIG``
-    sentinel; the capture only decides what the issue comment shows, so a
-    terminal routing note can never clobber the agent's real answer there
-    (issue #740).
+    sentinel; the capture decides what the issue comment shows, so a terminal
+    routing note can never clobber the agent's real answer there (issue #740).
+    The empty-report check reads this body too, because it judges the report
+    that gets posted (issue #1318).
     """
     if isinstance(agent_result, Mapping):
         value = agent_result.get("deliverable")
@@ -576,6 +626,17 @@ def _clear_prev_state_handoff() -> None:
 
 
 # @stub-protected
+def _scaffold_git_status(result: branch_scaffold.ScaffoldResult) -> GitActionStatus:
+    """The git action a prepared scaffold amounts to (issue #1153)."""
+    if result.conflict:
+        return GitActionStatus.CONFLICT
+    if result.created:
+        return GitActionStatus.CREATE
+    if result.base_contained:
+        return GitActionStatus.ALREADY_APPLIED
+    return GitActionStatus.CONTINUE
+
+
 @dataclass(frozen=True)
 class Engine:
     """Platform-free orchestration driver over a :class:`PlatformAdapter`."""
@@ -671,6 +732,13 @@ class Engine:
     # snapshotted once at engine start before any chdir. A mutable container
     # because ``Engine`` is frozen; empty until ``_caller_root`` first resolves.
     _config_caller_root: dict[str, Path] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
+    # Requirements-ledger bookkeeping (issue #1257): the ledger parsed from the
+    # analyze step's output, and whether this run's plan finalize was refused
+    # for missing coverage. Engine-internal, so it is excluded from
+    # ``__init__``/equality/repr.
+    _ledger_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
 
@@ -830,6 +898,7 @@ class Engine:
         self._publish_state.clear()
         self._hook_state.clear()
         self._scaffold_state.clear()
+        self._ledger_state.clear()
         # The typed thread and its selection describe *this* run's thread: a
         # reused engine over a new run must not serve the previous snapshots.
         self._context_state.clear()
@@ -1053,8 +1122,18 @@ class Engine:
 
             if failure_reason is None:
                 self.notify_agent_started(self._agent_start_notice(trigger))
+                # Imported here, not at module scope: the agent assembly needs
+                # the runtime extra, and the engine imports without it.
+                from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+                    ProviderFailure,
+                )
+
                 try:
                     agent_result = self.invoke_agent(prompt)
+                except ProviderFailure as exc:
+                    # A provider failure is terminal (issue #1322): no finalize
+                    # attempts, no validation, no publish and no routing.
+                    return self._handle_provider_failure(exc, phases)
                 except Exception as exc:  # noqa: BLE001 - never crash the host
                     log.exception("[phase:agent] agent invocation failed: %s", exc)
                     # The bash runs the agent behind ``| tee console.txt``, so a
@@ -1091,23 +1170,16 @@ class Engine:
                     "validate", lambda: self.validate(agent_result)
                 )
                 failure_reason = validation.error
-
-            # Published even on failure: legacy always reaches ``prepare_comment``
-            # (``if: always()``), so the issue thread is never left silent. A
-            # validation failure keeps the agent's real artefacts, a crash falls
-            # back to the crash notice (finding 2), and a ``publish`` crash now
-            # falls back to a minimal notice instead of aborting the run (#766).
-            self._enter(phases, "publish")
-            publication = self._run_phase(
-                "publish", lambda: self.publish(agent_result)
-            )
-            if publication.ok:
-                posted_body = publication.body
-            else:
-                posted_body = self._publish_fallback(
-                    agent_result, publication.error, publication.error_type
+            # Requirements-ledger gate (issue #1257): a plan step whose coverage
+            # table misses an enforced (R/K) ledger ID is refused in the same
+            # turn, like the no-report refusal. Fail-open: no ledger in run
+            # state, or an unparseable one, is a no-op.
+            if failure_reason is None:
+                refusal = self._run_phase(
+                    "coverage", lambda: self._check_coverage(agent_result)
                 )
-                publish_failed = _is_publish_error(publication.error_type)
+                if not refusal.ok:
+                    failure_reason = refusal.error
 
             # State and routing run regardless of a best-effort phase crash
             # (issue #766): ``build_output`` already overrode the dispatch with
@@ -1141,11 +1213,110 @@ class Engine:
             # phase: the leftovers still belong to the session.
             if "agent" in phases:
                 finalize_result = self._git_session_finalize()
+                # The failure paths (#1288) read this to report whether the
+                # branch was pushed before the run failed.
+                self._scaffold_state["finalize_result"] = finalize_result
+                if finalize_result.auto_commit:
+                    state = self._record_git_action(
+                        state,
+                        GitActionStatus.DIRTY,
+                        commit_id=finalize_result.auto_commit,
+                        detail="committed work the agent left uncommitted",
+                    )
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
                         f"{failure_reason}; {note}" if failure_reason else note
                     )
+
+            # Publish-last (issue #1288): the answer comment carries the
+            # continue token, so it is created only after persist and git
+            # finalize succeeded — a crash in either leaves no token in the
+            # wild and the workflow cannot advance over a failed run. The
+            # verdict so far is published with the comment: a failed run's
+            # comment is a notification (no continue token) from creation.
+            self._publish_state["failure_reason"] = failure_reason
+            self._enter(phases, "publish")
+            publication = self._run_phase(
+                "publish", lambda: self.publish(agent_result)
+            )
+            if publication.ok:
+                posted_body = publication.body
+            else:
+                posted_body = self._publish_fallback(
+                    agent_result, publication.error, publication.error_type
+                )
+                publish_failed = _is_publish_error(publication.error_type)
+                if publication.error:
+                    # #766: a crash *during* publish (after persist + git
+                    # finalize succeeded) still routes on the agent's dispatch,
+                    # but the engine facts must record the push state. The
+                    # recorded facts are kept (#1288 round 4): discarding them
+                    # let the post-publish merge overwrite the state without
+                    # them, so the next agent saw no failure at all.
+                    state = self._record_engine_failure(
+                        publication.error,
+                        phase="publish",
+                        pushed=self._branch_pushed(),
+                        state=state,
+                    ) or state
+
+            # The publish-dependent annotations (#756/#805) are stamped only
+            # now that the publish phase has run — see the method contract.
+            # The re-frame (issue #1288) runs after that: when the run failed
+            # (PR finalize, git finalize, publish) the posted comment's
+            # embedded state is replaced with the failed-state payload, whose
+            # header carries no continue token — before any comment is
+            # *created*, GitHub fires on created, so an edit cannot retract it.
+            # Best-effort (#1288 round 4): a crash here must not leave the
+            # posted comment framing a live turn while the run exits 1 — the
+            # except handler below records the failure and re-frames instead.
+            try:
+                state = self._merge_post_publish_state(state)
+            except Exception as exc:  # noqa: BLE001 - best-effort merge
+                log.warning("[phase:state] post-publish merge failed: %s", exc)
+            if failure_reason is not None and not publish_failed:
+                # The failure facts and the notice were already stamped/posted
+                # at publish time (the embedded state is framed there), so only
+                # the run-state merge is left here (#1288). The phase is the
+                # one the failure actually surfaced in (git finalize, PR
+                # finalize) — not the phase the re-frame runs in (#1288
+                # round 4: the notice must name the real phase).
+                failure_phase = (
+                    "git_finalize"
+                    if "git session finalize failed" in failure_reason
+                    else (
+                        "pr_finalize"
+                        if "PR finalizer failed" in failure_reason
+                        else (phases[-1] if phases else "run")
+                    )
+                )
+                if self._publish_state.get("failed_state") is not None:
+                    failed_state = self._publish_state["failed_state"]
+                    # Keep the publish-phase annotations (#756/#805) the merge
+                    # already stamped: the failed state was built from the
+                    # pre-merge state, so re-apply its facts on top (#1288
+                    # round 4) instead of discarding them.
+                    merged_facts = {
+                        key: value
+                        for key, value in (state.current_context or {}).items()
+                        if key not in ("engine_failure",)
+                    }
+                    context = dict(failed_state.current_context)
+                    for key, value in merged_facts.items():
+                        context.setdefault(key, value)
+                    state = failed_state.model_copy(
+                        update={"current_context": context}
+                    )
+                else:
+                    state = self._fail_after_publish(
+                        failure_phase,
+                        failure_reason,
+                        state=state,
+                    ) or state
+                    created = self._publish_state.get("created")
+                    if created is not None and state is not None:
+                        created["state"] = state
 
             self._enter(phases, "route")
             turn_outcome = self.route(
@@ -1153,6 +1324,22 @@ class Engine:
             )
         except Exception as exc:  # noqa: BLE001 - the driver never crashes the host
             log.exception("[phase:error] %s", exc)
+            # A crash *after* publish must not advance the workflow (issue
+            # #1288): record the engine-side facts and re-frame the posted
+            # comment's embedded state as a notification, so the next run's
+            # header carries no continue token.
+            state = self._fail_after_publish(
+                phases[-1] if phases else "unknown",
+                str(exc),
+                state=state,
+            ) or state
+            # The posted comment may already carry the continue token (a crash
+            # in the post-publish merge or in `route`): re-frame its embedded
+            # payload as a failed run so the next run's header has no token.
+            created = self._publish_state.get("created")
+            if created is not None and state is not None:
+                created["state"] = state
+                created["engine_failed"] = True
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
@@ -1168,6 +1355,26 @@ class Engine:
         # contract), but a *publish* crash no longer is (issue #766): validation
         # passed, so the run routes on the dispatch the agent produced.
         if failure_reason is not None:
+            # A failure after the answer was published must not advance the
+            # workflow (issue #1288): record the engine-side facts and re-frame
+            # the posted comment's embedded state as a notification. A
+            # publish-failure-only run keeps the #766/#805 semantics — nothing
+            # was posted, so nothing to re-frame — and stays resumable.
+            if "publish" in phases and not publish_failed:
+                failure_phase = (
+                    "git_finalize"
+                    if "git session finalize failed" in failure_reason
+                    else (
+                        "pr_finalize"
+                        if "PR finalizer failed" in failure_reason
+                        else (phases[-1] if phases else "run")
+                    )
+                )
+                state = self._fail_after_publish(
+                    failure_phase,
+                    failure_reason,
+                    state=state,
+                ) or state
             return RunOutcome(
                 exit_code=ExitCode.ERROR,
                 turn_outcome=TurnOutcome.for_incomplete(
@@ -1275,7 +1482,7 @@ class Engine:
             self._stage_failed_comment()
             _gha_error(f"comment publish failed: {error or 'unknown error'}")
         body = (
-            f"@{self._trigger_author()} the engine could not prepare the agent's "
+            f"{self._human_ping()}the engine could not prepare the agent's "
             f"comment ({error or 'unknown error'}). The agent's output follows.\n"
             f"\n{_posted_answer_of(agent_result)}"
         )
@@ -1303,6 +1510,336 @@ class Engine:
             log.info("[phase:publish] staged undelivered comment as %s", COMMENT_BODY_ARTIFACT)
         except Exception as exc:  # noqa: BLE001 - staging is best-effort
             log.warning("[phase:publish] could not stage undelivered comment: %s", exc)
+
+    # @stub-protected
+    def _engine_failed(
+        self, state: WorkflowState | None, failure_reason: str | None
+    ) -> bool:
+        """The engine's own verdict on this run, for the header (#1288).
+
+        The header is framed *before* the final failures are known, so this is
+        decided at publish time from what has already happened: a failure
+        recorded earlier (PR finalize, publish) or a state whose
+        ``turn_outcome`` is ``INCOMPLETE/FAILURE`` (stamped by
+        ``_record_engine_failure`` — the git-finalize verdict cannot exist
+        yet at publish time; see ``_fail_after_publish``).
+        """
+        if failure_reason:
+            return True
+        if self._publish_state.get("failed"):
+            return True
+        return bool(
+            state is not None
+            and state.turn_outcome is not None
+            and state.turn_outcome.incomplete_reason is not None
+            and state.turn_outcome.incomplete_reason.value == "failure"
+        )
+
+    def _fail_after_publish(
+        self,
+        phase: str,
+        error: str,
+        *,
+        state: WorkflowState | None,
+    ) -> WorkflowState | None:
+        """Handle a run that failed *after* its answer was published (#1288).
+
+        The posted answer carried the ``<!-- workflow-continue -->`` token when
+        the run was green so far, so without this the workflow gate re-fires
+        and the next step starts as if the step had succeeded — even though
+        the git finalize (or the route) never ran. Three things happen, all
+        best-effort (the run is already failed; these must not mask it):
+
+        1. the engine-side facts (pushed? HEAD? PR?) are stamped onto the
+           state — including the state the *posted* comment embeds, so the
+           next run's header comes out notification-shaped (no continue
+           token) and the next agent sees the failure;
+        2. a failure notice naming step, run URL, phase, error and push state
+           is posted, pinging the workflow starter like the human-action
+           notice does. The notice says honestly whether the answer comment
+           was already posted (a post-publish crash may re-fire the gate).
+
+        Returns the state carrying the facts (or ``None``).
+        """
+        pushed = self._branch_pushed()
+        failed_state = self._record_engine_failure(
+            error, phase=phase, pushed=pushed, state=state
+        )
+        self._post_failure_notice(
+            error,
+            phase=phase,
+            pushed=pushed,
+            posted=self._publish_state.get("comment_id") is not None,
+        )
+        return failed_state
+
+    # @stub-protected
+    def _branch_pushed(self) -> bool:
+        """Whether this session's branch was pushed (best-effort, #1288).
+
+        The git-session finalize already verified a clean, pushed tree when it
+        ran; a run failing after that point pushed, one failing before it did
+        not. A *skipped* finalize (no remote, detached HEAD, not
+        issue-triggered) verified nothing, so it does not count as pushed
+        (#1288 round 4). Falls back to comparing the local HEAD with the
+        remote ref — fetched first, so a stale local ``origin/<branch>``
+        cannot pass (#1288).
+        """
+        result = self._scaffold_state.get("finalize_result")
+        if (
+            isinstance(result, git_session.GuardResult)
+            and result.ok
+            and not result.skipped
+        ):
+            return True
+        scaffold = self._scaffold_state.get("result")
+        branch = (
+            scaffold.branch
+            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+            else ""
+        )
+        if not branch:
+            return False
+        try:
+            guard = git_session.GitSessionGuard(self._caller_root(), self._session_env())
+            head = guard.head_sha()
+            if not head:
+                return False
+            # Fetch first: a stale local origin/<branch> ref would pass (or
+            # fail) against a remote that has since moved (#1288 review).
+            guard._run_git(["fetch", guard.remote, branch, "--quiet"])
+            remote = guard._run_git(
+                ["rev-parse", f"{guard.remote}/{branch}"]
+            ).strip()
+            return head == remote
+        except Exception:  # noqa: BLE001 - a probe failure must not mask the run error
+            return False
+
+    # @stub-protected
+    def _record_engine_failure(
+        self,
+        error: str,
+        *,
+        phase: str,
+        pushed: bool,
+        state: WorkflowState | None = None,
+        provider: str = "",
+        model: str = "",
+        requires_config_fix: bool = False,
+    ) -> WorkflowState | None:
+        """Stamp the engine-side failure facts onto the persisted state (#1288).
+
+        The next step's agent reads them through the existing step-input
+        mechanism (``current_context``), so a critique can tell "the engine
+        failed to push" from "the agent made no change". The failed state's
+        ``turn_outcome`` is also stamped ``INCOMPLETE/FAILURE`` (#1288): the
+        posted state must describe a failed run, or ``/nebuko resume``
+        (``_is_resumable_outcome``) would skip the failed step and start the
+        next one on a branch that was never pushed. The failed state is
+        also stashed on ``_publish_state`` so the caller can re-frame the
+        posted comment's embedded payload — the next run reads its state from
+        the posted comment, not from the runner-local hand-off file.
+        Best-effort: a state write hiccup must not mask the run error.
+        """
+        base = state if state is not None else self._previous_state()
+        if base is None:
+            # A run with no prior state (and a persist crash) has nothing to
+            # attach the facts to; the failure notice still carries them.
+            return None
+        try:
+            trigger = self._active_trigger()
+            scaffold = self._scaffold_state.get("result")
+            branch = (
+                scaffold.branch
+                if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+                else ""
+            )
+            head = ""
+            if branch:
+                head = git_session.GitSessionGuard(
+                    self._caller_root(), self._session_env()
+                ).head_sha()
+            pr_url = str(getattr(getattr(base, "pull_request", None), "url", "") or "")
+            facts = {
+                "ok": False,
+                "step": str(self._get(self._resolved_config(), "WORKFLOW_STEP") or ""),
+                "workflow": str(
+                    self._get(self._resolved_config(), "WORKFLOW_NAME") or ""
+                ),
+                "phase": phase,
+                "error": error,
+                "pushed": pushed,
+                "branch": branch,
+                "head_sha": head,
+                "base_branch": str(self.env.get("NEBUKO_BASE_BRANCH") or "main"),
+                "base_sha": str(self._scaffold_state.get("head_before") or ""),
+                "run_url": self._run_url(trigger) if trigger else "",
+                "pr_url": pr_url,
+            }
+            # Provider facts (issue #1322): only stamped when the failure came
+            # from a model call, so the existing failure paths are unchanged.
+            if provider:
+                facts["provider"] = provider
+            if model:
+                facts["model"] = model
+            if requires_config_fix:
+                facts["requires_config_fix"] = True
+            context = dict(base.current_context)
+            context["engine_failure"] = facts
+            failed_state = base.model_copy(
+                update={
+                    "current_context": context,
+                    "turn_outcome": TurnOutcome.for_incomplete(
+                        IncompleteReason.FAILURE, note=error
+                    ),
+                }
+            )
+            self.adapter.save_state(failed_state)
+            self._publish_state["failed_state"] = failed_state
+            return failed_state
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            log.warning("[phase:error] could not record the engine failure facts: %s", exc)
+            return None
+
+    def _resolved_config(self) -> Any:
+        """This run's resolver output, or ``None`` when it never resolved."""
+        return self._run_resolved.get(_RUN_RESOLVED_KEY)
+
+    # @stub-protected
+    def _handle_provider_failure(
+        self, failure: "ProviderFailure", phases: Sequence[str]
+    ) -> RunOutcome:
+        """Stop the run on a provider failure and report the real cause (#1322).
+
+        A model call that the provider could not serve (connectivity, 5xx/429
+        after the SDK's retries, or a 401/403/404 config rejection) ends the
+        run here: no finalize attempts, no ``validate``, no ``publish`` and no
+        routing, so the empty-report check can never replace the cause. Only
+        the one step that preserves the agent's work is kept — if it left
+        changes in the checkout, they are committed and pushed once.
+
+        The engine-failure facts and the single posted notice carry the same
+        error and the same agent phase, and the run ends as a resumable
+        ``FAILURE`` (``/nebuko resume`` re-runs the step; no retry budget is
+        consumed because ``SOFT_RETRY_ATTEMPT`` is never stamped).
+        """
+        error = str(failure.provider_error or "the LLM provider failed")
+        from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            redact_secrets,
+        )
+
+        error = redact_secrets(error, self._provider_secrets())
+        phase = str(failure.agent_phase or "agent")
+        pushed = False
+        if self._pending_worktree_paths():
+            finalize_result = self._git_session_finalize()
+            self._scaffold_state["finalize_result"] = finalize_result
+            pushed = finalize_result.ok and not finalize_result.skipped
+            if not finalize_result.ok:
+                error = f"{error}; git session finalize failed: {finalize_result.detail}"
+        state = self._record_engine_failure(
+            error,
+            phase=phase,
+            pushed=pushed,
+            provider=str(failure.provider or ""),
+            model=str(failure.model or ""),
+            requires_config_fix=bool(failure.requires_config_fix),
+        )
+        self._post_failure_notice(
+            error,
+            phase=phase,
+            pushed=pushed,
+            provider=str(failure.provider or ""),
+            model=str(failure.model or ""),
+            requires_config_fix=bool(failure.requires_config_fix),
+        )
+        return RunOutcome(
+            exit_code=ExitCode.ERROR,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.FAILURE, note=error
+            ),
+            prompt=None,
+            posted_body=None,
+            state=state,
+            phases=tuple(phases),
+        )
+
+    def _pending_worktree_paths(self) -> tuple[str, ...]:
+        """Uncommitted paths in the caller checkout, best-effort (#1322).
+
+        Used only to decide whether a provider failure still owes the agent's
+        work one commit and push; an uninspectable tree reads as pending, so
+        the work is never silently dropped.
+        """
+        try:
+            guard = git_session.GitSessionGuard(
+                self._caller_root(), self._session_env()
+            )
+            return guard.pending_paths()
+        except Exception as exc:  # noqa: BLE001 - a probe failure is not fatal
+            log.warning("[phase:agent] could not inspect the worktree: %s", exc)
+            return ()
+
+    def _provider_secrets(self) -> list[str]:
+        """Configured secret values a provider error might echo (#1322).
+
+        The comment and the recorded facts are public, so every secret-looking
+        env value is scrubbed verbatim (no pattern matching). Short values are
+        skipped: they would redact ordinary words.
+        """
+        try:
+            env = self._agent_env()
+        except Exception:  # noqa: BLE001 - the raw env still names the secrets
+            env = self.env
+        return [
+            str(value)
+            for key, value in env.items()
+            if value
+            and len(str(value)) >= _SECRET_MIN_LENGTH
+            and any(marker in key.upper() for marker in _SECRET_ENV_MARKERS)
+        ]
+
+    def _post_failure_notice(
+        self,
+        error: str,
+        *,
+        phase: str,
+        pushed: bool,
+        posted: bool = False,
+        provider: str = "",
+        model: str = "",
+        requires_config_fix: bool = False,
+    ) -> None:
+        """Post the engine's failure notice and ping the starter (#1288).
+
+        Mirrors :meth:`notify_human_action`: a failed post is logged and
+        swallowed, never masking the run error that triggered it. ``posted``
+        selects the honest aftermath wording (issue #1288 round 4): a crash
+        after the answer comment was created may re-fire the workflow gate.
+        ``provider``/``model``/``requires_config_fix`` name the provider failure
+        the run stopped on (issue #1322).
+        """
+        from nebuko.engine.lib.config import EngineFailureNotice
+
+        self._set_status(run_status_for(STATUS_EVENT_FAILURE))
+        try:
+            trigger = self._active_trigger()
+            notice = EngineFailureNotice(
+                step=str(self._get(self._resolved_config(), "WORKFLOW_STEP") or ""),
+                workflow=str(self._get(self._resolved_config(), "WORKFLOW_NAME") or ""),
+                phase=phase,
+                error=error,
+                run_url=self._run_url(trigger) if trigger else "",
+                pushed=pushed,
+                target=self._trigger_author(),
+                posted=posted,
+                provider=provider,
+                model=model,
+                requires_config_fix=requires_config_fix,
+            )
+            self.adapter.post(notice.render())
+        except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure
+            log.warning("[phase:error] failure notice failed: %s", exc)
 
     # @stub-protected
     def _post_gate_noop_notice(self, reason: str) -> str:
@@ -1335,7 +1872,7 @@ class Engine:
         the hold.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -1355,7 +1892,7 @@ class Engine:
         a failed post must not mask the terminal outcome.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n@{self._trigger_author()} {reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -1693,7 +2230,15 @@ class Engine:
             if not step:
                 continue
             rounds[step] = rounds.get(step, 0) + 1
-            path.append(WorkflowPathEntry(step=step, round=rounds[step]))
+            outcome = getattr(node, "turn_outcome", None)
+            path.append(
+                WorkflowPathEntry(
+                    step=step,
+                    round=rounds[step],
+                    failed=getattr(outcome, "incomplete_reason", None)
+                    is IncompleteReason.FAILURE,
+                )
+            )
         return path
 
     def _previous_workflow(self) -> str:
@@ -2039,6 +2584,7 @@ class Engine:
         issue number or a failed post is logged and swallowed — the
         acknowledgment is informational and must never abort the run.
         """
+        self._set_status(run_status_for(STATUS_EVENT_STARTED))
         if notice.issue_number is None:
             log.warning("[phase:agent] no issue number; skipping agent-start notice")
             return
@@ -2056,6 +2602,7 @@ class Engine:
         swallowed — the acknowledgment is informational and must never abort
         the run.
         """
+        self._set_status(run_status_for(STATUS_EVENT_STARTED))
         if notice.issue_number is None:
             log.warning("[phase:action] no issue number; skipping script-start notice")
             return
@@ -2073,10 +2620,26 @@ class Engine:
         plain hold, or end-of-workflow). Mirrors :meth:`notify_agent_started`:
         a failed post is logged and swallowed, never aborting the run.
         """
+        self._set_status(
+            run_status_for(STATUS_EVENT_HUMAN_ACTION, kind=notice.kind)
+        )
         try:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not abort a run
             log.warning("[phase:publish] human-action notice failed: %s", exc)
+
+    def _set_status(self, status: "RunStatus | None") -> None:
+        """Publish this run's status through the adapter (issue #1336).
+
+        Best-effort, like the notices: a host that cannot update the status is
+        logged and never fails the run.
+        """
+        if status is None:
+            return
+        try:
+            self.adapter.set_status(status)
+        except Exception as exc:  # noqa: BLE001 - a status must not abort a run
+            log.warning("[phase:status] run status %s failed: %s", status.value, exc)
 
     def human_action_notice(
         self,
@@ -2531,6 +3094,42 @@ class Engine:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the dev branch")
+        return self._record_git_action(
+            updated,
+            _scaffold_git_status(result),
+            commit_id=str(self._scaffold_state.get("head_before") or "") or None,
+            detail=result.detail,
+            branch_name=result.branch,
+        )
+
+    def _record_git_action(
+        self,
+        state: WorkflowState | None,
+        status: GitActionStatus,
+        *,
+        commit_id: str | None = None,
+        detail: str = "",
+        branch_name: str | None = None,
+        pr_number: int | None = None,
+    ) -> WorkflowState | None:
+        """Append one engine git action to the persisted state (issue #1153).
+
+        ``turn`` is the history length, which ties the action to a step. Audit
+        data only: nothing routes on it, so a failed write is only logged.
+        """
+        if state is None:
+            return None
+        git = state.git.model_copy(deep=True) if state.git else GitInfo()
+        if branch_name:
+            git.branch_name = branch_name
+        if pr_number is not None:
+            git.pr_number = pr_number
+        git.record(status, commit_id=commit_id, turn=len(state.history), detail=detail)
+        updated = state.model_copy(update={"git": git})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the git action")
         return updated
 
     def _record_pull_request(
@@ -2572,7 +3171,11 @@ class Engine:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the PR metadata")
-        return updated
+        if state.git is not None and state.git.pr_number == number:
+            return updated  # every later run finds the same PR: record it once
+        return self._record_git_action(
+            updated, GitActionStatus.PR, detail=pr_result.pr_url, pr_number=number
+        )
 
     def _artifacts(self) -> RunArtifactStager:
         """The per-run log stager over this run's host artifact directory."""
@@ -2662,6 +3265,65 @@ class Engine:
         self._resolve_bridge()
 
     # @stub-protected
+    def _check_coverage(self, agent_result: Any) -> None:
+        """Refuse a plan finalize whose coverage misses a ledger ID (issue #1257).
+
+        Runs in the ``validate`` phase, after the section validation: the plan
+        step's answer is parsed for its ``coverage`` section and the analyze
+        step's recorded output for its ``requirements`` ledger. The check is
+        fail-open on both sides — a step that declares no ``coverage`` field,
+        no parseable ledger in run state, or an unparseable ledger (warning
+        only) is a no-op, so default and legacy workflows are unaffected. A
+        :class:`CoverageValidationError` propagates to the run loop, which
+        fails the step with ``coverage missing: ...``.
+        """
+        from nebuko.engine.ledger import CoverageValidationError, PlanCoverageGuard
+
+        resolved = self._handoff_config()
+        contract = step_output_contract(self._get(resolved, "STEP_OUTPUT"))
+        if contract is None or not any(f.name == "coverage" for f in contract.fields):
+            return
+        coverage_body = self._extract_declared_section(
+            _posted_answer_of(agent_result), contract, "coverage"
+        )
+        if coverage_body is None:
+            return
+        try:
+            PlanCoverageGuard().check(coverage_body, self._requirements_body())
+        except CoverageValidationError:
+            self._ledger_state["refused"] = True
+            raise
+
+    def _extract_declared_section(
+        self, body: str, contract: Any, name: str
+    ) -> str | None:
+        """One declared section of the answer, or ``None`` when absent."""
+        from nebuko.engine.finalize import OutputRenderer, SectionExtractionError
+
+        try:
+            return OutputRenderer(contract).extract_section(body, name)
+        except SectionExtractionError:
+            return None
+
+    def _requirements_body(self) -> str | None:
+        """The analyze step's ``requirements`` ledger body from run state.
+
+        ``None`` when no analyze output is addressable or it declares no
+        ``requirements`` field — the guard then stays a no-op (issue #1257).
+        """
+        scope = self._step_output_scope(list(self._context_history()))
+        body = scope.get("analyze")
+        if not body:
+            return None
+        declared = self._declared_outputs().get("analyze")
+        # _declared_outputs() hands back the raw StepOutput model; the
+        # renderer takes an OutputContract (issue #1287).
+        contract = OutputContract.from_step_output(declared) if declared else None
+        if contract is None or not any(f.name == "requirements" for f in contract.fields):
+            return None
+        return self._extract_declared_section(body, contract, "requirements")
+
+    # @stub-protected
     def validate(self, agent_result: Any) -> None:
         """Delegate to ``validate_output``."""
         bridge = self._resolve_bridge()
@@ -2670,6 +3332,97 @@ class Engine:
         result = bridge.validate_agent_output(answer, self._role_of(agent_result))
         if not result.is_valid:
             raise ValueError("agent output failed validation: " + "; ".join(result.errors))
+        self._reject_empty_report(_posted_answer_of(agent_result))
+
+    def _reject_empty_report(self, answer: str) -> None:
+        """Reject an answer whose declared output sections are all empty (#1288).
+
+        A run whose posted body is only the engine's closing-turn boilerplate
+        ("Finalize complete — the deliverable report is posted…") carries no
+        step result at all: treating it as a valid answer let an empty report
+        drive routing (issue #1286, round 3). A step that declares an output
+        contract must have at least one non-empty section *body*. A non-empty
+        title is not content on its own: a heading over sections that are all
+        empty is still an empty report (round 4). Only a title-only contract
+        falls back to the title, since that is then the whole report.
+        """
+        contract = step_output_contract(
+            self._get(self._resolved_config(), "STEP_OUTPUT")
+        )
+        if contract is None or not contract.fields:
+            return
+        # A fenced code block is content, never section markup: strip the
+        # fences before scanning, so a ``#`` comment inside one cannot stand
+        # in for a real title (issue #1288 round 4).
+        stripped = "\n".join(
+            line
+            for line, keep in _outside_code_fences(answer)
+            if keep
+        )
+        has_title = bool(
+            re.search(r"^#\s+\S", stripped, re.MULTILINE)
+        ) and not self._is_boilerplate_answer(stripped)
+        saw_present_body = False
+        for field in contract.fields:
+            try:
+                value = self._extract_section_body(answer, field)
+            except Exception:  # noqa: BLE001 - a malformed section is not empty-content proof
+                return
+            if field.title:
+                continue
+            if value:
+                return
+            saw_present_body = True
+        # A non-empty title over empty (or absent) body sections is still an
+        # empty report (round 4): only a title-only contract may pass on its
+        # title, because the title is then the whole report.
+        if saw_present_body or not has_title:
+            raise ValueError(
+                "agent output failed validation: every declared output section "
+                "is empty; a run with no report content is not a valid step result"
+            )
+
+    @staticmethod
+    def _is_boilerplate_answer(answer: str) -> bool:
+        """True when the answer is only the engine's closing-turn boilerplate.
+
+        The engine's own ``finalize`` summary ("Finalize complete — the
+        deliverable report is posted…") is not a step result, whatever
+        heading it sits under (issue #1288 round 4).
+        """
+        body = re.sub(r"^#.*$", "", answer, flags=re.MULTILINE).strip()
+        if not body:
+            return bool(answer.strip())
+        return body.lower().startswith("finalize complete")
+
+    @staticmethod
+    def _extract_section_body(answer: str, field: Any) -> str | None:
+        """Read one declared section's body from the answer, tolerating absence.
+
+        A ``title: true`` field is read from the ``#`` lead-in (code fences
+        are stripped first, so a ``#`` comment inside one is not a title);
+        the rest from the section markers. Absent or placeholder bodies read
+        as empty.
+        """
+        from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
+
+        if field.title:
+            stripped = "\n".join(
+                line for line, keep in _outside_code_fences(answer) if keep
+            )
+            match = re.search(r"^#\s+(.+)$", stripped, re.MULTILINE)
+            return match.group(1).strip() if match else None
+        open_marker = SECTION_OPEN.format(name=field.name)
+        start = answer.find(open_marker)
+        if start < 0:
+            return None
+        start += len(open_marker)
+        end = answer.find(SECTION_CLOSE, start)
+        body = answer[start : end if end >= 0 else len(answer)]
+        body = body.strip()
+        if body == f"…{field.name}…":
+            return None
+        return body or None
 
     # @stub-protected
     def publish(self, agent_result: Any) -> str:
@@ -2703,6 +3456,30 @@ class Engine:
         final_message = _final_message_of(agent_result) or answer
         console_log = self._console_log_of(agent_result)
         self._stage_run_logs(console_log)
+        # The run's own failure verdicts known *at this point* (PR finalize,
+        # git finalize, publish) drop the continue token from line 1 and stamp
+        # the failure facts onto the embedded state (issue #1288): GitHub fires
+        # on the comment as created, so a failure must never be framed as a
+        # live turn — an edit-after-post cannot retract the token.
+        # The verdict is about *this* run only: a previous run's INCOMPLETE/
+        # FAILURE state must not frame a green run as failed (#1288 review).
+        # The previous state is used as the failure-facts base only when the
+        # run really failed; otherwise the agent's explicit state (or none)
+        # frames the header, as on main.
+        explicit_state = self._explicit_state(agent_result)
+        engine_failed = self._engine_failed(
+            explicit_state,
+            self._publish_state.get("failure_reason"),
+        )
+        if engine_failed:
+            publish_state = self._record_engine_failure(
+                self._publish_state.get("failure_reason") or "engine failure",
+                phase="publish",
+                pushed=self._branch_pushed(),
+                state=explicit_state,
+            ) or explicit_state
+        else:
+            publish_state = explicit_state
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -2711,7 +3488,8 @@ class Engine:
             has_console_log=bool(console_log),
             trigger_author=self._trigger_author(),
             role_name=self._role_of(agent_result),
-            state=self._explicit_state(agent_result),
+            state=publish_state,
+            engine_failed=engine_failed,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).
@@ -2725,6 +3503,13 @@ class Engine:
         # equivalent to escaping each part, since the escape is per token.
         escaped = bridge.escape_agent_triggers(header + body)
         self._publish_state["body"] = escaped
+        # The payload the next run reads its state from (issue #1288): when a
+        # later failure re-frames the run as failed, the created comment's
+        # payload is replaced here so the next run's header has no token.
+        self._publish_state["created"] = {
+            "state": publish_state,
+            "engine_failed": engine_failed,
+        }
         # The part ids the adapter accepted, in order, so the state journal can
         # record every comment the answer was posted as (issue #913).
         self._publish_state["comment_ids"] = [
@@ -2751,14 +3536,38 @@ class Engine:
         if state is None:
             return None
         state = self._record_hook_failure(state)
-        state = self._backfill_step_output(state)
-        if self._publish_state.get("failed") and not state.publish_failed:
+        state = self._record_ledger_metrics_safe(state)
+        # Publish-last ordering (issue #1288): the answer does not exist yet,
+        # so the two publish-dependent annotations — the step-output locator
+        # (issue #756, ADR-0013) and the honest-journal ``publish_failed``
+        # flag (issue #805) — are folded in by ``_merge_post_publish_state``
+        # after the publish phase, not here.
+        self.adapter.save_state(state)
+        return state
+
+    def _merge_post_publish_state(
+        self, state: WorkflowState | None
+    ) -> WorkflowState | None:
+        """Fold the publish-phase facts into the persisted state (#1288).
+
+        Under publish-last ordering ``persist`` runs before the answer exists,
+        so the step-output locator (issue #756, ADR-0013) and the
+        ``publish_failed`` journal flag (issue #805) — both read
+        ``_publish_state`` — can only be stamped once the publish phase has
+        run. The merged state is re-saved before routing so the next step's
+        thread read resolves this run's output comment.
+        """
+        if state is None:
+            return None
+        merged = self._backfill_step_output(state)
+        if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
             # published one.
-            state = state.model_copy(update={"publish_failed": True})
-        self.adapter.save_state(state)
-        return state
+            merged = merged.model_copy(update={"publish_failed": True})
+        if merged != state:
+            self.adapter.save_state(merged)
+        return merged
 
     @staticmethod
     def _annotate_state_with_hook_failure(agent_result: Any, note: str) -> None:
@@ -2803,6 +3612,45 @@ class Engine:
         context = dict(state.current_context)
         context["post_hook_failure"] = note
         return state.model_copy(update={"current_context": context})
+
+    def _record_ledger_metrics(self, state: WorkflowState) -> WorkflowState:
+        """Collect the requirements-ledger metrics into the persisted state (#1257).
+
+        ``current_context`` is the durable surface, so the ledger size, the
+        inferred-entry count and this run's coverage refusals ride there for
+        the metrics pipeline to aggregate. Fail-open: no parseable ledger in
+        run state leaves the state untouched.
+        """
+        from nebuko.engine.lib.agent_script.sub_domains.metrics.ledger_metrics import (
+            LedgerMetricsCollector,
+        )
+        from nebuko.engine.ledger import RequirementsLedger
+
+        ledger_body = self._requirements_body()
+        if not ledger_body:
+            return state
+        try:
+            ledger = RequirementsLedger.parse(ledger_body)
+        except Exception:  # noqa: BLE001 - metrics are best-effort
+            return state
+        metrics = LedgerMetricsCollector().collect(
+            ledger,
+            coverage_refusals=1 if self._ledger_state.get("refused") else 0,
+        )
+        context = dict(state.current_context)
+        context["ledger_metrics"] = metrics.model_dump()
+        return state.model_copy(update={"current_context": context})
+
+    def _record_ledger_metrics_safe(self, state: WorkflowState) -> WorkflowState:
+        """``_record_ledger_metrics`` with metric collection fail-open (#1287).
+
+        ADR-0016: metrics must never be able to crash ``persist()``.
+        """
+        try:
+            return self._record_ledger_metrics(state)
+        except Exception:  # noqa: BLE001 - metrics are best-effort
+            log.warning("ledger metric collection failed; skipped", exc_info=True)
+            return state
 
     def _backfill_step_output(self, state: WorkflowState) -> WorkflowState:
         """Point the running step's output locator at its just-posted comment.
@@ -2997,11 +3845,66 @@ class Engine:
         task = self._get(resolved, "TASK")
         if task:
             parts.append(f"**Task:** {task}")
+        engine_block = self._render_engine_status()
+        if engine_block:
+            parts.append(engine_block)
         gate_section = _render_gate_decision(self._get(resolved, "GATE_DECISION"))
         if gate_section:
             parts.append(gate_section)
         parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
         return "\n\n".join(part for part in parts if part)
+
+    def _render_engine_status(self) -> str:
+        """The previous run's engine-side facts, as a prompt block (#1288).
+
+        Read from the previous state's ``engine_failure`` context entry — the
+        facts ``_record_engine_failure`` stamped when the previous run failed
+        after its agent phase. Without this block the facts rode the state
+        only, which ``_agent_facing_body`` strips, so a critique could not
+        tell "the engine failed to push" from "the agent made no change".
+        A green run (no entry, or a cleared/empty one) renders nothing.
+        """
+        try:
+            state = self._previous_state()
+        except Exception:  # noqa: BLE001 - a missing state is not fatal
+            return ""
+        if state is None:
+            return ""
+        facts = (state.current_context or {}).get("engine_failure")
+        if not isinstance(facts, dict) or facts.get("ok", True) is not False:
+            return ""
+        lines = ["## Engine status of the previous run", ""]
+        lines.append(
+            "The previous step's run **failed in the engine** (not in the "
+            "agent). Facts, verbatim:"
+        )
+        lines.append("")
+        lines.append("```")
+        for key in (
+            "step",
+            "workflow",
+            "phase",
+            "error",
+            "pushed",
+            "branch",
+            "head_sha",
+            "base_branch",
+            "run_url",
+            "pr_url",
+        ):
+            value = facts.get(key)
+            if value in (None, ""):
+                continue
+            lines.append(f"{key}: {value}")
+        lines.append("```")
+        lines.append("")
+        lines.append(
+            "Treat these facts as ground truth about the previous run: a "
+            "missing diff explained by them (e.g. the branch was never "
+            "pushed) is an engine failure, not agent fabrication, and is "
+            "never routed back to `plan`."
+        )
+        return "\n".join(lines)
 
     def _issue_body_entry(self) -> str:
         """The typed issue-body entry's text, or ``""`` when the host has none."""
@@ -3215,23 +4118,38 @@ class Engine:
         a chained, bot-triggered run still pings the human on the hook — then
         the issue author, then the raw trigger author. Falls back to the
         adapter's own trigger when the environment carries none.
+
+        A bot login is never a valid target (issue #1295): the notice exists to
+        reach a person, so bot candidates are skipped rather than pinged.
         """
         if state is None:
             state = self._seeded_prev_state.get("state") or self._previous_state()
-        candidates = (
+        candidates = [
             getattr(state, "started_by", None) if state is not None else None,
             getattr(getattr(state, "issue", None), "author", None)
             if state is not None
             else None,
             self.env.get("TRIGGER_AUTHOR"),
-        )
-        for candidate in candidates:
-            if candidate and str(candidate).strip():
-                return str(candidate).strip()
+            self.env.get("TRIGGER_AUTHOR_LOGIN"),
+        ]
         try:
-            return self.adapter.read_trigger().author
+            candidates.append(self.adapter.read_trigger().author)
         except Exception:  # noqa: BLE001 - a missing event payload is not fatal here
-            return ""
+            pass
+        for candidate in candidates:
+            login = str(candidate or "").strip()
+            if login and not is_bot_login(login):
+                return login
+        return ""
+
+    def _human_ping(self, state: WorkflowState | None = None) -> str:
+        """The ``@login `` mention for the engine's notices, or nothing.
+
+        When no human resolves (a bot-only trigger chain) the notice is posted
+        without a mention rather than a dangling ``@`` or a bot ping (#1295).
+        """
+        author = self._trigger_author(state)
+        return f"@{author} " if author else ""
 
     def _build_state(self, agent_result: Any) -> WorkflowState | None:
         """Return the agent's own state artifact, else the previous state.
@@ -3339,6 +4257,31 @@ def _hook_failure_note(phase: HookPhase, result: HookResult) -> str:
     note = f"{phase}_hook failed: {result.detail}"
     tail = (result.output_tail or "").strip()
     return f"{note}\n{tail}" if tail else note
+
+
+def _outside_code_fences(text: str) -> list[tuple[str, bool]]:
+    """Pair each line with whether it sits outside a fenced code block.
+
+    Fenced blocks (``` or ~~~ fences) are content, never section markup, so
+    the empty-report check must not read a ``#`` comment inside one as a
+    title (issue #1288 round 4). Unbalanced fences treat the rest as fenced
+    (fail-closed: less likely to accept an empty report).
+    """
+    pairs: list[tuple[str, bool]] = []
+    fenced = False
+    fence_re = re.compile(r"^\s*(```|~~~)")
+    for line in text.splitlines():
+        if fenced:
+            pairs.append((line, False))
+            if fence_re.match(line):
+                fenced = False
+            continue
+        if fence_re.match(line):
+            fenced = True
+            pairs.append((line, False))
+            continue
+        pairs.append((line, True))
+    return pairs
 
 
 def _agent_facing_body(body: str) -> str:
@@ -3620,7 +4563,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     args = parser.parse_args(raw_args)
 
-    logging.basicConfig(level=logging.INFO)
+    from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
+
+    configure_logging(os.environ)
+    # Overlap the agent SDK's ~5s import with the gh/git-bound phases (issue #1266).
+    prewarm_agent_sdk(os.environ)
     kwargs: dict[str, Any] = {}
     if args.adapter == "local":
         if not args.run_dir:

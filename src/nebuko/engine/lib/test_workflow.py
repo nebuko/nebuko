@@ -26,7 +26,7 @@ class TestSkillsToString:
 
     def _import_helper(self):
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         return resolve_workflow._skills_to_string
 
     def test_none_returns_empty(self):
@@ -277,7 +277,11 @@ class TestStepPromptFile:
         "a short summary (~5-10 sentences)\n"
         "5 Key points\n"
     )
-    PROMPT_PATH = "/tmp/step_prompt.md"
+
+    @property
+    def prompt_path(self) -> str:
+        from nebuko.engine.lib.resolve_workflow import step_prompt_path
+        return step_prompt_path()
 
     def _wf(self, steps):
         return {
@@ -291,8 +295,8 @@ class TestStepPromptFile:
         return resolve_workflow_routing(request, tmpdir, ".agents/prompts")
 
     def _cleanup(self):
-        if os.path.exists(self.PROMPT_PATH):
-            os.unlink(self.PROMPT_PATH)
+        if os.path.exists(self.prompt_path):
+            os.unlink(self.prompt_path)
 
     def test_first_step_with_prompt_writes_file(self):
         self._cleanup()
@@ -302,8 +306,8 @@ class TestStepPromptFile:
                     {"name": "analyze", "agent": "architect", "prompt": self.PROMPT, "next": None},
                 ])))
                 result = self._resolve({"task": "architect", "workflow": "wf"}, tmpdir)
-                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
-                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+                assert result["STEP_PROMPT_FILE"] == self.prompt_path
+                assert Path(self.prompt_path).read_text() == self.PROMPT
         finally:
             self._cleanup()
 
@@ -319,8 +323,8 @@ class TestStepPromptFile:
                     {"task": "dev", "workflow": "wf", "step": "second"}, tmpdir
                 )
                 assert result["ROLE_NAME"] == "dev"
-                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
-                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+                assert result["STEP_PROMPT_FILE"] == self.prompt_path
+                assert Path(self.prompt_path).read_text() == self.PROMPT
         finally:
             self._cleanup()
 
@@ -333,14 +337,14 @@ class TestStepPromptFile:
                 ])))
                 result = self._resolve({"task": "dev", "workflow": "wf"}, tmpdir)
                 assert result["STEP_PROMPT_FILE"] == ""
-                assert not os.path.exists(self.PROMPT_PATH)
+                assert not os.path.exists(self.prompt_path)
         finally:
             self._cleanup()
 
     def test_step_without_prompt_removes_stale_file(self):
         # A previous run on this runner left a file behind; resolution of a
         # step without a prompt must remove it so CI sees no injection.
-        Path(self.PROMPT_PATH).write_text("stale")
+        Path(self.prompt_path).write_text("stale")
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 (Path(tmpdir) / "wf.yaml").write_text(yaml.dump(self._wf([
@@ -348,7 +352,7 @@ class TestStepPromptFile:
                 ])))
                 result = self._resolve({"task": "dev", "workflow": "wf"}, tmpdir)
                 assert result["STEP_PROMPT_FILE"] == ""
-                assert not os.path.exists(self.PROMPT_PATH)
+                assert not os.path.exists(self.prompt_path)
         finally:
             self._cleanup()
 
@@ -368,8 +372,8 @@ class TestStepPromptFile:
                 )
                 assert result["WORKFLOW_NAME"] != "parent"
                 assert result["WORKFLOW_STEP"] == "scan"
-                assert result["STEP_PROMPT_FILE"] == self.PROMPT_PATH
-                assert Path(self.PROMPT_PATH).read_text() == self.PROMPT
+                assert result["STEP_PROMPT_FILE"] == self.prompt_path
+                assert Path(self.prompt_path).read_text() == self.PROMPT
         finally:
             self._cleanup()
 
@@ -651,13 +655,13 @@ class TestSpecDrivenWorkflow:
 
     def _import_resolver(self):
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         return resolve_workflow.resolve_workflow_step
 
     def test_po_in_task_to_prompt(self):
         """Verify po agent is registered in TASK_TO_PROMPT."""
         import importlib
-        resolve_workflow = importlib.import_module("resolve_workflow")
+        resolve_workflow = importlib.import_module("nebuko.engine.lib.resolve_workflow")
         assert "po" in resolve_workflow.TASK_TO_PROMPT
         assert resolve_workflow.TASK_TO_PROMPT["po"] == "po.md"
 

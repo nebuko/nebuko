@@ -1,8 +1,8 @@
 """Tests for the engine-owned branch scaffold (issue #1138).
 
 Real git against a local bare remote: the scaffold must create the feature
-branch from the fetched base, merge an existing one onto the base, return a
-merge conflict as data (fix-first note, branch restored), skip benignly and
+branch from the fetched base, leave an existing one as-is unless the base
+conflicts (issue #1242), return a merge conflict as data (fix-first note, branch restored), skip benignly and
 fail closed. Also covers the bounded git subprocess env (oversized session
 env must not reach the subprocess, E2BIG regression).
 """
@@ -129,31 +129,12 @@ class TestScaffold:
         result = _scaffold(checkout)
 
         assert result.ok and not result.skipped
+        assert result.created
         assert result.branch == BRANCH
         assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
         # The branch starts at the fetched base, not at the old HEAD.
         assert _git(checkout, "rev-parse", "HEAD") == _git(
             checkout, "rev-parse", "origin/main"
-        )
-
-    def test_merges_an_existing_branch(self, checkout):
-        _git(checkout, "checkout", "-q", "-b", BRANCH)
-        _commit(checkout, "work.txt", "work\n", "work")
-        # The base moves on after the branch was cut.
-        seed = checkout.parent / "seed"
-        _commit(seed, "base.txt", "base\nmore\n", "base moves")
-        _git(seed, "push", "-q", "origin", "main")
-
-        result = _scaffold(checkout)
-
-        assert result.ok and not result.conflict
-        assert f"merged origin/main" in result.detail
-        # The merge commit makes the base an ancestor of the merged HEAD.
-        _git(checkout, "merge-base", "--is-ancestor", "origin/main", "HEAD")
-        assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == BRANCH
-        # The merge is a real merge commit: round 1's commit survives.
-        assert _git(checkout, "rev-parse", "HEAD^1") != _git(
-            checkout, "rev-parse", "HEAD^2"
         )
 
     def test_an_up_to_date_branch_skips_the_merge(self, checkout):
@@ -168,6 +149,7 @@ class TestScaffold:
 
         assert result.ok and not result.conflict
         assert result.already_up_to_date
+        assert result.base_contained
         assert result.branch == BRANCH
         assert "already contains origin/main" in result.detail
         # No merge commit was created: the branch head is untouched.
@@ -224,7 +206,11 @@ class TestScaffold:
         """A merge git refuses outright is not a conflict the agent can fix."""
         _git(checkout, "checkout", "-q", "-b", BRANCH)
         _commit(checkout, "work.txt", "work\n", "work")
+        _commit(checkout, "base.txt", "branch\n", "branch changes base.txt")
         seed = checkout.parent / "seed"
+        # A real conflict, so the probe sends the scaffold to the merge
+        # (issue #1242: a clean probe never merges).
+        _commit(seed, "base.txt", "main\n", "main changes base.txt")
         _commit(seed, "new.txt", "from main\n", "main adds new.txt")
         _git(seed, "push", "-q", "origin", "main")
         # An untracked file the merge would overwrite: git aborts the merge
@@ -237,9 +223,10 @@ class TestScaffold:
         assert "merge of origin/main" in result.detail
         assert not (checkout / ".git" / "MERGE_HEAD").exists()
 
-    def test_merges_a_previous_round_from_a_shallow_checkout(self, tmp_path):
+    def test_continues_a_previous_round_from_a_shallow_checkout(self, tmp_path):
         """``actions/checkout`` clones at depth 1: without the unshallow the
-        merge of a previous round's branch fails with "unrelated histories"."""
+        conflict probe of a previous round's branch has no merge base to work
+        from, and the fallback merge fails with "unrelated histories"."""
         remote = tmp_path / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
         seed = tmp_path / "seed"
@@ -263,14 +250,16 @@ class TestScaffold:
         _git(work, "checkout", "-q", "--detach", "HEAD")
         assert _git(work, "rev-parse", "--is-shallow-repository") == "true"
 
-        # No identity in the checkout: the merge commit must not need one.
         env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
         result = _scaffold(work, env=env)
 
         assert result.ok and not result.conflict, result.detail
         assert result.branch == BRANCH
-        _git(work, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+        assert _git(work, "rev-parse", "--is-shallow-repository") == "false"
         assert (work / "work.txt").exists()
+        # A clean probe leaves the branch as-is: main's changes stay out of it.
+        assert not (work / "other.txt").exists()
+        assert not _git(work, "log", "--merges", "--oneline")
 
     def test_installs_a_hook_refusing_workflow_commits(self, checkout):
         result = _scaffold(checkout)
@@ -506,14 +495,18 @@ class TestGitSubprocessEnv:
     """The git subprocess env must be bounded (E2BIG regression)."""
 
     def testgit_subprocess_env_drops_payload_vars(self):
-        env = git_subprocess_env(
-            {
-                "CONTEXT_BODIES": "x" * (1 << 21),
-                "STEP_INPUT_RESULTS": "...",
-                "GITHUB_TOKEN": "t",
-                "GIT_AUTHOR_NAME": "n",
-            }
-        )
+        # An isolated ambient env: on a CI runner the real GITHUB_TOKEN would
+        # otherwise differ from the overlaid value checked below.
+        ambient = {"PATH": os.environ.get("PATH", ""), "AMBIENT_ONLY": "kept"}
+        with mock.patch.dict(os.environ, ambient, clear=True):
+            env = git_subprocess_env(
+                {
+                    "CONTEXT_BODIES": "x" * (1 << 21),
+                    "STEP_INPUT_RESULTS": "...",
+                    "GITHUB_TOKEN": "t",
+                    "GIT_AUTHOR_NAME": "n",
+                }
+            )
 
         assert "CONTEXT_BODIES" not in env
         assert "STEP_INPUT_RESULTS" not in env
@@ -521,8 +514,8 @@ class TestGitSubprocessEnv:
         assert env["GIT_AUTHOR_NAME"] == "n"
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         # Based on the ambient environment, not the passed mapping.
-        for key, value in os.environ.items():
-            assert env.get(key) == value
+        assert env["AMBIENT_ONLY"] == "kept"
+        assert env["PATH"] == ambient["PATH"]
 
     def test_scaffold_succeeds_with_oversized_env(self, checkout):
         captured_env = {}

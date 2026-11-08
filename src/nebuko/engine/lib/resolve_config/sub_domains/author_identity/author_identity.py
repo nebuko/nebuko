@@ -23,6 +23,7 @@ __all__ = [
     "build_author_identity",
     "BOT_LOGIN_DENYLIST",
     "BOT_LOGIN_SUFFIXES",
+    "is_bot_login",
 ]
 
 #: Login suffixes that always denote a GitHub App / bot account.
@@ -86,8 +87,13 @@ class AuthorIdentity(BaseModel):
         return self.association in allowlist
 
 
-def _is_bot_login(login: str) -> bool:
-    """True when ``login`` is a known bot/machine account."""
+def is_bot_login(login: str) -> bool:
+    """True when ``login`` is a known bot/machine account.
+
+    Public because the engine's human-notice target resolution must never pick
+    a bot account as the person to ping (issue #1295).
+    """
+    login = (login or "").strip()
     if not login:
         return False
     if login in BOT_LOGIN_DENYLIST:
@@ -108,7 +114,7 @@ def build_author_identity(
     never from body markers; only ``is_machine_comment`` reads the body.
     """
     normalized_login = (login or "").strip()
-    is_bot = (user_type or "").strip() == "Bot" or _is_bot_login(normalized_login)
+    is_bot = (user_type or "").strip() == "Bot" or is_bot_login(normalized_login)
     return AuthorIdentity(
         login=normalized_login,
         is_bot=is_bot,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -257,6 +258,8 @@ def _soft_kill_comment_body() -> str:
 
 class TestPhaseVocabulary:
     def test_phases_are_the_ten_documented_phases_in_order(self):
+        # Publish-last ordering (issue #1288): the state phase persists before
+        # the publish phase, which runs last before routing.
         assert PHASES == (
             "normalize",
             "resolve_config",
@@ -265,8 +268,8 @@ class TestPhaseVocabulary:
             "prompt",
             "agent",
             "validate",
-            "publish",
             "state",
+            "publish",
             "route",
         )
 
@@ -2031,6 +2034,49 @@ class TestHumanActionRecipient:
 
         assert engine._trigger_author(None) == "olivier-norture"
 
+    def test_a_bot_trigger_never_becomes_the_ping_target(self, tmp_path):
+        """#1295: a chained run triggered by the bot pings nobody rather than it."""
+        engine = _engine(
+            tmp_path,
+            trigger=_trigger(),
+            env={"TRIGGER_AUTHOR": "nebuko[bot]"},
+        )
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body="<!-- bot-workflow-terminal --><!-- workflow-continue -->",
+            type="issue_comment",
+            number=1295,
+        )
+
+        assert engine._trigger_author(None) == ""
+
+    def test_a_chained_bot_run_pings_the_recorded_human_starter(self, tmp_path):
+        """#1295: bot-triggered chained runs still reach the human on the hook."""
+        engine = _engine(tmp_path, env={"TRIGGER_AUTHOR": "nebuko[bot]"})
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body="<!-- bot-workflow-terminal --><!-- workflow-continue -->",
+            type="issue_comment",
+            number=1295,
+        )
+
+        author = engine._trigger_author(
+            self._state(started_by="olivier-norture", issue_author="nebuko[bot]")
+        )
+
+        assert author == "olivier-norture"
+
+    def test_a_bot_issue_author_is_skipped_for_the_trigger_login(self, tmp_path):
+        """#1295: without ``started_by`` the fallback must still find a human."""
+        engine = _engine(
+            tmp_path,
+            env={"TRIGGER_AUTHOR": "nebuko[bot]", "TRIGGER_AUTHOR_LOGIN": "olivier-norture"},
+        )
+
+        author = engine._trigger_author(self._state(issue_author="nebuko[bot]"))
+
+        assert author == "olivier-norture"
+
 
 class TestHumanActionSinglePing:
     """A stop pings a human exactly once (issue #795)."""
@@ -2101,6 +2147,38 @@ class TestHumanActionSinglePing:
         assert "@someone-else" not in outcome.posted_body
         # The human-aware halt body is the only ping: no second engine notice.
         assert "<!-- bot-human-action -->" not in outcome.posted_body
+
+    def test_a_bot_only_chain_posts_the_halt_without_a_dangling_ping(
+        self, tmp_path, monkeypatch
+    ):
+        """#1295: when no human resolves, the notice carries no ``@`` at all."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body=_soft_kill_comment_body(), number=1295),
+            env={"TRIGGER_AUTHOR": "nebuko[bot]"},
+        )
+        engine.adapter._trigger = Trigger(
+            author="nebuko[bot]",
+            body=_soft_kill_comment_body(),
+            type="issue_comment",
+            number=1295,
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SOFT_RETRY_EXHAUSTED": "true",
+                "REASON": "Soft time-kill: budget exhausted; resume with /nebuko resume.",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.posted_body is not None
+        assert "/nebuko resume" in outcome.posted_body
+        assert "@nebuko" not in outcome.posted_body
+        assert "@ " not in outcome.posted_body
 
     def test_the_follow_up_terminal_skip_run_posts_no_notice(self, tmp_path, monkeypatch):
         """Only the *completing* run announces the end of the workflow (#795)."""
@@ -4394,7 +4472,11 @@ class TestStepHooks:
         root.mkdir()
         marker = tmp_path / "post-ran.txt"
         _write_hook_script(root, "scripts/post.sh", 'touch "$POST_MARKER"')
-        engine = _engine_at_root(tmp_path, root, env={"POST_MARKER": str(marker)})
+        engine = _engine_at_root(
+            tmp_path,
+            root,
+            env={"POST_MARKER": str(marker), "PATH": os.environ.get("PATH", "")},
+        )
         _stub_resolved(
             monkeypatch,
             _resolved_with_hooks({"post": {"path": "scripts/post.sh"}}),

@@ -27,22 +27,33 @@ from .git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
 if TYPE_CHECKING:
     from .idempotency import GitIdempotency
 
-try:  # openhands ships with the ``runtime`` extra only.
-    from openhands.sdk import get_logger
-except ImportError:
-    # The lint-config job installs base deps (no openhands) yet must still
-    # import this module through the engine package (issue #1129).
-    get_logger = logging.getLogger
-
-logger = get_logger(__name__)
+# Plain stdlib logger: ``openhands.sdk.get_logger`` is ``logging.getLogger`` plus
+# ``propagate = True`` (the default), and importing it at module top dragged the
+# whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
+logger = logging.getLogger(__name__)
 
 #: The default base branch when neither the env nor the remote HEAD names one.
 DEFAULT_BASE_BRANCH = "main"
 
 #: Installed by the scaffold: agent commits may not stage workflow files.
+#:
+#: A merge commit is the exception for paths whose staged content equals the
+#: merged-in side (``MERGE_HEAD``): that is the base's own state arriving, not
+#: an agent edit. Refusing it made agents ``git restore --staged`` the path,
+#: which silently kept the branch's stale copy and turned every PR diff into a
+#: revert of the base's workflow change (PRs #1256, #1277).
 WORKFLOW_PRE_COMMIT_HOOK = """#!/bin/sh
 # Installed by the nebuko engine (branch scaffold).
 staged=$(git diff --cached --name-only -- .github/workflows/)
+if [ -n "$staged" ] && git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  own=""
+  for path in $staged; do
+    ours=$(git rev-parse -q --verify ":$path" 2>/dev/null)
+    theirs=$(git rev-parse -q --verify "MERGE_HEAD:$path" 2>/dev/null)
+    [ "$ours" = "$theirs" ] || own="$own $path"
+  done
+  staged=$(echo $own)
+fi
 if [ -n "$staged" ]; then
   echo "nebuko: do not commit .github/workflows/* changes:" >&2
   echo "$staged" >&2
@@ -68,6 +79,11 @@ class ScaffoldResult:
     ok: bool
     skipped: bool = False
     conflict: bool = False
+    # True when this run created the branch, rather than continuing one.
+    created: bool = False
+    # True when the branch contains the base, as opposed to a clean probe that
+    # deliberately left the base out (both set ``already_up_to_date``).
+    base_contained: bool = False
     # True when the branch already contained the base (issue #1194): the
     # merge was skipped, so already-committed work must not look absent.
     already_up_to_date: bool = False
@@ -296,7 +312,9 @@ class BranchScaffold:
             self._fetch_base(base)
             if self._idempotency.base_already_merged(branch, base):
                 return self._continue_as_is(
-                    branch, f"{branch} already contains origin/{base}: up to date"
+                    branch,
+                    f"{branch} already contains origin/{base}: up to date",
+                    base_contained=True,
                 )
             conflicts = self._idempotency.has_base_conflict(branch, base)
             if conflicts == []:
@@ -351,7 +369,7 @@ class BranchScaffold:
             )
         detail = f"created {branch} from origin/{base}"
         logger.info("branch scaffold: %s", detail)
-        return ScaffoldResult(ok=True, detail=detail, branch=branch)
+        return ScaffoldResult(ok=True, created=True, detail=detail, branch=branch)
 
     def _checkout_existing(self, branch: str) -> str:
         """Check out an existing branch; return a problem, or ``""``.
@@ -376,14 +394,20 @@ class BranchScaffold:
             return f"checked out {branch} but HEAD is on {current!r}"
         return ""
 
-    def _continue_as_is(self, branch: str, detail: str) -> ScaffoldResult:
+    def _continue_as_is(
+        self, branch: str, detail: str, *, base_contained: bool = False
+    ) -> ScaffoldResult:
         """Continue an existing branch without merging the base."""
         problem = self._checkout_existing(branch)
         if problem:
             return ScaffoldResult(ok=False, detail=problem)
         logger.info("branch scaffold: %s", detail)
         return ScaffoldResult(
-            ok=True, already_up_to_date=True, detail=detail, branch=branch
+            ok=True,
+            already_up_to_date=True,
+            base_contained=base_contained,
+            detail=detail,
+            branch=branch,
         )
 
     def _merge_origin(self, branch: str, base: str) -> ScaffoldResult:  # @stub-protected

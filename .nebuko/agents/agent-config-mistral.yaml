@@ -8,6 +8,12 @@ providers:
     # Mistral prompt caching: the cache key is a JSON body field whose value is
     # the engine-stamped issue id (LLM_SESSION_ID) at runtime (issue #1068).
     cache_key_param: "prompt_cache_key"
+  commandcode:
+    api_url: "https://api.commandcode.ai/provider/v1"
+    api_token_env: "COMMANDCODE_API_KEY"
+  cheaperinference:
+    api_url: "https://api.cheaperinference.com/v1"
+    api_token_env: "CHEAPERINFERENCE_API_KEY"
 
 # ── LLMs: model paths referencing providers ──
 llms:
@@ -47,10 +53,35 @@ llms:
   deepseek-4_1-flash:
     model_path: "mistral/deepseek-v4-1-flash-1017"
     provider: "${providers.mistral}"
+    temperature: 1.0
+    top_p: 1.0
     input_price: 0.3
     output_price: 1.2
     cache_read_price: 0.007
     reasoning_effort: "low"
+  mimo-2_6-pro:
+    model_path: "openai/xiaomi/mimo-v2.6-pro"
+    provider: "${providers.commandcode}"
+    thinking_enabled: true
+    preserve_thinking: true
+  claude-sonnet:
+    model_path: "openai/claude-sonnet-5-5"
+    provider: "${providers.cheaperinference}"
+    input_price: 2
+    output_price: 10
+    cache_read_price: 0.1
+  claude-opus:
+    model_path: "openai/claude-opus-5-5"
+    provider: "${providers.cheaperinference}"
+    input_price: 4
+    output_price: 20
+    cache_read_price: 0.2
+  openai-sol:
+    model_path: "openai/gpt-6.1-sol"
+    provider: "${providers.cheaperinference}"
+    input_price: 2
+    output_price: 10
+    cache_read_price: 0.1
 
 # ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
 mcp_servers:
@@ -72,9 +103,10 @@ mcp_servers:
 #        think, finish (built-in defaults)
 agents:
   architect:
-    model: "${llms.glm-5_3}"
+    model: "${llms.claude-sonnet}"
     role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
     temperature: 0.4
+    reasoning_effort: "medium"
     prompt_file: "defaults/prompts/architect.md"
     skills:
       - inject: ["call-agent", "planning"]
@@ -82,32 +114,27 @@ agents:
     tools: ["finish", "finalize", "complexity_review", "fetch_comment_bodies"]
     complexity_overrides:
       low:
-        model: "${llms.glm-5_3-flash}"
+        model: "${llms.glm-5_3}"
         reasoning_effort: "medium"
       high:
-        model: "${llms.glm-5_3}"
+        model: "${llms.claude-opus}"
         temperature: 0.6
-        reasoning_effort: "high"
+        reasoning_effort: "medium"
 
   dev:
-    model: "${llms.glm-5_3-flash}"
+    model: "${llms.deepseek-4_1-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
-    temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - discover: ["complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
-    # Lean tool/prompt overhead + batched reconnaissance (issue #851): the
-    # GLM-flash #1114 re-run paid ~3.9K chars of tool description every call
-    # and 74 of 134 batches carried 1-2 commands.
     token_budget:
       prompt_profile: "lean"
       require_batched_recon: true
 
   context:
-    model: "${llms.glm-5_3-flash}"
+    model: "${llms.deepseek-4_1-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
-    temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "context-research"]

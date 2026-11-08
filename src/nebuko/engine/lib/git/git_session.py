@@ -34,27 +34,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-try:  # openhands ships with the ``runtime`` extra only.
-    from openhands.sdk import get_logger
-except ImportError:
-    # The lint-config job installs base deps (no openhands) yet must still
-    # import this module through the engine package (issue #1129).
-    get_logger = logging.getLogger
+# Plain stdlib logger: ``openhands.sdk.get_logger`` is ``logging.getLogger`` plus
+# ``propagate = True`` (the default), and importing it at module top dragged the
+# whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
-
+#: Commit identity for engine-authored commits (issue #1306).
+#:
+#: GitHub links a commit to a user profile from the commit's author/committer
+#: email alone, so naming the ``nebuko-agent`` user here attributes the engine's
+#: git work to a real account while the push keeps using the ``nebuko[bot]``
+#: App token. The numeric prefix is the account id (``GET /users/nebuko-agent``).
 # @stub-protected
-GIT_IDENTITY_NAME: str = "nebuko"
+GIT_IDENTITY_NAME: str = "nebuko-agent"
 # @stub-protected
-GIT_IDENTITY_EMAIL: str = "nebuko@nebuko.dev"
+GIT_IDENTITY_EMAIL: str = "350013676+nebuko-agent@users.noreply.github.com"
 
 
 def git_identity_args(env: Optional[Mapping[str, str]] = None) -> list[str]:
     """``git -c`` flags for engine-authored commits, honouring the env override.
 
     ``NEBUKO_GIT_AUTHOR_NAME`` / ``NEBUKO_GIT_AUTHOR_EMAIL`` (set by the
-    workflow when the token is the App's, so GitHub links commits to the bot)
-    win over the ``GIT_IDENTITY_*`` constants. ``env`` defaults to ``os.environ``.
+    workflow, so a deployment can name its own account) win over the
+    ``GIT_IDENTITY_*`` constants. ``env`` defaults to ``os.environ``.
     """
     source = os.environ if env is None else env
     name = source.get("NEBUKO_GIT_AUTHOR_NAME") or GIT_IDENTITY_NAME
@@ -90,12 +92,14 @@ class GuardResult:
     ``ok`` is the pass/fail verdict; ``skipped`` marks the benign case where
     there was nothing to guard (``ok`` is then True and ``detail`` explains
     why); ``detail`` is actionable prose — it names the env vars to set or the
-    remote to configure, never a token.
+    remote to configure, never a token. ``auto_commit`` is the short SHA of the
+    commit finalize made for work the agent left uncommitted, empty when none.
     """
 
     ok: bool
     skipped: bool = False
     detail: str = ""
+    auto_commit: str = ""
 
 
 class GitSessionGuard:
@@ -216,8 +220,9 @@ class GitSessionGuard:
             )
 
         problems: list[str] = []
+        auto_commit = ""
         try:
-            self._commit_all_pending()
+            auto_commit = self._commit_all_pending()
         except RuntimeError as exc:
             problems.append(str(exc))
         if self._pending_paths(exclude_workflows=True):
@@ -238,11 +243,12 @@ class GitSessionGuard:
                 ok=False,
                 detail="; ".join(problems)
                 + self._token_hint(),
+                auto_commit=auto_commit,
             )
         detail = f"{branch} is clean and pushed"
         if head_before and self.head_sha() == head_before:
             detail += " (no new commit this session)"
-        return GuardResult(ok=True, detail=detail)
+        return GuardResult(ok=True, detail=detail, auto_commit=auto_commit)
 
     def head_sha(self) -> str:
         """The current HEAD SHA, empty when it cannot be read."""
@@ -251,11 +257,19 @@ class GitSessionGuard:
         except (RuntimeError, OSError):
             return ""
 
+    def pending_paths(self) -> tuple[str, ...]:
+        """Uncommitted paths in the checkout, best-effort (issue #1322).
+
+        An uninspectable tree reads as pending, so a caller that uses this to
+        decide whether work still needs committing never drops it silently.
+        """
+        return self._pending_paths()
+
     # ── Identity and credentials ──────────────────────────────────
 
     # @stub-protected
     def _configure_identity(self) -> None:
-        """Write the repo-local commit identity (``nebuko``).
+        """Write the repo-local commit identity (``GIT_IDENTITY_*``).
 
         Repo-local so a bare checkout with no global identity still commits;
         the env overrides keep the two constants the single source of truth.

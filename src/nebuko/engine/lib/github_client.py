@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import quote
 
 # Universal bot marker prepended to every CI-posted comment so that
 # human-vs-bot classification is deterministic (see is_bot_comment).
@@ -494,6 +495,95 @@ class GitHubTransport:
 def _default_transport(token: Optional[str] = None, **kwargs) -> GitHubTransport:
     """Build the transport a module-level function uses when none is injected."""
     return GitHubTransport(token, **kwargs)
+
+
+def ensure_label(
+    repo: str,
+    name: str,
+    color: str = "5319e7",
+    token: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> bool:
+    """Create ``name`` in the repository if it does not exist yet (#1336).
+
+    An already-existing label (HTTP 422 ``already_exists``) counts as success,
+    so the call is idempotent.
+    """
+    if dry_run:
+        return True
+
+    transport = transport or _default_transport(token)
+    result = transport.call(
+        ["api", "--method", "POST", f"/repos/{repo}/labels", "-f", f"name={name}", "-f", f"color={color}"],
+        mutative=True,
+    )
+    if result.ok or result.status == 422:
+        return True
+    print(f"Error creating label {name}: {result.detail}", file=sys.stderr)
+    return False
+
+
+def add_label_to_issue(
+    repo: str,
+    issue_number: int,
+    name: str,
+    token: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> bool:
+    """Attach ``name`` to an issue or PR."""
+    if dry_run:
+        return True
+
+    transport = transport or _default_transport(token)
+    result = transport.call(
+        [
+            "api",
+            "--method",
+            "POST",
+            f"/repos/{repo}/issues/{issue_number}/labels",
+            "-f",
+            f"labels[]={name}",
+        ],
+        mutative=True,
+    )
+    if result.ok:
+        return True
+    print(f"Error adding label {name}: {result.detail}", file=sys.stderr)
+    return False
+
+
+def remove_label_from_issue(
+    repo: str,
+    issue_number: int,
+    name: str,
+    token: Optional[str] = None,
+    dry_run: bool = False,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> bool:
+    """Detach ``name`` from an issue or PR; an absent label counts as success."""
+    if dry_run:
+        return True
+
+    transport = transport or _default_transport(token)
+    quoted = quote(name, safe="")
+    result = transport.call(
+        [
+            "api",
+            "--method",
+            "DELETE",
+            f"/repos/{repo}/issues/{issue_number}/labels/{quoted}",
+        ],
+        mutative=True,
+    )
+    if result.ok or result.error_kind == ApiErrorKind.NOT_FOUND:
+        return True
+    print(f"Error removing label {name}: {result.detail}", file=sys.stderr)
+    return False
 
 
 def _last_page_from_link(link: Optional[str]) -> Optional[int]:

@@ -22,6 +22,7 @@ import re
 import sys
 from typing import TYPE_CHECKING
 
+from nebuko.engine.lib.answer_footer import format_answer_footer
 from nebuko.engine.lib.validate_output import strip_agent_run_config
 from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
@@ -65,6 +66,7 @@ MAX_COMMENT_LENGTH = 60000
 # Wrapped in <details> at posting time so a long context report stays scannable
 # while remaining fully auditable in the comment body (issue #557).
 CONTEXT_SECTION_HEADINGS = [
+    "CLAIM VERIFICATION",
     "FILES FOUND",
     "RELEVANT SNIPPETS",
     "EXTERNAL REFERENCES",
@@ -420,7 +422,7 @@ def _display_name_for(role: str) -> str:
     return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
 
 
-def _header_line(state: WorkflowState) -> str:
+def _header_line(state: WorkflowState | None, engine_failed: bool = False) -> str:
     """Line 1 of the answer comment: marker+token for a live turn, marker only
     for a run that stops here (a hold verdict or a crashed-run notification).
 
@@ -428,7 +430,23 @@ def _header_line(state: WorkflowState) -> str:
     the engine; a crashed run (INCOMPLETE/FAILURE) is a notification and ends
     it the same way (issue #978). A run that recorded no outcome at all keeps
     the token: the router decides whether the turn continues (issue #964).
+
+    ``engine_failed`` is the engine's own verdict (issue #1288): a failure the
+    engine records *after* the state is framed — a failed PR finalize, git
+    finalize or publish — never reaches that state, so the caller passes it
+    explicitly. A failed run's comment is a notification, never a live turn,
+    and must not carry the continue token: GitHub fires on the comment as
+    *created*, so an edit-after-post cannot retract it. A state whose
+    ``turn_outcome`` is ``INCOMPLETE/FAILURE`` (stamped by
+    ``_record_engine_failure``) is a failed run the same way. A *stale*
+    ``engine_failure`` context entry from an earlier failed run must not
+    block a later green run (issue #1288 round 4), so the context entry
+    alone decides nothing here — the outcome does.
     """
+    if engine_failed:
+        return BOT_MARKER
+    if state is None:
+        return LIVE_HEADER_LINE
     turn_outcome = state.turn_outcome
     if turn_outcome is None:
         return LIVE_HEADER_LINE
@@ -441,7 +459,11 @@ def _header_line(state: WorkflowState) -> str:
     return LIVE_HEADER_LINE
 
 
-def format_answer_header(role_name: str | None, state: WorkflowState | None) -> str:
+def format_answer_header(
+    role_name: str | None,
+    state: WorkflowState | None,
+    engine_failed: bool = False,
+) -> str:
     """Build the marker/token/state header prepended to the answer (issue #736).
 
     Public so the engine publish seam can place this header on the first of
@@ -456,9 +478,16 @@ def format_answer_header(role_name: str | None, state: WorkflowState | None) -> 
     JSON — or quoted in agent prose — can never fire a run, and the publish
     seam's ``ensure_bot_marker`` leaves the line alone because it already starts
     with the marker.
+
+    ``engine_failed`` (issue #1288) drops the continue token *before* the
+    comment is created: a failed run's comment is a notification, and GitHub
+    fires on the comment as created, so an edit-after-post cannot retract the
+    token.
     """
     role = (role_name or "").strip() or "unknown"
-    header_line = LIVE_HEADER_LINE if state is None else _header_line(state)
+    header_line = _header_line(state, engine_failed=engine_failed)
+    if state is None and not engine_failed:
+        header_line = LIVE_HEADER_LINE
     section = "" if state is None else format_collapsed_section(state)
     return (
         f"{header_line}\n"
@@ -599,6 +628,7 @@ def build_comment_body_parts(
     trigger_author: str = "",
     role_name: str | None = None,
     state: WorkflowState | None = None,
+    engine_failed: bool = False,
 ) -> tuple[str, str]:
     """The posted comment as ``(header, body)``, kept separate for splitting.
 
@@ -608,13 +638,14 @@ def build_comment_body_parts(
     workflow-state JSON and the bot marker, and must land intact on the *first*
     of several comments (issue #913). The header itself is never split.
 
+    ``engine_failed`` (issue #1288) frames the comment as a notification: no
+    continue token on line 1, so a failed run cannot re-trigger the workflow.
+
     Returns:
         ``(header, body)`` where ``header`` is the answer-comment header and
         ``body`` is the fallback/answer content beneath it.
     """
-    return (
-        format_answer_header(role_name, state),
-        _select_fallback_body(
+    body = _select_fallback_body(
             latest_answer=latest_answer,
             final_message=final_message,
             console_log=console_log,
@@ -623,8 +654,11 @@ def build_comment_body_parts(
             trigger_author=trigger_author,
             role_name=role_name,
             recall_count=_posted_recall_count(state),
-        ),
-    )
+        )
+    footer = format_answer_footer(state)
+    if footer:
+        body = f"{body}\n\n{footer}" if body.strip() else footer
+    return (format_answer_header(role_name, state, engine_failed=engine_failed), body)
 
 
 def build_comment_body(
@@ -637,6 +671,7 @@ def build_comment_body(
     trigger_author: str = "",
     role_name: str | None = None,
     state: WorkflowState | None = None,
+    engine_failed: bool = False,
 ) -> str:
     """The posted-comment body: answer-comment header + fallback body.
 
@@ -674,6 +709,7 @@ def build_comment_body(
         trigger_author=trigger_author,
         role_name=role_name,
         state=state,
+        engine_failed=engine_failed,
     )
     return header + body
 

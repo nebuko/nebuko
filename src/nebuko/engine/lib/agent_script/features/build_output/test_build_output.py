@@ -14,6 +14,7 @@ from build_output import (
     _parse_gate_released_env,
     _recall_aware_events,
     _resolve_pin,
+    _started_by_from_env,
     _terminal_turn_answer,
     _write_latest_answer_file,
     apply_gate_lock,
@@ -463,6 +464,23 @@ class TestGateLockArming(unittest.TestCase):
                 _, gate = apply_gate_lock(_completed(), "wf", "plan")
         self.assertIsNone(gate)
 
+    def test_non_gated_step_clears_a_lock_armed_on_another_step(self):
+        """Issue #1301: moving off the gated step resolves its lock."""
+        prior = GateLock(step="plan", consult_rounds=2, last_handoff="context")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_workflow(
+                tmpdir,
+                "wf",
+                "  - name: plan\n    agent: architect\n    human_gate: true\n"
+                "    next: implement\n"
+                "  - name: implement\n    agent: dev\n    next: null\n",
+            )
+            with mock.patch.dict(os.environ, {"WORKFLOWS_DIR": tmpdir}, clear=False):
+                _, gate = apply_gate_lock(
+                    _completed(), "wf", "implement", gate=prior
+                )
+        self.assertIsNone(gate)
+
     def test_release_env_marks_the_lock_released(self):
         """The gate-decision run's own persist is released, not re-armed.
 
@@ -655,6 +673,92 @@ class TestGateLockArming(unittest.TestCase):
         gate = captured["gate"]
         self.assertIsNotNone(gate)
         self.assertEqual(gate.consult_rounds, 1)
+
+
+class TestCrashDoesNotArmTheGate(unittest.TestCase):
+    """A crashed run has nothing to approve, so it must stay resumable."""
+
+    def _gate_after_build(self, *, prior_gate, status):
+        import build_output as bo
+        from types import SimpleNamespace as NS
+        from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
+            OutcomeStatus,
+            RunOutcome,
+        )
+        from nebuko.engine.lib.workflow_state import RunPrefs, WorkflowState
+
+        prior = WorkflowState(
+            workflow="wf", step="context", agent="context", gate=prior_gate
+        )
+        captured = {}
+
+        def _capture_build_state(prev_state, **kwargs):
+            captured.update(kwargs)
+            return NS(run_id=1)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "wf.yaml"), "w", encoding="utf-8") as f:
+                f.write(
+                    "name: wf\n"
+                    'description: "test workflow"\n'
+                    "steps:\n"
+                    "  - name: plan\n    agent: architect\n"
+                    "    human_gate: true\n    next: implement\n"
+                )
+            env = {
+                "WORKFLOWS_DIR": tmpdir,
+                "WORKFLOW_NAME": "wf",
+                "WORKFLOW_STEP": "plan",
+                "ROLE_NAME": "architect",
+                "GATE_CONSULT": "",
+                "GATE_RELEASED": "",
+            }
+            conversation = NS(
+                state=NS(events=[_msg_event("answer")]),
+                id="conv-crash-gate",
+                run_outcome=RunOutcome(status=getattr(OutcomeStatus, status)),
+            )
+            metrics = NS(review_fix_requests=0, to_dict=lambda: {})
+            with mock.patch.object(bo, "get_agent_final_response", return_value="answer"), \
+                 mock.patch.object(bo, "_load_prev_state", return_value=prior), \
+                 mock.patch.object(bo, "_build_issue_info", return_value=None), \
+                 mock.patch.object(bo, "_build_pr_info", return_value=None), \
+                 mock.patch.object(
+                     bo, "_resolve_outcome",
+                     return_value=(_completed(), RunPrefs(), None),
+                 ), \
+                 mock.patch.object(bo, "clear_run"), \
+                 mock.patch.object(bo, "clear_call_agent_run"), \
+                 mock.patch.object(bo, "clear_scaffold_branch_run"), \
+                 mock.patch.object(bo, "clear_complexity_review_run"), \
+                 mock.patch.object(bo, "get_recorded_review_request", return_value=None), \
+                 mock.patch.object(bo, "build_state", side_effect=_capture_build_state), \
+                 mock.patch.object(bo, "split_message", return_value=[]), \
+                 mock.patch.object(bo, "_write_output_files", return_value=None), \
+                 mock.patch.dict(os.environ, env, clear=False):
+                cwd = os.getcwd()
+                os.chdir(tmpdir)
+                try:
+                    bo.build_output(conversation, metrics)
+                finally:
+                    os.chdir(cwd)
+        return captured["gate"]
+
+    def test_a_crash_entering_a_gated_step_arms_nothing(self):
+        self.assertIsNone(self._gate_after_build(prior_gate=None, status="FAILURE"))
+
+    def test_a_crash_keeps_a_lock_that_was_already_armed(self):
+        from nebuko.engine.lib.workflow_state import GateLock
+
+        gate = self._gate_after_build(prior_gate=GateLock(step="plan"), status="FAILURE")
+        self.assertIsNotNone(gate)
+        self.assertTrue(gate.armed())
+
+    def test_a_successful_run_still_arms_the_lock(self):
+        gate = self._gate_after_build(prior_gate=None, status="SUCCESS")
+        self.assertIsNotNone(gate)
+        self.assertEqual(gate.step, "plan")
+        self.assertTrue(gate.armed())
 
 
 class TestIsHumanGateHold(unittest.TestCase):
@@ -2030,6 +2134,33 @@ class TestLoadPrevStateHandoff(unittest.TestCase):
     def test_missing_repo_env_returns_none(self):
         os.environ.pop("REPO_NAME", None)
         self.assertIsNone(load_prev_state_or_recover(fetch_comments=lambda *_a: []))
+
+
+class TestStartedByCapture(unittest.TestCase):
+    """The recorded workflow starter is always a human (issue #1295)."""
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        for key in ("TRIGGER_AUTHOR", "TRIGGER_AUTHOR_LOGIN"):
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+
+    def test_prefers_the_legacy_trigger_author(self):
+        os.environ["TRIGGER_AUTHOR"] = "olivier-norture"
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "nebuko[bot]"
+        self.assertEqual(_started_by_from_env(), "olivier-norture")
+
+    def test_falls_back_to_the_trigger_login(self):
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "olivier-norture"
+        self.assertEqual(_started_by_from_env(), "olivier-norture")
+
+    def test_a_bot_trigger_is_never_recorded(self):
+        os.environ["TRIGGER_AUTHOR"] = "nebuko[bot]"
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "nebuko[bot]"
+        self.assertIsNone(_started_by_from_env())
 
 
 class TestBuildOutputPrevStateIntegration(unittest.TestCase):

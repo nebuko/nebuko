@@ -48,6 +48,44 @@ Read the level from the `COMPLEXITY` environment variable, or infer it from the 
 
 Do not investigate failures that already exist on the base branch.
 
+## Evidence rules
+
+Every factual statement in the report carries one evidence type:
+
+| Type | Means | Counts as proof of |
+|---|---|---|
+| `measured` | You ran a command and quote its output | timing, performance, runtime behaviour, what actually gets loaded or called |
+| `read` | You read it in a file, log or page and cite `path:line` or URL | what the code or doc says |
+| `inferred` | You deduced it without running or reading it directly | nothing: it is a lead for @@architect, not evidence |
+
+1. **Measure claims about time or behaviour.** Reading code is only `inferred` evidence for "X is slow", "Y is loaded at startup" or "Z is called before W". Run the cheapest experiment that settles it, and quote the command and its output. For example: `python -X importtime -c "import pkg"`, a timed run, `python -c "import pkg, sys; print('mod' in sys.modules)"`, a small repro, `git log -S`, or timestamps from a CI log.
+2. **Run the experiment before reading widely.** One timing run usually tells you which files deserve reading.
+3. **Measuring stays read-only.** Never modify tracked files. Send generated artifacts to a scratch directory (`PYTHONPYCACHEPREFIX`, `--out`, `$TMPDIR`), and do not install or upgrade dependencies.
+4. **Compare conditions when they differ.** When results depend on conditions (cold vs warm cache, with vs without a flag), measure each condition and report both numbers.
+5. **Say what you could not verify** (`### NOT VERIFIED`), and report relevant facts nobody asked for (`### SURPRISES`). The request only covers what @@architect knew to ask.
+
+## Claim verification (issue #1250)
+
+When the request carries claim IDs (C1, C2, …), open the report with a verdict per claim, **before** `### FILES FOUND`:
+
+```
+### CLAIM VERIFICATION
+| ID | Verdict | Evidence type | Evidence (URL/path:line/command, fetched date) | Verbatim excerpt |
+|---|---|---|---|---|
+| C1 | confirmed | read | https://…, 2026-05-01 | "…" |
+| C2 | refuted | measured | `python -X importtime -c "import pkg"` | "… 5.35s openhands.sdk" |
+```
+
+Verdicts: `confirmed`, `refuted`, `contested`, `inconclusive`. Evidence types follow the Evidence rules above. A verdict that rests only on `inferred` evidence is `inconclusive`. Ask for evidence fields, not yes/no answers ("list maintained libraries with latest version and date, async support, license, last release").
+
+Source policy:
+- **Versions and package existence:** registry APIs only (`pypi.org/pypi/<pkg>/json`, `registry.npmjs.org/<pkg>`, `gh api repos/<o>/<r>/releases/latest`).
+- **Every package the plan names:** check the registry for existence, and record exact name, maintainer, last release.
+- **Pricing and limits:** the vendor's official page only, with the fetch date. JS-rendered pages `curl` cannot read are `inconclusive`, never guessed.
+- **Conflicting sources:** report `contested` and list both sides. A claim resting on a single source is flagged `single-source`.
+
+The Forbidden list still applies to *recommendations*: a verdict on a factual claim is allowed; choosing an approach is not.
+
 ## Report Template (strict)
 
 Use exactly these parts, in this order, and add nothing else.
@@ -71,9 +109,15 @@ Each section content **must** be insude a <details> </details> block.
      [{"url": "https://...", "date": "2026-01-01T00:00:00Z", "chunks": ["verbatim excerpt"], "summary": "why it matters", "score": 0.8}]
      ```
      `date` is the ISO-8601 UTC fetch date and `chunks` are verbatim, unedited excerpts. The JSON must be valid: no comments, no trailing commas, no prose inside the fence.
-6. **`### OTHER FILES`**
+6. **`### MEASUREMENTS`** (required whenever you ran an experiment; otherwise write `None run` and why none was needed)
+   One entry per experiment: the exact command, the condition (e.g. cold vs warm cache), and the verbatim output, trimmed to the relevant lines.
+7. **`### SURPRISES`**
+   Facts you met that bear on the request but were not asked for, each with its evidence type and source. State facts only, never what to do about them. Write `None` if there are none.
+8. **`### NOT VERIFIED`**
+   Requested facts or claims you could not settle, and why (no access, JS-rendered page, could not reproduce). Write `None` if everything was settled.
+9. **`### OTHER FILES`**
    An italic one-liner, then a brief list of files examined and found irrelevant.
 
 ### Forbidden
 
-Never write ROOT CAUSE, ANALYSIS, FIX, SOLUTION, RECOMMENDATION, PROPOSED CHANGES, or any section that explains why code is broken or proposes changes. Even if you know the answer, report only locations and snippets.
+Never write ROOT CAUSE, ANALYSIS, FIX, SOLUTION, RECOMMENDATION, PROPOSED CHANGES, or any section that explains why code is broken or proposes changes. Even if you know the answer, report only locations, snippets and measurements. A measured number is a fact, not an analysis.

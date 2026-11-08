@@ -126,6 +126,11 @@ steps:
   - name: scaffold_review
     agent: review
     prompt: |
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry, a missing diff or missing commits are an ENGINE
+      failure (the run crashed after publishing; the branch was never pushed),
+      not agent fabrication — report it as such and do not route it to `plan`;
+      ask for the step to be re-run instead.
       The `scaffold` step materialized the human-approved `<planWorkflow>` block
       into `tmp_impl/workflow.yaml` (and `tmp_impl/skills/step_N.md`) on the
       feature branch. Verify the scaffold faithfully materializes the approved
@@ -157,6 +162,12 @@ steps:
 
   - name: final_review
     agent: review
+    prompt: |
+      Engine facts first: if the previous step's context carries an
+      `engine_failure` entry, a missing diff or missing commits are an ENGINE
+      failure (the run crashed after publishing; the branch was never pushed),
+      not agent fabrication — report it as such and do not route it to `plan`;
+      ask for the step to be re-run instead.
     conditions:
       - on_result: approved
         next: null

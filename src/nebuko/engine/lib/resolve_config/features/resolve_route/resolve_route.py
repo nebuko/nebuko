@@ -37,6 +37,7 @@ from nebuko.engine.lib.workflow_state import (
     FunctionCall,
     GateDecision,
     GateLock,
+    GateStatus,
     HoldKind,
     IncompleteReason,
     MAX_CONSULT_ROUNDS,
@@ -79,8 +80,52 @@ __all__ = [
 # Regex for safe workflow names: alphanumeric, hyphens, underscores only
 _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-# Maximum consecutive same-agent loops before blocking (loop safeguard)
+# Maximum consecutive same-agent loops before blocking (loop safeguard).
 MAX_LOOP_COUNT = 5
+
+# Maximum consecutive agent-declared ``rejected`` verdicts a gated step may
+# route automatically (issue #1274). Exceeding the cap falls back to the human
+# hold so a backward reject cycle cannot spin at full LLM cost without a human
+# ping. The counter is derived from the persisted history (see
+# ``_consecutive_auto_rejects``) so a crash mid-route cannot reset it.
+MAX_CONSECUTIVE_AUTO_REJECTS = 3
+
+
+def _consecutive_auto_rejects(state, step_name):
+    """Consecutive auto-reject routes for ``step_name`` (issue #1274).
+
+    Counted from the persisted history:
+
+    - each completed run of ``step_name`` ending ``rejected`` counts;
+    - an ``approved`` verdict on the same step resets the count;
+    - a human gate decision on the step also resets it: GitHub comment ids are
+      monotonic, so history entries older than the latest recorded decision
+      (from an identity-verified human command) stop the backward scan.
+    """
+    if state is None or not step_name:
+        return 0
+    decision_ids = [
+        d.comment_id
+        for d in (state.gate_history or [])
+        if d.target_step == step_name and d.comment_id
+    ]
+    latest_decision_id = max(decision_ids) if decision_ids else None
+    count = 0
+    for entry in reversed(state.history or []):
+        if entry.step != step_name:
+            continue
+        if (
+            latest_decision_id is not None
+            and entry.comment_ids
+            and max(entry.comment_ids) < latest_decision_id
+        ):
+            break
+        appreciation = getattr(entry.turn_outcome, "appreciation", None)
+        if appreciation == Appreciation.REJECTED:
+            count += 1
+        elif appreciation == Appreciation.APPROVED:
+            break
+    return count
 
 
 def resolve_next_agent_from_workflow(
@@ -188,8 +233,11 @@ def _resolve_resume_path(
     # *before* the verdict check: the gate is engine-owned run state, so the
     # agent's own ``approved`` verdict no longer marks the step as held.
     if _gate_pending(prev_state):
+        # The stop is a deliberate hold, not a failure: without SKIP_KIND the
+        # guard phase classified it as CONFIG_ERROR and exited 20 (issue #1003).
         return {
             "SKIP_AGENT": "true",
+            "SKIP_KIND": "human_gate_hold",
             "REASON": (
                 f"resume: step '{prev_state.step}' is held by a human gate — "
                 "use `/nebuko approve gate` or `/nebuko reject gate` to release it"
@@ -349,8 +397,16 @@ def _gate_pending(prev_state: Optional["WorkflowState"]) -> bool:
     root :class:`GateLock`, which only an identity-verified
     ``/nebuko approve gate`` releases. The agent's own verdict is left intact
     (``approved`` means the work is done — it just cannot advance the step).
+
+    The lock only ever holds the step it was armed on (issue #1301): once the
+    workflow has moved on — by a direct agent call, ``--step`` or any other
+    route — the stale lock must not park a step that declares no gate.
     """
-    return _armed_gate(prev_state) is not None
+    gate = _armed_gate(prev_state)
+    if gate is None:
+        return False
+    current = _recover_current_step(prev_state)
+    return not gate.step or not current or gate.step == current
 
 
 def _human_gate_hold_result(step: str, note: str = "") -> dict:
@@ -377,6 +433,113 @@ def _human_gate_hold_result(step: str, note: str = "") -> dict:
         "SKIP_KIND": "human_gate_hold",
         "REASON": reason,
     }
+
+
+def _gate_step_has_rejected_edge(
+    step_name: str,
+    wf_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> bool:
+    """True when the workflow declares an ``on_result: rejected`` edge."""
+    if not wf_name or not step_name:
+        return False
+    try:
+        wf_def = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    except Exception:
+        return False
+    step = _find_step(wf_def, step_name)
+    if step is None:
+        return False
+    for condition in getattr(step, "conditions", None) or []:
+        if getattr(condition, "on_result", "") == "rejected":
+            return True
+    return False
+
+
+def _reject_edge_target(
+    step_name: str,
+    wf_name: str,
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[str]:
+    """Target step of the declared ``on_result: rejected`` edge, or None."""
+    try:
+        wf_def = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)
+    except Exception:
+        return None
+    step = _find_step(wf_def, step_name)
+    if step is None:
+        return None
+    for condition in getattr(step, "conditions", None) or []:
+        if getattr(condition, "on_result", "") == "rejected":
+            return condition.next
+    return None
+
+
+def _release_armed_gate(prev_state: "WorkflowState", armed: "GateLock") -> None:
+    """Consume the armed gate lock and persist the released state."""
+    # Mutate in place: the state is the persisted document, so the release
+    # must survive it (the state model is not frozen). The caller serializes
+    # this state, which persists the released lock.
+    prev_state.gate = armed.model_copy(update={"status": GateStatus.RELEASED})
+
+
+
+# @stub-protected: signature defined by architect — do not modify
+def _gate_reject_verdict_route(
+    prev_state: "WorkflowState",
+    armed: "GateLock",
+    outcome: "TurnOutcome",
+    workflows_dir: str,
+    local_workflows_dir: Optional[str],
+) -> Optional[dict]:
+    """Route a rejected verdict via the conditional reject edge, lock released."""
+    if outcome is None or outcome.appreciation is not Appreciation.REJECTED:
+        return None
+    wf_name = prev_state.workflow or ""
+    step_name = prev_state.step or ""
+    if not wf_name or not step_name:
+        return None
+    if armed.step and armed.step != step_name:
+        return None
+    if not _gate_step_has_rejected_edge(step_name, wf_name, workflows_dir, local_workflows_dir):
+        return None
+    if _consecutive_auto_rejects(prev_state, step_name) >= MAX_CONSECUTIVE_AUTO_REJECTS:
+        print(
+            f"Auto-reject cap reached ({MAX_CONSECUTIVE_AUTO_REJECTS} consecutive); "
+            f"holding gated step '{step_name}' for a human decision",
+            file=sys.stderr,
+        )
+        return None
+    target = _reject_edge_target(step_name, wf_name, workflows_dir, local_workflows_dir)
+    if not target:
+        return None
+    wf_result = resolve_next_from_workflow(
+        wf_name,
+        step_name,
+        workflows_dir,
+        branch_result="rejected",
+        parent_workflow=prev_state.parent_workflow or "",
+        parent_workflow_step=prev_state.parent_workflow_step or "",
+        local_workflows_dir=local_workflows_dir,
+        scaffold_branch=prev_state.scaffold_branch,
+        history=prev_state.history,
+    )
+    if wf_result is None or wf_result.kind in (
+        RouteKind.DECLARED_FINISH,
+        RouteKind.UNRESOLVED,
+    ):
+        return None
+    if wf_result.skip_agent:
+        return None
+    config = _gate_base_config(prev_state)
+    _apply_route_resolution(config, wf_result, prev_state)
+    if not config.get("task") and not config.get("run_script"):
+        return None
+    if armed.step and armed.step == step_name:
+        config["config_gate_released"] = "true"
+    return config
 
 
 def _armed_gate(prev_state: Optional["WorkflowState"]) -> Optional[GateLock]:
@@ -721,6 +884,12 @@ def _callback_return_target(
     wf_name = (getattr(prev_state, "workflow", "") or "").strip()
     if not wf_name:
         return (callback, "")
+    # A consult from an armed gate returns to the gated step (issue #1301): the
+    # callee ran at its own step, but the caller's position is the gate, which
+    # stays armed. Resolving forward from the callee's step would lose it.
+    gate = _armed_gate(prev_state)
+    if gate is not None and gate.step:
+        return (callback, gate.step)
     target_step = _resolve_callee_step(
         wf_name,
         _recover_current_step(prev_state),
@@ -1130,14 +1299,19 @@ def _resolve_outcome_path(
     # workflow *advance*, never a delegation (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
         if consult is not None:
             return consult
+        reject_route = _gate_reject_verdict_route(
+            prev_state, armed, outcome, workflows_dir, local_workflows_dir
+        )
+        if reject_route is not None:
+            return reject_route
         return _human_gate_hold_result(
-            prev_state.step or "", _consult_exhausted_note(prev_state)
+            armed.step or prev_state.step or "", _consult_exhausted_note(prev_state)
         )
 
     config = _route_config_from_prefs(prev_state, prefs)
@@ -2266,14 +2440,19 @@ def _resolve_bot_fallback_path(
     # A pending agent-to-agent hand-off is routed first (issue #1003).
     if _gate_pending(prev_state):
         armed = _armed_gate(prev_state)
-        assert armed is not None  # _gate_pending == _armed_gate is not None
+        assert armed is not None  # a pending gate always has an armed lock
         consult = _resolve_gate_consult(
             prev_state, armed, workflows_dir, local_workflows_dir
         )
         if consult is not None:
             return consult
+        reject_route = _gate_reject_verdict_route(
+            prev_state, armed, outcome, workflows_dir, local_workflows_dir
+        )
+        if reject_route is not None:
+            return reject_route
         return _human_gate_hold_result(
-            getattr(prev_state, "step", "") or "",
+            armed.step or getattr(prev_state, "step", "") or "",
             _consult_exhausted_note(prev_state),
         )
 

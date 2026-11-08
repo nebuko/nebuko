@@ -200,6 +200,7 @@ def build_state(
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
         base_gate: Optional[GateLock] = None
+        base_git = None
         base_complexity_policy: Optional[ComplexityPolicy] = None
         base_thread: list[ThreadRecord] = []
     else:
@@ -219,6 +220,7 @@ def build_state(
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
         base_gate = prev_state.gate
+        base_git = prev_state.git
         base_complexity_policy = prev_state.complexity_policy
         base_thread = list(prev_state.thread)
 
@@ -287,8 +289,10 @@ def build_state(
 
     # Workflow starter (issue #795): captured once, on the first run, then
     # carried forward verbatim. A later (chained, bot-triggered) run must not
-    # re-point the human ping at its own trigger author.
-    new_started_by = started_by if prev_state is None else base_started_by
+    # re-point the human ping at its own trigger author. A previous state that
+    # never recorded one adopts the first human starter it is given (#1295),
+    # so a value missed on the first run does not stay missing forever.
+    new_started_by = started_by if prev_state is None else (base_started_by or started_by)
 
     # Workflow provenance (issue #862): the pinned ref of the reusable workflow
     # that defined this run, from ``job.workflow_ref``. A run that carries the
@@ -402,6 +406,7 @@ def build_state(
         gate_decision=new_gate_decision,
         gate_history=new_gate_history,
         gate=new_gate,
+        git=base_git,
         complexity_policy=new_complexity_policy,
         thread=thread if thread is not None else base_thread,
     )

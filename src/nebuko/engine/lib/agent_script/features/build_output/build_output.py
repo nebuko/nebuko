@@ -330,6 +330,11 @@ def resolve_post_decision_gate(  # @stub-protected: signature defined by archite
       and the re-run's completion raises a new one.
     - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).
     - otherwise -> gate unchanged.
+
+    When no gate command rode along but ``gate_released`` is set (the auto
+    reject-verdict route of issue #1274), the armed lock is consumed on the
+    routed edge so the dispatched run is not re-parked; the gate re-arms
+    naturally when the gated step completes again (``apply_gate_lock``).
     """
     if decision is not None:
         if (
@@ -340,6 +345,9 @@ def resolve_post_decision_gate(  # @stub-protected: signature defined by archite
             return GateLock(step=workflow_step)
         if gate_released and gate is not None:
             return gate.model_copy(update={"status": GateStatus.RELEASED})
+        return gate
+    if gate_released and gate is not None:
+        return gate.model_copy(update={"status": GateStatus.RELEASED})
     return gate
 
 
@@ -510,7 +518,11 @@ def apply_gate_lock(
         root-level :class:`GateLock` (``None`` when this step is not gated).
     """
     if not _load_gated_step_def(workflow_name, workflow_step):
-        return outcome, gate
+        # Moving off the gated step resolves its lock (issue #1301): a lock
+        # armed for another step must not survive into an ungated one, where
+        # it would park a step that declares no gate and carry the consult
+        # budget across steps.
+        return outcome, None
     if gate is not None and gate.step == workflow_step and gate.armed():
         # A lock already armed for this step is preserved verbatim so a re-run
         # cannot reset the consult budget; a *released* lock (the human's
@@ -593,6 +605,26 @@ def _derive_phase(workflow_step: str) -> str:
     if "review" in tokens:
         return "review"
     return ""
+
+
+def _started_by_from_env() -> Optional[str]:
+    """The workflow starter's login, ignoring a bot trigger (issue #1295).
+
+    ``TRIGGER_AUTHOR`` is only exported by the legacy normalizer step, so a
+    chained run on the engine path carries just ``TRIGGER_AUTHOR_LOGIN``. Both
+    are read, and a bot login is never recorded: the field is the target of the
+    engine's human notices, so capturing the bot there would ping it forever
+    (issue #1295).
+    """
+    from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
+        is_bot_login,
+    )
+
+    for key in ("TRIGGER_AUTHOR", "TRIGGER_AUTHOR_LOGIN"):
+        login = (os.environ.get(key) or "").strip()
+        if login and not is_bot_login(login):
+            return login
+    return None
 
 
 def _build_issue_info() -> IssueInfo | None:
@@ -1356,12 +1388,23 @@ def build_output(
         os.environ.get("SOFT_RETRY_ATTEMPT", "").strip().lower()
         in ("true", "1", "yes")
     )
-    turn_outcome, gate = apply_gate_lock(
-        turn_outcome,
-        workflow_name=workflow_name,
-        workflow_step=workflow_step,
-        gate=prev_state.gate if prev_state is not None else None,
-    )
+    # A crashed run has nothing to approve: it carries the previous lock forward
+    # but never arms a new one, so `/nebuko resume` can re-run the step.
+    gate_consult = _parse_gate_consult_env()
+    if run_outcome is not None and run_outcome.status is OutcomeStatus.FAILURE:
+        gate = prev_state.gate if prev_state is not None else None
+    elif gate_consult:
+        # This run is the delegated consult (issue #1003): it executes at the
+        # callee's step, so the caller's lock is carried forward untouched —
+        # dropping it here would let the workflow advance past the gate.
+        gate = prev_state.gate if prev_state is not None else None
+    else:
+        turn_outcome, gate = apply_gate_lock(
+            turn_outcome,
+            workflow_name=workflow_name,
+            workflow_step=workflow_step,
+            gate=prev_state.gate if prev_state is not None else None,
+        )
     # The release is folded into ``resolve_post_decision_gate`` (issue #1178):
     # it is the single authority over the lock, so a rejected-with-feedback
     # decision re-arms a fresh gate even though ``resolve_route`` sets
@@ -1374,7 +1417,6 @@ def build_output(
         _parse_gate_decision_env(),
         _parse_gate_released_env(),
     )
-    gate_consult = _parse_gate_consult_env()
     if gate_consult and gate is not None:
         # This run is the delegated consult (issue #1003): spend one round from
         # the root lock so the persisted ``consult_rounds`` actually counts the
@@ -1404,6 +1446,15 @@ def build_output(
         context_updates["recovery_log"] = ""
         logger.info("Cleared stale recovery log from previous failed run")
 
+    # Engine-failure facts (issue #1288): a green run clears the previous
+    # run's failure record, the same way the recovery log is cleared — a
+    # stale entry would otherwise ride ``build_state`` into every later
+    # step's state and keep marking healthy runs as failed.
+    if not is_graceful_timeout and final_message and not is_malformed_final_message(final_message):
+        if prev_state and prev_state.current_context and "engine_failure" in prev_state.current_context:
+            context_updates["engine_failure"] = ""
+            logger.info("Cleared stale engine-failure record from previous failed run")
+
     # ── Build workflow state ─────────────────────────────────────
     inject_context_str = os.environ.get("INJECT_CONTEXT", "true")
     inject_context = inject_context_str.lower() not in ("false", "0", "no")
@@ -1428,7 +1479,7 @@ def build_output(
         prefs=prefs,
         function_call=function_call,
         callback=callback,
-        started_by=os.environ.get("TRIGGER_AUTHOR") or None,
+        started_by=_started_by_from_env(),
         inject_context=inject_context,
         pin=pin,
         scaffold_branch=scaffold_branch,

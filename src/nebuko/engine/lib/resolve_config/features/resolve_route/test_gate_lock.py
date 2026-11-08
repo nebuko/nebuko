@@ -316,6 +316,28 @@ class TestGateConsultRouting(unittest.TestCase):
         self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
         self.assertNotEqual(cfg.get("task"), "dev")
 
+    def test_a_lock_armed_on_another_step_never_holds_an_ungated_step(self):
+        """Issue #1301: a stale lock must not park a step that has no gate.
+
+        The workflow moved on from the gated step (direct agent call or
+        ``--step``) without releasing the lock; the step now current declares
+        no gate, so routing must advance normally instead of holding.
+        """
+        state = _gated_state(step="implement", agent="dev", gate=GateLock(step="plan"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_outcome_path(state, tmpdir)
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["task"], "context")
+
+    def test_the_hold_names_the_gated_step_not_the_current_one(self):
+        """Issue #1301: the hold message must name the step that has the gate."""
+        state = _gated_state()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_outcome_path(state, tmpdir)
+        self.assertIn("human_gate:plan", cfg["REASON"])
+
     def test_armed_gate_holds_a_verdict_bearing_completion(self):
         """A completing verdict must not advance past an armed gate.
 
@@ -546,6 +568,39 @@ class TestGateReleasePrecedence(unittest.TestCase):
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
         self.assertNotEqual(cfg.get("config_gate_released"), "true")
+
+
+class TestGateLockReleaseOnStepChange(unittest.TestCase):
+    """Leaving the gated step by any route resolves its lock (issue #1301)."""
+
+    def test_run_step_to_another_step_is_not_held_by_the_old_lock(self):
+        """``--step`` enters the requested step instead of the stale gate hold.
+
+        The state still carries the lock armed on ``plan``; a human
+        ``/nebuko run workflow --step implement`` moves the workflow off the
+        gated step, so the resolution must dispatch ``implement`` and never
+        report the gate hold that names ``plan``.
+        """
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _resolve_human_path,
+        )
+
+        state = _gated_state()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_human_path(
+                "/nebuko run workflow --name default --step implement",
+                None,
+                None,
+                tmpdir,
+                prev_state=state,
+                workflow_command=parse_workflow_command(
+                    "/nebuko run workflow --name default --step implement"
+                ),
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["task"], "dev")
+        self.assertEqual(cfg["config_step"], "implement")
 
 
 class TestGateArmingFromTheWorkflowDefinition(unittest.TestCase):

@@ -28,6 +28,7 @@ import pytest
 from nebuko.adapters.base import PlatformAdapter
 from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import ExitCode
+from nebuko.engine.lib.resolve_workflow import STEP_PROMPT_PATH, step_prompt_path
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import Engine
 
@@ -80,6 +81,10 @@ def _prompt_selection(decision: Mapping[str, Any]) -> dict:
     selection: dict[str, str] = {}
     for key, name in (("PROMPT_LOCATION", "prompt"), ("STEP_PROMPT_FILE", "step_prompt")):
         location = decision.get(key) or ""
+        if location == step_prompt_path():
+            # Each test gets a private prompt dir (repo-root conftest.py); the
+            # recording holds the documented production path.
+            location = STEP_PROMPT_PATH
         path = Path(location) if location else None
         # Step prompts are rendered to a temp file outside the checkout.
         selection[name] = (

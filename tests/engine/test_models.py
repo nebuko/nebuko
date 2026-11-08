@@ -93,6 +93,15 @@ class TestExitCode:
     def test_is_an_int_enum_so_it_can_be_returned_as_a_process_code(self):
         assert int(ExitCode.HOLD) == 10
 
+    def test_distinct_members_are_not_equal(self):
+        members = list(ExitCode)
+        for left in members:
+            for right in members:
+                if left is right:
+                    assert left == right
+                else:
+                    assert left != right
+
 
 class TestRunOutcome:
     def test_field_order_matches_the_frozen_contract(self):

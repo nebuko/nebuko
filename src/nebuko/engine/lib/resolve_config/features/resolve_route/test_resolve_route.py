@@ -732,6 +732,24 @@ class TestCallbackReturnTarget:
         state, wf_dir = self._state(tmp_path, "architect")
         assert _callback_return_target(state, None, wf_dir) == ("architect", "answer")
 
+    def test_consult_returns_to_the_gated_step(self, tmp_path):
+        """Issue #1301: a consult from an armed gate returns to that gate."""
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
+        from nebuko.engine.lib.workflow_state import GateLock, WorkflowState
+
+        (tmp_path / "cb.yaml").write_text(_CALLBACK_WF_YAML)
+        state = WorkflowState(
+            workflow="cb",
+            step="build",
+            agent="dev",
+            callback="architect",
+            gate=GateLock(step="context"),
+        )
+        assert _callback_return_target(state, None, str(tmp_path)) == (
+            "architect",
+            "context",
+        )
+
     def test_no_callback_returns_none(self, tmp_path):
         from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import _callback_return_target
 
