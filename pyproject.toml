@@ -48,19 +48,29 @@ hook-dirs = "nebuko.engine._pyinstaller_hooks:hook_dirs"
 dev = [
     "pytest>=8",
     "pytest-mock>=3",
+    "pytest-xdist>=3",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-# The caller workflow is the one packaged artifact: no existing tag contains it,
-# so it cannot be fetched at the pinned ref like the provider templates.
-"nebuko.engine.init" = ["templates/*.yaml", "templates/*.yaml.j2"]
+# The packaged init artifacts (manifest + caller workflow) live in
+# nebuko.engine.init.defaults. The caller workflow ships here because no tag
+# before PR 1 (issue #1272) contains it; the first release tag cut after PR 1
+# merges is a precondition for PR 2's Worker, which fetches both files at the
+# resolved release tag.
+"nebuko.engine.init" = ["templates/*.yaml.j2"]
+"nebuko.engine.init.defaults" = ["*.yaml", "*.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests", "src/nebuko/engine/lib"]
+# `slow` tests each spawn a fresh interpreter that imports the agent SDK (~10s).
+# The fast run skips them: `uv run pytest -n 4 -m "not slow"`. CI runs everything.
+markers = [
+    "slow: spawns a fresh interpreter that imports the agent SDK (~10s each); skipped by the fast run",
+]
 
 [tool.mypy]
 # The engine library is a real subpackage (issue #1165): type checkers resolve

@@ -134,7 +134,10 @@ class SetupHost(ABC):
 
 
 class Prompter(Protocol):
-    """The one prompt ``run_init`` needs; ``InitPrompter`` implements it."""
+    """The prompts ``run_init`` needs; ``InitPrompter`` implements it."""
 
     # @stub-protected
     def confirm(self, label: str, default: bool = False) -> bool: ...
+
+    # @stub-protected
+    def ask_secret(self, name: str) -> str: ...

@@ -89,6 +89,7 @@ def _console_handlers_after_sdk_import(*, configure_first: bool, **env: str) -> 
 
 
 @pytest.mark.skipif(not _sdk_available(), reason="needs the runtime extra")
+@pytest.mark.slow
 class TestLoggingParity:
     """configure_logging + late SDK import == the old early SDK import."""
 

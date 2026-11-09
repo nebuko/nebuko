@@ -23,7 +23,13 @@ uv run pytest                              # everything (both testpaths)
 uv run pytest tests                        # tests/ only (fast gate)
 uv run pytest src/nebuko/engine/lib        # runtime engine/lib unit tests
 uv run pytest tests src/nebuko/engine/lib  # the documented full command
+uv run pytest -n 4 -m "not slow"           # fast run: ~35s instead of ~150s
 ```
+
+The fast run parallelises with `pytest-xdist` and skips the `slow` tests (each
+spawns a fresh interpreter that imports the agent SDK, ~10s apiece). It is for
+inner loops and for investigation oracles; CI and the documented full command
+still run everything, so use the full command before you declare a change done.
 
 `main` is expected to be green on both suites (they only need `defaults/` in the
 checkout). CI runs the full command on every pull request
@@ -53,6 +59,42 @@ Test-writing pitfalls that have broken `main` before:
   path *under a regular file*, not a missing top-level directory.
 - Red spec tests (`# @stub-protected`) must not be merged to `main` without
   their implementation; if the feature is dropped, delete the tests.
+- Tests run in parallel (`-n`), so they must not share a fixed path. The step
+  prompt file (`/tmp/step_prompt.md`, `STEP_PROMPT_PATH`) is redirected per
+  test by the autouse fixture in the repo-root `conftest.py`
+  (`NEBUKO_STEP_PROMPT_DIR`): read it through `step_prompt_path()`, never as a
+  literal. Use `tmp_path` for any other file a test writes.
+
+## Debugging engine decisions (replay helper)
+`src/nebuko/engine/lib/replay.py` replays the engine's **per-invocation routing
+and complexity decisions** from a recorded state — no LLM, no agent, no GitHub
+writes. Use it instead of writing scratch `/tmp/*.py` scripts that extract the
+`WORKFLOW_STATE` block and hand-build `prev_state` / `turn_outcome` inputs.
+
+```bash
+# from an issue (fetches body + comments; needs --repo or GITHUB_REPOSITORY)
+uv run python -m nebuko.engine.lib.replay --issue 1299 --entry 14
+# from a saved state, fully offline
+uv run python -m nebuko.engine.lib.replay --state state.json --all-entries
+uv run python -m nebuko.engine.lib.replay --state state.json --json
+```
+
+One row per invocation: step, agent, base tier, recorded vs replayed delta,
+governor trigger + rationale, final `CONFIG_COMPLEXITY`, next step/agent. The
+header prints the policy and env overrides used. Rules of thumb:
+
+- A `recΔ` / `replayΔ` mismatch, or a `*` on the step name, means the replay
+  disagrees with the live run — report it, do not paper over it.
+- The replay uses the **checkout's** policy; if the state's pinned policy
+differs the header warns and the tier comparison is inconclusive.
+- Entry 0 is the seed invocation and has no resolution; triggers for later
+  entries are reconstructed (`[resume trigger]` / `[gate trigger]`).
+- `--state` never touches the network, so it works as an offline regression
+  harness: fixtures live in `src/nebuko/engine/lib/fixtures/` and the run-19
+  state from #1299 is pinned by `TestRun19Regression`.
+
+Full reference: [docs/replay.md](docs/replay.md). Tests:
+`uv run pytest src/nebuko/engine/lib/test_replay.py`.
 
 ## Where workflows live
 Workflow definitions ship in `defaults/workflows/` (e.g. `default.yaml`); per-repo

@@ -238,6 +238,22 @@ def _step_output_json(step: object) -> str:
     return output.model_dump_json()
 
 
+#: Default location of the step prompt file the resolver emits as
+#: ``STEP_PROMPT_FILE`` (issue #551). A fixed path is right on a CI runner
+#: (one resolution at a time); tests set ``STEP_PROMPT_DIR_ENV`` per test so
+#: parallel workers never share it.
+STEP_PROMPT_PATH = "/tmp/step_prompt.md"
+STEP_PROMPT_DIR_ENV = "NEBUKO_STEP_PROMPT_DIR"
+
+
+def step_prompt_path() -> str:
+    """Where the step prompt file is written (``STEP_PROMPT_PATH`` by default)."""
+    override = os.environ.get(STEP_PROMPT_DIR_ENV)
+    if not override:
+        return STEP_PROMPT_PATH
+    return os.path.join(override, os.path.basename(STEP_PROMPT_PATH))
+
+
 def _write_step_prompt_file(prompt: str | None) -> str:
     """Write a non-empty step prompt to a temp file; return the path or ''.
 
@@ -245,13 +261,13 @@ def _write_step_prompt_file(prompt: str | None) -> str:
     RESOLVE_OUTPUT protocol, so the content is written to a file and only
     the path is emitted (issue #551, same pattern as PROMPT_LOCATION).
     """
+    path = step_prompt_path()
     if not prompt or not prompt.strip():
         # Remove any stale file from a previous resolution on this runner.
-        path = "/tmp/step_prompt.md"
-        if os.path.exists(path):
-            os.remove(path)
+        # ``missing_ok``: an exists()-then-remove() pair raced with another
+        # process deleting the file.
+        Path(path).unlink(missing_ok=True)
         return ""
-    path = "/tmp/step_prompt.md"
     with open(path, "w") as f:
         f.write(prompt)
     return path

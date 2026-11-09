@@ -53,6 +53,8 @@ llms:
   deepseek-4_1-flash:
     model_path: "mistral/deepseek-v4-1-flash-1017"
     provider: "${providers.mistral}"
+    temperature: 1.0
+    top_p: 1.0
     input_price: 0.3
     output_price: 1.2
     cache_read_price: 0.007
@@ -122,7 +124,6 @@ agents:
   dev:
     model: "${llms.deepseek-4_1-flash}"
     role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
-    temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills:
       - discover: ["complexity", "posting-contract"]
@@ -134,7 +135,6 @@ agents:
   context:
     model: "${llms.deepseek-4_1-flash}"
     role: "Read-only context collector — gathers and compiles codebase facts for other agents."
-    temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
     skills:
       - inject: ["call-agent", "context-research"]
