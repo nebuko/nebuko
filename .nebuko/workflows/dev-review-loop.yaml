@@ -1,7 +1,8 @@
 # Dev-Review Loop Workflow (this repo's override of defaults/workflows/)
 #
 # The engine produces the diff and test results, so review gets evidence the
-# agent didn't write. Each script step runs in its own engine run and checkout.
+# agent didn't write. Each script step runs in its own engine run, on the
+# session branch the engine checks out (`checkout: session`, the default).
 
 name: dev-review-loop
 description: "Execute a single plan step, then review it with an engine-run diff and test results"
@@ -18,7 +19,6 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           git --no-pager diff --stat origin/main...HEAD &&
           git --no-pager diff origin/main...HEAD
     # Default edges: a failed command is evidence for review, not a stop.
@@ -32,7 +32,6 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf
       timeout_minutes: 20
     conditions:

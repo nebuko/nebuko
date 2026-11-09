@@ -80,6 +80,7 @@ from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
     GitActionStatus,
     GitInfo,
 )
+from nebuko.engine.lib.config import InputMaterializationError
 from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
@@ -930,6 +931,25 @@ class Engine:
         reports ``branch: none``. ``workflow`` keeps today's behaviour. An
         unreachable branch fails the run here, before the command executes.
         """
+        checkout, failure = self._resolve_evidence_checkout(mode)
+        if failure:
+            log.error("[phase:action] evidence checkout failed: %s", failure)
+            return None, self._evidence_failure_outcome(
+                f"evidence checkout failed: {failure}", phases
+            )
+        return checkout, None
+
+    def _resolve_evidence_checkout(
+        self, mode: str
+    ) -> tuple[evidence_checkout.EvidenceCheckout | None, str]:
+        """Resolve the evidence checkout; ``(checkout, "")`` or ``(None, detail)``.
+
+        The branch comes from ``current_context["dev_branch"]``, which
+        ``_record_scaffold_branch`` persists after a run scaffolded one. A state
+        without it is a first run (no agent has pushed yet), not an unreachable
+        branch: session mode then runs on the workflow ref and reports
+        ``branch: none``.
+        """
         state = self._previous_state()
         branch = ""
         if state is not None and mode == "session":
@@ -937,11 +957,9 @@ class Engine:
         checkout = evidence_checkout.resolve_evidence_checkout(
             self._caller_root(), self._session_env(), mode=mode, branch=branch
         )
-        if checkout.ok:
-            return checkout, None
-        detail = f"evidence checkout failed: {checkout.detail}"
-        log.error("[phase:action] %s", detail)
-        return None, self._evidence_failure_outcome(detail, phases)
+        if not checkout.ok:
+            return None, checkout.detail
+        return checkout, ""
 
     def _evidence_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
         """Terminal outcome for an unreachable evidence checkout (issue #1327).
@@ -2288,10 +2306,10 @@ class Engine:
         """
         if not any(_binding_source(b) == "exec" for b in step_inputs.consumer.values()):
             return None
-        checkout, _failure = self._evidence_checkout("session", [])
+        checkout, failure = self._resolve_evidence_checkout("session")
         if checkout is None:
             raise InputMaterializationError(
-                "could not check out the session branch for exec inputs"
+                f"evidence checkout failed: {failure}"
             )
         return str(self._caller_root())
 

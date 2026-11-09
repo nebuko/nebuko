@@ -50,11 +50,14 @@ def current_checkout(repo_root) -> EvidenceCheckout:
     """Report the checkout as it stands — the ``checkout: workflow`` mode.
 
     Nothing is fetched or moved: the command runs on the workflow's own ref,
-    exactly as before issue #1327.
+    exactly as before issue #1327. Reporting is best-effort — a workspace that
+    is not a git checkout still runs the command, it just reports no commit —
+    because this mode must keep today's behaviour exactly.
     """
     head = _git(repo_root, ["rev-parse", "HEAD"])
     if head is None:
-        return EvidenceCheckout(ok=False, detail=f"{repo_root} is not a git checkout")
+        logger.debug("evidence checkout: %s is not a git checkout", repo_root)
+        return EvidenceCheckout(ok=True)
     branch = _git(repo_root, ["rev-parse", "--abbrev-ref", "HEAD"]) or ""
     return EvidenceCheckout(
         ok=True,
@@ -79,7 +82,7 @@ def resolve_evidence_checkout(
     """
     if mode != "session" or not branch:
         current = current_checkout(repo_root)
-        if current.ok and mode == "session":
+        if mode == "session":
             # No branch yet: the workflow ref, reported as ``branch: none``.
             return EvidenceCheckout(ok=True, branch="", head_sha=current.head_sha)
         return current

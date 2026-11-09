@@ -54,7 +54,6 @@ class TestTheOracleIsEngineRun:
         step = _step(definition, "oracle_present")
         assert step.agent is None and step.script is not None
         text = _script_text(step)
-        assert "use-session-branch.sh" in text
         assert "evidence.py verify --issue auto" in text
         assert "evidence.py run --issue auto --expect present" in text
 
