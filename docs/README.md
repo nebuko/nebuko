@@ -19,6 +19,7 @@ For the high-level pitch and quick overview, see the root
 | [getting-started.md](./getting-started.md) | New users | Prerequisites, setup, first workflow run, troubleshooting. |
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
+| [workflows/red-test-review-loop.md](./workflows/red-test-review-loop.md) | Contributors | Which tree the red-test loop's `run_tests` executes: the `merge_main` merge of `origin/main`, conflicts, and the `tested:` line. |
 | [root-cause-workflow.md](./root-cause-workflow.md) | Users & contributors | The `root-cause` workflow: investigate, engine-run per-delta oracle, confirm, seal, hand off. |
 | [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L11, CLI usage, exit codes, CI integration. |
 | [replay.md](./replay.md) | Contributors | Deterministic, no-LLM replay of per-invocation routing and complexity decisions from a workflow state (issue or state file). |

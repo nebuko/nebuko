@@ -56,7 +56,7 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
+          NEBUKO_MERGE_MAIN=0 sh .nebuko/scripts/use-session-branch.sh &&
           git --no-pager diff --stat origin/main...HEAD &&
           git --no-pager diff origin/main...HEAD
     # Default edges: a failed command is evidence for review, not a stop.
@@ -114,10 +114,13 @@ steps:
          never classify with `git stash`: it only hides uncommitted changes, and
          the branch's commits stay in the tree, so it proves nothing.
 
-         `run_tests` tests the branch head ALONE. CI tests the branch merged
-         into the current `origin/main`, so a branch that is behind `main`
-         fails tests that `main` already fixed (this made a 31-failure loop run
-         look broken while CI showed 4). Classify each non-new failing test ID
+         `run_tests` tests the branch head merged with the current
+         `origin/main` (the `merge_main` manifest flag, on by default), the same
+         shape of tree CI tests. Read its `tested:` line first: when it says
+         `tested: branch head ...` the merge did not happen (flag off, or the
+         branch conflicts with `main`), so a branch that is behind `main` fails
+         tests that `main` already fixed (this made a 31-failure loop run look
+         broken while CI showed 4). Classify each non-new failing test ID
          (a few IDs, not the whole suite) on two throw-away trees:
              git fetch origin main
              git rev-list --count HEAD..origin/main     # > 0: branch is behind main

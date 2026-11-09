@@ -18,7 +18,7 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
+          NEBUKO_MERGE_MAIN=0 sh .nebuko/scripts/use-session-branch.sh &&
           git --no-pager diff --stat origin/main...HEAD &&
           git --no-pager diff origin/main...HEAD
     # Default edges: a failed command is evidence for review, not a stop.
