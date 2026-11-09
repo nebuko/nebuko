@@ -117,6 +117,68 @@ Output: `SKIP_AGENT=true/false`.
 GitHub REST rate limits that constrain these comment-fetching guards are
 documented in [github-api-limits.md](./github-api-limits.md).
 
+### Secret Scanning and Redaction (issue #1347)
+
+Two channels publish agent output: the **git history** (the commits the engine
+pushes) and the **issue comment** (the step's answer). Both are public, and
+agents routinely paste raw tool output — CI logs, env dumps, artifacts — into
+them. `redact_secrets` (`run_failure.py`) only replaces *known* engine keys, so
+an unknown credential in a pasted log would reach the pushed history and the
+thread. This guard scans both channels first and replaces every hit with
+`<REDACTED:{rule}>` (`REDACTION_PREFIX` plus the rule name).
+
+**Pre-push (git).** `GitSession._redact_unpublished` runs before every push
+(see [publication.md](./publication.md)). It scans only the *unpublished*
+range — `<remote tip>..HEAD`, or the merge base with the remote's
+`main`/`master` for a brand-new branch — so intermediate commits are covered,
+not just the final tree. On a hit the branch is `reset --soft` onto that base,
+the working tree is redacted in place (`redact_worktree`) and the work is
+recommitted as one commit with the original message. Published history is
+never rewritten: the value is already out there and rewriting it would break
+every clone. A match that survives the rewrite (e.g. a finding whose file was
+deleted in the range) skips the push and reports a problem instead.
+
+**Pre-post (comment).** The engine's publish seam scans `answer`,
+`final_message` and `console_log` before framing the comment
+(`run_loop._scan_comment_sources`), and the framing seam redacts the body
+again (`prepare_comment._write_output`), so a value cannot slip in through the
+fallback text either. Reports are the likelier leak channel and are posted
+before any push, hence the separate seam.
+
+**Scanner.** `scan_git_range` delegates to the `gitleaks` binary (`gitleaks git
+--log-opts <range> --report-format json`) when it is installed — pinned in
+`flake.nix` and installed in CI — and falls back to the builtin `RULES`
+regexes over the added diff lines otherwise. A missing binary, an unreadable
+report or a subprocess failure all fall back rather than raise. The same
+builtin rules scan comment bodies, which gitleaks does not cover.
+
+**Allowlist.** `.gitleaks.toml` is the single source of truth and both paths
+honour it: `paths` for known fixtures (the fake-but-pattern-matching tokens in
+the redaction tests themselves) and `regexes` for documentation placeholders
+such as `<REDACTED:github-oauth>`. Keep it narrow — an allowlisted path is a
+place a real credential can leave unnoticed.
+
+**State and warning.** Findings are recorded as
+`workflow_state.secret_scan = {status: clean|redacted, findings: [{file, line,
+rule}], at: <step>}` — never the value. `redacted` is sticky for the run and
+the record is carried forward by every transition, so a later step cannot
+re-introduce the value silently. When `status == redacted` the next comment
+renders a short `> ⚠️ **Secret redacted in <step>.**` warning listing the
+locations (`format_secret_scan_warning`); a clean run renders nothing. Schema:
+[reference.md — WORKFLOW_STATE v1](./reference.md#workflow_state-v1).
+
+A redaction in a **source** file is reported more loudly than one in an
+evidence file (`.log`, `.jsonl`, `.out`, `.err`, `.txt`, `nebuko-task-logs/`):
+`is_evidence_path` decides, and the guard's detail names the source files.
+
+**Recovery.** The original value is never stored — not in the state, not in
+`GuardResult`, not in the CI log, not in the comment. If the credential is
+still needed, a human must re-enter it out of band; the warning says so.
+
+**Non-goal.** No live-credential verification (no trufflehog-style network
+calls): the scan is pattern-based, so a valid secret matching no rule is not
+caught.
+
 ---
 
 ## Metrics
