@@ -67,6 +67,7 @@ from nebuko.engine.models import (
     SkipOutcome,
     StepResult,
     Trigger,
+    session_workspace,
 )
 from nebuko.engine.paths import (
     ConfigKind,
@@ -955,11 +956,22 @@ class Engine:
         if state is not None and mode == "session":
             branch = str((state.current_context or {}).get("dev_branch") or "")
         checkout = evidence_checkout.resolve_evidence_checkout(
-            self._caller_root(), self._session_env(), mode=mode, branch=branch
+            self._evidence_workspace(), self._session_env(), mode=mode, branch=branch
         )
         if not checkout.ok:
             return None, checkout.detail
         return checkout, ""
+
+    def _evidence_workspace(self) -> Path:
+        """The directory the evidence checkout moves and the command runs in.
+
+        ``session_workspace()`` is what the script executor anchors at, so the
+        checkout must be applied there or the command would run in a different
+        directory than the one checked out (issue #1327). A host that sets no
+        workspace falls back to the caller root, which is where the engine's
+        other git work happens.
+        """
+        return session_workspace() or self._caller_root()
 
     def _evidence_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
         """Terminal outcome for an unreachable evidence checkout (issue #1327).
@@ -2311,7 +2323,7 @@ class Engine:
             raise InputMaterializationError(
                 f"evidence checkout failed: {failure}"
             )
-        return str(self._caller_root())
+        return str(self._evidence_workspace())
 
     # @stub-protected
     def _context_entries(self) -> list[ContextEntry] | None:

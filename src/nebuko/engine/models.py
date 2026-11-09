@@ -300,7 +300,7 @@ class DeterministicStep:
                 )
             if self.kind == "update_circuit_breaker":
                 return self._execute_circuit_breaker_update(adapter)
-            return self._execute_script(_session_workspace(), checkout)
+            return self._execute_script(session_workspace(), checkout)
         except Exception as exc:  # noqa: BLE001 - a step failure is data, not a crash
             return StepResult(step_kind=self.kind, ok=False, detail=str(exc), affected=0)
 
@@ -397,13 +397,15 @@ class DeterministicStep:
         )
 
 
-def _session_workspace() -> Path | None:
+def session_workspace() -> Path | None:
     """The session checkout a script step runs in, or ``None`` when unknown.
 
     Script steps are leaf vocabulary and must stay free of workspace policy, so
     the directory is read here from the same env contract the platform sets for
     the engine (``GITHUB_WORKSPACE`` in CI, ``NEBUKO_WORKSPACE`` for a local
-    host) rather than injected through the model.
+    host) rather than injected through the model. The evidence checkout
+    (issue #1327) resolves against the same directory, so the commit it checks
+    out is the one the command then sees.
     """
     for key in ("NEBUKO_WORKSPACE", "GITHUB_WORKSPACE"):
         value = os.environ.get(key)
