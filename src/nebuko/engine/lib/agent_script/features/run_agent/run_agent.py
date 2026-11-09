@@ -11,6 +11,8 @@ import asyncio
 import dataclasses
 import json
 import os
+import uuid
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
@@ -355,6 +357,79 @@ def build_openhands_agent(
     )
 
 
+def _run_harness_agent(
+    harness: Any,
+    *,
+    role_name: str,
+    agent_cfg: Any,
+    prompt: str,
+    cwd: str,
+    llm_config: dict | None = None,
+) -> Any:
+    """Run one work turn on a non-OpenHands harness (issue #1368).
+
+    Returns a conversation-shaped view of the run, so the metrics and output
+    builders consume it exactly like an OpenHands ``Conversation``. The
+    closing turn stays with the host: the view carries the harness session and
+    its closing channel for it to delegate to.
+    """
+    from nebuko.engine.harness.claude_code import ClaudeCodeHarness  # noqa: PLC0415
+
+    if not isinstance(harness, ClaudeCodeHarness):
+        raise EngineAgentUnavailable(
+            f"agent backend {harness.name!r} has no work-loop driver; add one to "
+            "its harness adapter (issue #1368)"
+        )
+
+    conversation = harness.build_conversation(
+        role_name=role_name,
+        agent_cfg=agent_cfg,
+        prompt=_harness_system_prompt(role_name),
+        agent_context=SimpleNamespace(id=uuid.uuid4().hex, workspace=cwd),
+    )
+    session = conversation.harness_session
+    budget = resolve_timeout_budget()
+    logger.info(
+        f"Starting {harness.name} task execution "
+        f"(soft timeout budget: {budget.soft_timeout_s:.0f}s)..."
+    )
+    logger.info(f"Prompt: {prompt[:200]}...")
+
+    watchdog = RunWatchdog(budget.soft_timeout_s, session.close).arm()
+    error: Exception | None = None
+    try:
+        session.send_message(prompt)
+        session.run(timeout_s=budget.soft_timeout_s)
+    except Exception as exc:  # noqa: BLE001 - classified below, never swallowed
+        logger.error(f"{harness.name} run raised: {exc}")
+        error = exc
+    finally:
+        watchdog.cancel()
+
+    if watchdog.fired:
+        conversation.execution_status = SimpleNamespace(value="paused")
+        outcome = RunOutcome(
+            status=OutcomeStatus.GRACEFULLY_TIMED_OUT, soft_timeout_fired=True
+        )
+    elif error is not None:
+        conversation.execution_status = SimpleNamespace(value="error")
+        failure = classify_failure(error)
+        _raise_if_provider_failure(failure, llm_config or {})
+        outcome = RunOutcome(status=OutcomeStatus.FAILURE, failure=failure)
+    else:
+        outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
+
+    conversation.run_outcome = outcome
+    logger.info(f"Run outcome: {outcome.status.value}")
+    return conversation
+
+
+def _harness_system_prompt(role_name: str) -> str:
+    """The static prompt plus the role's injected team block (issue #943)."""
+    context = compose_system_context(role_name)
+    return f"{_SYSTEM_PROMPT}\n\n{context}" if context else _SYSTEM_PROMPT
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -381,20 +456,41 @@ def run_agent(
                    Defaults to the engine's ``CONTEXT_BODIES`` env hand-off.
 
     Returns:
-        The completed Conversation object.
+        The completed conversation object: an OpenHands ``Conversation``, or the
+        harness session's conversation-shaped view on another backend (issue
+        #1368).
     """
-    llm = LLM(**llm_config)
+    role_name = os.environ.get("ROLE_NAME", "unknown")
 
     cwd = os.fspath(workspace) if workspace is not None else (
         os.environ.get("GFA_REPO_ROOT") or os.getcwd()
     )
 
-    role_name = os.environ.get("ROLE_NAME", "unknown")
-
     # Repair malformed tool-call JSON/keys before the SDK turns each one into
     # a wasted round-trip (13% of the GLM-5.3-flash actions in the issue #1114
     # run died on extra_forbidden / unparseable arguments).
     install_tool_call_repair()
+
+    # ── Harness selection (issue #1368) ──────────────────────────
+    # The port owns which runtime executes the turn. OpenHands runs the
+    # supervised work loop below; every other backend runs through its own
+    # harness session and returns the same conversation-shaped view, so the
+    # metrics and output builders stay unchanged. An unregistered backend
+    # fails loud here instead of silently running OpenHands.
+    from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
+
+    harness = resolve_harness(getattr(agent_cfg, "backend", None))
+    if harness.name != "openhands":
+        return _run_harness_agent(
+            harness,
+            role_name=role_name,
+            agent_cfg=agent_cfg,
+            prompt=prompt,
+            cwd=cwd,
+            llm_config=llm_config,
+        )
+
+    llm = LLM(**llm_config)
 
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = [
@@ -444,19 +540,6 @@ def run_agent(
     if mcp_servers:
         logger.info(
             f"Attaching MCP servers for {role_name}: {sorted(mcp_servers)}"
-        )
-
-    # ── System prompt config ─────────────────────────────────────
-    # The harness port (issue #1368) owns which runtime executes the turn. The
-    # supervised work loop below is OpenHands-only; an unregistered backend
-    # fails loud here instead of silently running OpenHands.
-    from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
-
-    harness = resolve_harness(getattr(agent_cfg, "backend", None))
-    if harness.name != "openhands":
-        raise EngineAgentUnavailable(
-            f"agent backend {harness.name!r} cannot run the supervised work "
-            "loop; it is driven through its own harness session (issue #1368)"
         )
 
     # ── Token telemetry capture (issue #829) ─────────────────────

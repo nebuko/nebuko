@@ -12,6 +12,7 @@ implementation, two transports, never a copy.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
 
 from nebuko.engine.finalize import TurnOutcomePayload
@@ -45,6 +46,8 @@ class FinalizeSink:
     def __init__(self) -> None:
         self._report = ""
         self._outcome: Optional[TurnOutcomePayload] = None
+        #: Set for the engine's closing turn, where a report is owed (#1038).
+        self.require_report = False
 
     def reset(self) -> None:
         self._report = ""
@@ -59,7 +62,13 @@ class FinalizeSink:
         """
         outcome = TurnOutcomePayload.model_validate(payload.get("turn_outcome") or {})
         outcome.validate_runtime()
-        self._report = str(payload.get("report") or "")
+        report = str(payload.get("report") or "")
+        if self.require_report and not report.strip():
+            raise ValueError(
+                "no report. The report is the `report` argument of finalize, "
+                "and nothing is posted without it"
+            )
+        self._report = report
         self._outcome = outcome
 
     def result(self) -> Optional[ClosingResult]:
@@ -192,8 +201,24 @@ class EngineToolServer:
         return dict(bodies) if isinstance(bodies, dict) else {}
 
     def _conversation(self) -> Any:
-        """A minimal conversation stand-in binding the shell to the workspace."""
-        return getattr(self.agent_context, "conversation", None)
+        """A minimal conversation stand-in binding the shell to the workspace.
+
+        A harness whose context carries no conversation (Claude Code) gets a
+        stub bound to the run's workspace, so ``terminal_batch`` executes in
+        the same checkout the agent works in.
+        """
+        conversation = getattr(self.agent_context, "conversation", None)
+        if conversation is not None:
+            return conversation
+        workspace = getattr(self.agent_context, "workspace", None)
+        if workspace is None:
+            return None
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                workspace=SimpleNamespace(working_dir=str(workspace)),
+                env_observation_persistence_dir=None,
+            )
+        )
 
     def as_sdk_server(self) -> Any:
         """Wrap the handlers as an in-process SDK MCP server."""

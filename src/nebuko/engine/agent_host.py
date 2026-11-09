@@ -220,8 +220,16 @@ class InProcessAgentHost:
         self, conversation: Any, contract: OutputContract | None
     ) -> None:
         """Delegate the closing turn to the harness's channel (issue #1368)."""
-        channel = self._closing_channel or OpenHandsClosingChannel()
-        session = self._session or conversation
+        channel = (
+            self._closing_channel
+            or getattr(conversation, "harness_closing_channel", None)
+            or OpenHandsClosingChannel()
+        )
+        session = (
+            self._session
+            or getattr(conversation, "harness_session", None)
+            or conversation
+        )
         try:
             result = channel.elicit(session, contract)
         except Exception as error:  # noqa: BLE001 - fall back, never abort
@@ -239,6 +247,43 @@ class InProcessAgentHost:
         """Stow the channel's report on the conversation for the capture."""
         if result.report:
             setattr(conversation, _FINALIZE_BODY_ATTR, result.report)
+        self._record_outcome(conversation, result.outcome)
+
+    def _record_outcome(self, conversation: Any, outcome: Any) -> None:
+        """Record a channel-supplied outcome the runtime did not record itself.
+
+        OpenHands' ``finalize`` executor records into the run-scoped registries
+        as it runs; a harness whose closing tool only fills its sink (Claude
+        Code) lands here instead, so ``build_output`` reads one registry either
+        way. An already-recorded outcome is left untouched — it carries the run
+        prefs (complexity, pin) this path does not have.
+        """
+        if outcome is None:
+            return
+        conv_id = getattr(conversation, "id", None)
+        if conv_id is None:
+            return
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (  # noqa: PLC0415
+            get_recorded_turn_outcome,
+            record_turn_outcome,
+        )
+
+        if get_recorded_turn_outcome(conv_id) is not None:
+            return
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (  # noqa: PLC0415
+            record_function_call,
+        )
+        from nebuko.engine.lib.agent_script.features.finalize_tool.finalize_tool import (  # noqa: PLC0415
+            outcome_to_prefs,
+            outcome_to_turn_outcome,
+        )
+
+        record_turn_outcome(
+            conv_id, outcome_to_turn_outcome(outcome), outcome_to_prefs(outcome)
+        )
+        handoff = outcome.to_function_call()
+        if handoff is not None:
+            record_function_call(conv_id, handoff)
 
 
 def _run_pipeline(

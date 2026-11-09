@@ -18,6 +18,7 @@ from nebuko.engine.harness.claude_code import (
     ClaudeCodeSession,
 )
 from nebuko.engine.harness.engine_tools import FinalizeSink
+from nebuko.engine.harness.base import HarnessEvent
 
 
 class _FakeClient:
@@ -104,6 +105,47 @@ def test_session_reuses_the_client_across_turns() -> None:
     session.run()
     assert client.connected is False  # never connected: the fake is pre-bound
     assert client.queries == ["one", "two"]
+
+
+def test_conversation_view_records_agent_text_and_carries_the_session() -> None:
+    from nebuko.engine.harness.claude_code import ClaudeCodeConversation
+
+    session, _, _ = _session()
+    conversation = ClaudeCodeConversation(
+        session=session,
+        closing_channel=ClaudeCodeClosingChannel(),
+        workspace="/tmp/repo",
+        run_id="run-1",
+    )
+    session._emit(HarnessEvent(kind="commentary", text="work done"))
+
+    assert conversation.id == "run-1"
+    assert conversation.harness_session is session
+    assert conversation.state.workspace.working_dir == "/tmp/repo"
+    assert len(conversation.state.events) == 1
+
+
+def test_harness_build_conversation_wraps_the_built_session(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from nebuko.engine.harness.claude_code import ClaudeCodeHarness
+
+    harness = ClaudeCodeHarness()
+    monkeypatch.setattr(
+        harness,
+        "build_agent",
+        lambda **kwargs: SimpleNamespace(
+            session=_session()[0], prompt=kwargs["prompt"]
+        ),
+    )
+    conversation = harness.build_conversation(
+        role_name="dev",
+        agent_cfg=None,
+        prompt="p",
+        agent_context=SimpleNamespace(id="run-2", workspace="/tmp/repo"),
+    )
+    assert conversation.id == "run-2"
+    assert isinstance(conversation.harness_closing_channel, ClaudeCodeClosingChannel)
 
 
 @pytest.mark.skipif(

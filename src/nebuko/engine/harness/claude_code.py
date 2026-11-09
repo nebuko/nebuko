@@ -12,10 +12,12 @@ daemon thread, a private event loop and a queue.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
-import queue
 import threading
+import uuid
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 from nebuko.engine.finalize import OutputContract
@@ -29,7 +31,12 @@ from .base import (
 )
 from .engine_tools import MCP_SERVER_NAME, TOOL_PREFIX, EngineToolServer, FinalizeSink
 
-__all__ = ["ClaudeCodeClosingChannel", "ClaudeCodeHarness", "ClaudeCodeSession"]
+__all__ = [
+    "ClaudeCodeClosingChannel",
+    "ClaudeCodeConversation",
+    "ClaudeCodeHarness",
+    "ClaudeCodeSession",
+]
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +75,13 @@ class ClaudeCodeSession:
 
     def run(self, timeout_s: float | None = None) -> None:
         self._ensure_client()
-        self._submit(self._receive())
+        try:
+            self._submit(self._receive(), timeout=timeout_s)
+        except TimeoutError:
+            log.warning("[phase:agent] claude turn exceeded its budget - interrupting")
+            with contextlib.suppress(Exception):
+                self._submit(self._client.interrupt(), timeout=30.0)
+            raise
 
     def close(self) -> None:
         client, loop = self._client, self._loop
@@ -177,6 +190,7 @@ class ClaudeCodeClosingChannel:
     ) -> ClosingResult:
         sink: FinalizeSink = session.sink
         sink.reset()
+        sink.require_report = True
         prompt = CLOSING_PROMPT.format(
             sections=contract.prompt_block() if contract is not None else ""
         )
@@ -188,7 +202,55 @@ class ClaudeCodeClosingChannel:
             return ClosingResult()
         finally:
             session.set_tool_policy(None)
+            sink.require_report = False
         return sink.result() or ClosingResult()
+
+
+class ClaudeCodeConversation:
+    """Conversation-shaped view of a Claude Code run for the legacy assembly.
+
+    ``run_agent`` returns an OpenHands ``Conversation`` to the assembly, which
+    reads ``id``, ``state.events``, ``execution_status`` and ``run_outcome``.
+    This adapter exposes the same read-only surface over a harness session, so
+    metrics, answer capture and ``build_output`` run unchanged. The session and
+    its closing channel ride along for the host's closing turn (issue #1368).
+    """
+
+    def __init__(
+        self,
+        *,
+        session: "ClaudeCodeSession",
+        closing_channel: "ClaudeCodeClosingChannel",
+        workspace: str,
+        run_id: str | None = None,
+    ) -> None:
+        self.id = run_id or uuid.uuid4().hex
+        self.harness_session = session
+        self.harness_closing_channel = closing_channel
+        self.state = SimpleNamespace(
+            events=[],
+            workspace=SimpleNamespace(working_dir=workspace),
+            env_observation_persistence_dir=None,
+        )
+        self.execution_status = SimpleNamespace(value="finished")
+        self.run_outcome = None
+        session.on_event(self._record)
+
+    def _record(self, event: HarnessEvent) -> None:
+        """Mirror agent text turns into the legacy event stream."""
+        if event.kind not in ("commentary", "result") or not event.text:
+            return
+        from openhands.sdk.event import MessageEvent  # noqa: PLC0415
+        from openhands.sdk.llm.message import Message, TextContent  # noqa: PLC0415
+
+        self.state.events.append(
+            MessageEvent(
+                source="agent",
+                llm_message=Message(
+                    role="assistant", content=[TextContent(text=event.text)]
+                ),
+            )
+        )
 
 
 class ClaudeCodeHarness:
@@ -239,6 +301,23 @@ class ClaudeCodeHarness:
             permission_mode="acceptEdits",
         )
         return BuiltAgent(session=ClaudeCodeSession(options, sink), prompt=prompt)
+
+    def build_conversation(
+        self, *, role_name: str, agent_cfg: Any, prompt: str, agent_context: Any
+    ) -> "ClaudeCodeConversation":
+        """Build the agent and wrap it in the assembly's conversation view."""
+        built = self.build_agent(
+            role_name=role_name,
+            agent_cfg=agent_cfg,
+            prompt=prompt,
+            agent_context=agent_context,
+        )
+        return ClaudeCodeConversation(
+            session=built.session,
+            closing_channel=self.make_closing_channel(),
+            workspace=str(getattr(agent_context, "workspace", "") or os.getcwd()),
+            run_id=getattr(agent_context, "id", None),
+        )
 
     def make_closing_channel(self) -> ClaudeCodeClosingChannel:
         return ClaudeCodeClosingChannel()
