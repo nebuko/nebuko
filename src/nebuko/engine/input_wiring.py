@@ -105,7 +105,9 @@ class StepInputs:
         return [
             result
             for result in results
-            if not result.ok and bool(self.specs.get(result.name, {}).get("required", True))
+            if not result.ok
+            and bool(self.specs.get(result.name, {}).get("required", True))
+            and getattr(self.consumer.get(result.name), "required", None) is not False
         ]
 
     def depth_exceeded(self) -> bool:
