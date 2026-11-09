@@ -18,6 +18,10 @@ from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
 
+from nebuko.engine.agent_runner import EngineAgentUnavailable
+from nebuko.engine.harness.mcp import build_mcp_servers as _build_mcp_servers
+from nebuko.engine.harness.mcp import resolve_mcp_env as _resolve_mcp_env
+
 from nebuko.engine.lib.agent_script.sub_domains.token_budget.condenser import (
     build_condenser,
     resolve_token_budget_policy,
@@ -135,55 +139,6 @@ You are an autonomous software engineering agent working in a checked-out reposi
 # Ending a run
 Finish through the control tools described in your role instructions. Make your final answer complete and self-contained, because it is posted for humans to read.
 """
-
-
-def _resolve_mcp_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """Resolve each child env var to the value of the OS env var it names.
-
-    Returns the resolved child environment and the names of any OS env vars
-    that are unset or empty (so the caller can skip that server).
-    """
-    resolved: dict[str, str] = {}
-    missing: list[str] = []
-    for child_var, source_name in env.items():
-        value = os.environ.get(source_name)
-        if value:
-            resolved[child_var] = value
-        else:
-            missing.append(source_name)
-    return resolved, missing
-
-
-def _build_mcp_servers(agent_cfg) -> dict[str, MCPServer]:
-    """Turn declarative ``mcp_servers`` into SDK server handles.
-
-    Each entry's ``env`` maps a child-process variable to the *name* of the OS
-    env var holding its value; an unset reference skips that server with a
-    warning so a missing secret degrades one capability instead of failing
-    the whole run.
-    """
-    if agent_cfg is None or not getattr(agent_cfg, "mcp_servers", None):
-        return {}
-
-    servers: dict[str, MCPServer] = {}
-    for spec in agent_cfg.mcp_servers:
-        resolved_env, missing = _resolve_mcp_env(spec.env)
-        if missing:
-            logger.warning(
-                f"MCP server '{spec.name}' skipped — unset env var(s): "
-                f"{', '.join(missing)}"
-            )
-            continue
-        server = MCPServer(
-            command=spec.command,
-            args=list(spec.args),
-            env=dict(resolved_env),
-            transport=spec.transport,
-        )
-        # Values are already resolved from the OS env; mark them literal so the
-        # SDK's ${VAR} expansion pass cannot re-interpret a resolved secret.
-        servers[spec.name] = server.as_literal()
-    return servers
 
 
 def _build_agent_context(
@@ -356,6 +311,50 @@ def _parse_context_bodies_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in payload.items()}
 
 
+def build_openhands_agent(
+    *,
+    llm: LLM,
+    cwd: str,
+    role_name: str,
+    agent_cfg: Any,
+    sdk_tools: Sequence[Any],
+    include_default_tools: Sequence[str],
+    mcp_servers: dict[str, MCPServer],
+    skill_context: Any,
+    collector: TokenTelemetryCollector,
+) -> Conversation:
+    """Build the OpenHands ``Agent`` and its ``Conversation`` (issue #1368).
+
+    Extracted from :func:`run_agent` so the harness port can construct the same
+    runtime without duplicating the SDK wiring.
+    """
+    agent = Agent(
+        llm=llm,
+        tools=list(sdk_tools),
+        include_default_tools=list(include_default_tools),
+        mcp_config=mcp_servers,
+        # Replace the SDK's whole static prompt with Nebuko's own (issue #943).
+        system_prompt=_SYSTEM_PROMPT,
+        agent_context=_build_agent_context(
+            role_name, skill_context.to_sdk_skills()
+        ),
+        condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
+    )
+    # Persist the conversation's event log (issue #1120): without a
+    # persistence_dir the SDK falls back to an InMemoryFileStore and the
+    # per-event JSON files (with per-command timings) are lost when the run
+    # ends. The default lands under the artifact staging dir via LOG_DIR's
+    # parent so the log uploads with the run's other artifacts.
+    return Conversation(
+        agent=agent,
+        workspace=cwd,
+        persistence_dir=_resolve_persistence_dir(),
+        # Keep the streaming path live so the LLM timeout applies between
+        # chunks rather than to the whole reasoning turn (issue #775).
+        token_callbacks=[_discard_token, collector.on_token],
+    )
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -448,18 +447,17 @@ def run_agent(
         )
 
     # ── System prompt config ─────────────────────────────────────
-    agent = Agent(
-        llm=llm,
-        tools=sdk_tools,
-        include_default_tools=include_default_tools,
-        mcp_config=mcp_servers,
-        # Replace the SDK's whole static prompt with Nebuko's own (issue #943).
-        system_prompt=_SYSTEM_PROMPT,
-        agent_context=_build_agent_context(
-            role_name, skill_context.to_sdk_skills()
-        ),
-        condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
-    )
+    # The harness port (issue #1368) owns which runtime executes the turn. The
+    # supervised work loop below is OpenHands-only; an unregistered backend
+    # fails loud here instead of silently running OpenHands.
+    from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
+
+    harness = resolve_harness(getattr(agent_cfg, "backend", None))
+    if harness.name != "openhands":
+        raise EngineAgentUnavailable(
+            f"agent backend {harness.name!r} cannot run the supervised work "
+            "loop; it is driven through its own harness session (issue #1368)"
+        )
 
     # ── Token telemetry capture (issue #829) ─────────────────────
     # The collector stamps each call's request start (via litellm.callbacks)
@@ -470,18 +468,16 @@ def run_agent(
     maybe_register_langfuse()
 
     # ── Conversation setup & supervised execution ────────────────
-    # Persist the conversation's event log (issue #1120): without a
-    # persistence_dir the SDK falls back to an InMemoryFileStore and the
-    # per-event JSON files (with per-command timings) are lost when the run
-    # ends. The default lands under the artifact staging dir via LOG_DIR's
-    # parent so the log uploads with the run's other artifacts.
-    conversation = Conversation(
-        agent=agent,
-        workspace=cwd,
-        persistence_dir=_resolve_persistence_dir(),
-        # Keep the streaming path live so the LLM timeout applies between
-        # chunks rather than to the whole reasoning turn (issue #775).
-        token_callbacks=[_discard_token, collector.on_token],
+    conversation = build_openhands_agent(
+        llm=llm,
+        cwd=cwd,
+        role_name=role_name,
+        agent_cfg=agent_cfg,
+        sdk_tools=sdk_tools,
+        include_default_tools=include_default_tools,
+        mcp_servers=mcp_servers,
+        skill_context=skill_context,
+        collector=collector,
     )
 
     budget = resolve_timeout_budget()

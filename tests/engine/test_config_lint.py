@@ -29,6 +29,9 @@ RULE_SEVERITY_EXPECTED = {
     "C6-unreferenced-entry": "warning",
     "C7-mcp-servers": "error",
     "C8-missing-role": "warning",
+    "C9-unknown-backend": "error",
+    "C10-backend-tool": "error",
+    "C11-skills-discover": "error",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -89,6 +92,7 @@ class TestConfigLinterContract:
             "_check_refs",
             "_check_schema",
             "_check_tools",
+            "_check_backends",
             "_check_roles",
             "_check_mcp_servers",
             "_check_prompt_files",
