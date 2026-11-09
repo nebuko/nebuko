@@ -9,6 +9,7 @@ SDK's ``app.log`` is renamed to the browser-viewable ``app.txt`` (issue #894).
 
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -19,8 +20,11 @@ from nebuko.adapters.github import ARTIFACT_DIR_NAME
 from nebuko.engine.artifacts import (
     APP_LOG_FILE,
     CONSOLE_LOG_FILE,
+    CONTEXT_PLAN_FILE,
     EVENT_LOG_FILE,
+    OUTPUT_FILE,
     PERSISTENCE_DIR_NAME,
+    PROMPT_FILE,
     SDK_APP_LOG_FILE,
     ArtifactFile,
     RunArtifactStager,
@@ -73,6 +77,11 @@ class TestRunArtifactStager:
             ArtifactFile(name=CONSOLE_LOG_FILE, path=staging.resolve() / CONSOLE_LOG_FILE),
             ArtifactFile(name=APP_LOG_FILE, path=staging.resolve() / APP_LOG_FILE),
             ArtifactFile(name=EVENT_LOG_FILE, path=staging.resolve() / EVENT_LOG_FILE),
+            ArtifactFile(
+                name=CONTEXT_PLAN_FILE, path=staging.resolve() / CONTEXT_PLAN_FILE
+            ),
+            ArtifactFile(name=PROMPT_FILE, path=staging.resolve() / PROMPT_FILE),
+            ArtifactFile(name=OUTPUT_FILE, path=staging.resolve() / OUTPUT_FILE),
         )
         assert all(artifact.path.is_absolute() for artifact in files)
 
@@ -88,7 +97,14 @@ class TestRunArtifactStager:
 
         names = [artifact.name for artifact in RunArtifactStager(staging).artifact_files()]
 
-        assert names == ["console.txt", "app.txt", "events.jsonl"]
+        assert names == [
+            "console.txt",
+            "app.txt",
+            "events.jsonl",
+            "context_plan.json",
+            "prompt.md",
+            "output.md",
+        ]
 
     def test_bundle_renames_the_sdk_app_log_to_app_txt(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"
@@ -111,6 +127,9 @@ class TestRunArtifactStager:
             "console.txt",
             "app.txt",
             "events.jsonl",
+            "context_plan.json",
+            "prompt.md",
+            "output.md",
         ]
 
     def test_bundle_without_persistence_writes_no_event_log(self, tmp_path):
@@ -162,6 +181,57 @@ class TestRunArtifactStager:
         RunArtifactStager(staging).bundle("console output")
 
         assert not (staging / EVENT_LOG_FILE).exists()
+
+
+class TestContextArtifacts:
+    """The run's context plan, prompt and output are staged as artifacts (#1346)."""
+
+    def _plan(self):
+        from nebuko.engine.context_ir import (
+            ContextPlan,
+            ContextSection,
+            ContextSectionKind,
+        )
+
+        return ContextPlan(
+            step="plan",
+            agent="architect",
+            sections=(
+                ContextSection(
+                    kind=ContextSectionKind.ROLE_PROMPT, text="ROLE", source="role:architect"
+                ),
+                ContextSection(
+                    kind=ContextSectionKind.RECENT_THREAD,
+                    text="## Recent thread\n\nBODY",
+                    source="selection:declared",
+                    comment_ids=("42",),
+                ),
+            ),
+            selection_mode="declared",
+        )
+
+    def test_writes_the_plan_prompt_and_output(self, tmp_path):
+        from nebuko.engine.context_ir import ContextPlan
+
+        staging = tmp_path / "nebuko-task-logs"
+        plan = self._plan()
+
+        RunArtifactStager(staging).write_context(plan, plan.render(), "POSTED BODY")
+
+        assert ContextPlan.from_dict(
+            json.loads((staging / CONTEXT_PLAN_FILE).read_text(encoding="utf-8"))
+        ) == plan
+        assert (staging / PROMPT_FILE).read_text(encoding="utf-8") == plan.render()
+        assert (staging / OUTPUT_FILE).read_text(encoding="utf-8") == "POSTED BODY"
+
+    def test_skips_the_output_file_when_nothing_was_posted(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+        plan = self._plan()
+
+        RunArtifactStager(staging).write_context(plan, plan.render(), None)
+
+        assert (staging / CONTEXT_PLAN_FILE).is_file()
+        assert not (staging / OUTPUT_FILE).exists()
 
 
 class TestArtifactFile:

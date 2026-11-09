@@ -50,6 +50,7 @@ from nebuko.engine.context_selection import (
     default_inputs,
     resolve_selection,
 )
+from nebuko.engine.context_ir import ContextPlan, ContextSection, ContextSectionKind
 from nebuko.engine.input_wiring import (
     MAX_CALL_FRAMES,
     Materialization,
@@ -728,6 +729,12 @@ class Engine:
     _scaffold_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The ordered context plan this run's prompt was rendered from (#1346),
+    # held so the state manifest and the run artifacts can record it. A mutable
+    # container because ``Engine`` is frozen.
+    _context_plan_state: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # The workspace a relative ``AGENT_CONFIG_PATH`` is anchored at (issue #930),
     # snapshotted once at engine start before any chdir. A mutable container
     # because ``Engine`` is frozen; empty until ``_caller_root`` first resolves.
@@ -898,6 +905,7 @@ class Engine:
         self._publish_state.clear()
         self._hook_state.clear()
         self._scaffold_state.clear()
+        self._context_plan_state.clear()
         self._ledger_state.clear()
         # The typed thread and its selection describe *this* run's thread: a
         # reused engine over a new run must not serve the previous snapshots.
@@ -1088,11 +1096,21 @@ class Engine:
                     self._scaffold_state["head_before"] = git_session.GitSessionGuard(
                         self._caller_root(), self._session_env()
                     ).head_sha()
-            prompt =self.build_prompt(resolved, history, input_results, step_scope)
+            plan = self.build_context_plan(resolved, history, input_results, step_scope)
             conflict_note = self._render_scaffold_conflict()
             if conflict_note:
                 # First, not last: resolving the merge comes before the task.
-                prompt = f"{conflict_note}\n\n{prompt}"
+                plan = plan.prepended(
+                    ContextSection(
+                        kind=ContextSectionKind.SCAFFOLD_CONFLICT,
+                        text=conflict_note,
+                        source="scaffold:conflict",
+                    )
+                )
+            # Held so the run can record the plan (state manifest + artifacts).
+            self._context_plan_state["plan"] = plan
+            prompt = plan.render()
+            self._stage_context_plan(plan, prompt)
 
             self._enter(phases, "agent")
             # Resolve the legacy comment/validation bridge once, before the
@@ -1260,6 +1278,7 @@ class Engine:
                         pushed=self._branch_pushed(),
                         state=state,
                     ) or state
+            self._stage_context_output(posted_body)
 
             # The publish-dependent annotations (#756/#805) are stamped only
             # now that the publish phase has run — see the method contract.
@@ -2085,27 +2104,107 @@ class Engine:
         ``{{ <step> }}`` references inside the step prompt are resolved against
         ``step_scope`` in a single pass before assembly (issue #756): the value
         is the referenced step's state-stripped comment.
+
+        The prompt is the rendering of the ordered :class:`ContextPlan` (issue
+        #1346): assembly builds sections, :meth:`ContextPlan.render` joins them.
         """
+        return self.build_context_plan(
+            resolved, history, input_results, step_scope
+        ).render()
+
+    # @stub-protected
+    def build_context_plan(
+        self,
+        resolved: Any,
+        history: Sequence[CommentEntry],
+        input_results: Sequence[Materialization] = (),
+        step_scope: Mapping[str, str] | None = None,
+    ) -> ContextPlan:
+        """The ordered sections this step's prompt is rendered from (#1346).
+
+        Section order is the contract: role prompt, step prompt, step output,
+        injected skills, step inputs, previous handoff, the user-request header
+        and its parts, then the recent thread. The scaffold-conflict note is
+        prepended by the caller via :meth:`ContextPlan.prepended`.
+        """
+        step = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        agent = str(self._get(resolved, "ROLE_NAME") or "")
         step_prompt = self._render_step_prompt(self._step_prompt(resolved), step_scope)
         replacing = bool(step_prompt) and self._step_prompt_replaces(resolved)
-        sections = [] if replacing else [self._base_prompt(resolved)]
+        sections: list[ContextSection] = []
+        if not replacing:
+            role_prompt = self._base_prompt(resolved)
+            if role_prompt:
+                sections.append(
+                    ContextSection(
+                        kind=ContextSectionKind.ROLE_PROMPT,
+                        text=role_prompt,
+                        source=f"role:{agent}" if agent else "role",
+                    )
+                )
         if step_prompt:
-            sections.append(f"{_STEP_HEADER}\n\n{step_prompt}")
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.STEP_PROMPT,
+                    text=f"{_STEP_HEADER}\n\n{step_prompt}",
+                    source=f"step:{step}" if step else "step",
+                )
+            )
         output_block = self._render_step_output(resolved)
         if output_block:
-            sections.append(output_block)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.STEP_OUTPUT,
+                    text=output_block,
+                    source=f"step:{step}:output" if step else "step:output",
+                )
+            )
         injected_skills = self._render_injected_skills(resolved)
         if injected_skills:
-            sections.append(injected_skills)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.INJECTED_SKILLS,
+                    text=injected_skills,
+                    source=self._injected_skill_source(resolved),
+                )
+            )
         rendered_inputs = render_inputs(list(input_results))
         if rendered_inputs:
-            sections.append(rendered_inputs)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.STEP_INPUTS,
+                    text=rendered_inputs,
+                    source=",".join(f"input:{result.name}" for result in input_results),
+                )
+            )
         previous_handoff = self._render_previous_handoff()
         if previous_handoff:
-            sections.append(previous_handoff)
-        sections.append(_USER_REQUEST_HEADER)
-        sections.append(self._render_context(resolved, history))
-        return "\n\n".join(section for section in sections if section)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.PREVIOUS_HANDOFF,
+                    text=previous_handoff,
+                    source="handoff",
+                )
+            )
+        sections.append(
+            ContextSection(
+                kind=ContextSectionKind.USER_REQUEST_HEADER,
+                text=_USER_REQUEST_HEADER,
+                source="header",
+            )
+        )
+        sections.extend(self._context_sections(resolved, history))
+        selection = self._context_selection()
+        return ContextPlan(
+            step=step,
+            agent=agent,
+            sections=tuple(sections),
+            selection_mode=selection.mode if selection is not None else "",
+            missing=tuple(
+                f"{wanted.kind}:{wanted.step or '-'}"
+                for wanted in (selection.missing if selection is not None else ())
+            ),
+        )
 
     def _render_step_output(self, resolved: Any) -> str:
         """The declared step-output section prompt block (issue #973).
@@ -2138,12 +2237,21 @@ class Engine:
 
     def _render_injected_skills(self, resolved: Any) -> str:
         """The full bodies of this step's inject-mode skills (issue #955)."""
+        return self._skill_context(resolved).render_injected()
+
+    def _skill_context(self, resolved: Any):
+        """This step's resolved skill attachment (issue #955)."""
         from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
             skill_context_from_env,
         )
 
         env = resolved if isinstance(resolved, Mapping) else {}
-        return skill_context_from_env(env).render_injected()
+        return skill_context_from_env(env)
+
+    def _injected_skill_source(self, resolved: Any) -> str:
+        """Provenance of the injected-skills section: the skill names."""
+        names = [doc.name for doc in self._skill_context(resolved).injected]
+        return ",".join(f"skill:{name}" for name in names) or "skills:inject"
 
     def _materialize_inputs(
         self,
@@ -2857,6 +2965,7 @@ class Engine:
         env = _with_step_input_records(
             env, self._step_input_state.get("results") or []
         )
+        env = _with_context_manifest(env, self._context_plan_state.get("plan"))
         env = _with_context_bodies(env, self._context_bodies())
         return _anchor_config_path(env, self.repo_root, self._caller_root())
 
@@ -3197,6 +3306,23 @@ class Engine:
             log.warning("[phase:publish] could not stage run logs: %s", exc)
             return
         log.info("[phase:publish] staged run logs in %s", staged.staging_dir)
+
+    def _stage_context_plan(self, plan: ContextPlan, prompt: str) -> None:
+        """Stage the run's context plan and prompt; never abort the run (#1346)."""
+        try:
+            self._artifacts().write_context(plan, prompt, None)
+        except Exception as exc:  # noqa: BLE001 - artifact staging is best-effort
+            log.warning("[phase:prompt] could not stage the context plan: %s", exc)
+
+    def _stage_context_output(self, output: str | None) -> None:
+        """Stage the run's posted output alongside its plan; best-effort (#1346)."""
+        plan = self._context_plan_state.get("plan")
+        if plan is None:
+            return
+        try:
+            self._artifacts().write_context(plan, plan.render(), output)
+        except Exception as exc:  # noqa: BLE001 - artifact staging is best-effort
+            log.warning("[phase:publish] could not stage the run output: %s", exc)
 
     def _handoff_config(self) -> Any:
         """The resolver mapping the run routes on and hands to the agent child.
@@ -3827,10 +3953,30 @@ class Engine:
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
     def _render_context(self, resolved: Any, history: Sequence[CommentEntry]) -> str:
+        """The user-request block, rendered from its ordered sections (#1346)."""
+        return "\n\n".join(
+            section.text for section in self._context_sections(resolved, history) if section.text
+        )
+
+    def _context_sections(
+        self, resolved: Any, history: Sequence[CommentEntry]
+    ) -> list[ContextSection]:
+        """The user-request block as ordered, provenance-carrying sections.
+
+        Same text and order as the historical string assembly: the author, the
+        issue body / request body, the task, the previous run's engine status,
+        the human gate decision, then ``## Recent thread``.
+        """
         trigger = self._get(resolved, _TRIGGER_KEY)
-        parts: list[str] = []
+        sections: list[ContextSection] = []
         if isinstance(trigger, Trigger):
-            parts.append(f"**Author:** {trigger.author}")
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.REQUEST_AUTHOR,
+                    text=f"**Author:** {trigger.author}",
+                    source=f"trigger:author:{trigger.author}",
+                )
+            )
             # An issue-trigger run's request reaches the prompt once (issue
             # #590, D11): its body *is* the user request, so it is never also
             # an agent-facing "recent thread" entry.
@@ -3838,21 +3984,76 @@ class Engine:
                 body = _agent_facing_body(trigger.body or self._issue_body_entry())
             else:
                 if trigger.issue_body:
-                    parts.append(f"**Issue body:**\n{trigger.issue_body}")
+                    sections.append(
+                        ContextSection(
+                            kind=ContextSectionKind.ISSUE_BODY,
+                            text=f"**Issue body:**\n{trigger.issue_body}",
+                            source="trigger:issue_body",
+                        )
+                    )
                 body = _agent_facing_body(trigger.body)
             if body:
-                parts.append(body)
+                sections.append(
+                    ContextSection(
+                        kind=ContextSectionKind.REQUEST_BODY,
+                        text=body,
+                        source="trigger:body",
+                    )
+                )
         task = self._get(resolved, "TASK")
         if task:
-            parts.append(f"**Task:** {task}")
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.TASK,
+                    text=f"**Task:** {task}",
+                    source="task",
+                )
+            )
         engine_block = self._render_engine_status()
         if engine_block:
-            parts.append(engine_block)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.ENGINE_STATUS,
+                    text=engine_block,
+                    source="state:engine_failure",
+                )
+            )
         gate_section = _render_gate_decision(self._get(resolved, "GATE_DECISION"))
         if gate_section:
-            parts.append(gate_section)
-        parts.append("## Recent thread\n\n" + self._render_recent_thread(history))
-        return "\n\n".join(part for part in parts if part)
+            sections.append(
+                ContextSection(
+                    kind=ContextSectionKind.GATE_DECISION,
+                    text=gate_section,
+                    source="gate_decision",
+                )
+            )
+        sections.append(
+            ContextSection(
+                kind=ContextSectionKind.RECENT_THREAD,
+                text="## Recent thread\n\n" + self._render_recent_thread(history),
+                source=self._thread_section_source(),
+                comment_ids=self._thread_section_comment_ids(),
+            )
+        )
+        return sections
+
+    def _thread_section_source(self) -> str:
+        """Provenance of the recent-thread section: the selection rule used."""
+        selection = self._context_selection()
+        if selection is None:
+            return "history:window"
+        return f"selection:{selection.mode}"
+
+    def _thread_section_comment_ids(self) -> tuple[str, ...]:
+        """Platform comment ids the selected thread entries came from."""
+        selection = self._context_selection()
+        if selection is None:
+            return ()
+        return tuple(
+            entry.source_comment_id
+            for entry in selection.entries
+            if entry.source_comment_id
+        )
 
     def _render_engine_status(self) -> str:
         """The previous run's engine-side facts, as a prompt block (#1288).
@@ -4493,6 +4694,20 @@ def _one_line_preview(text: str, limit: int = 200) -> str:
 # Env var carrying this step's serialized step-input records to the agent child,
 # which persists them on the advancing HistoryEntry (issue #872).
 STEP_INPUT_RESULTS_ENV = "STEP_INPUT_RESULTS"
+
+# Env var carrying this step's context manifest (the body-free ordered rows) to
+# the agent child, which persists them on the advancing HistoryEntry (#1346).
+CONTEXT_MANIFEST_ENV = "CONTEXT_MANIFEST"
+
+
+def _with_context_manifest(env: dict[str, str], plan: Any) -> dict[str, str]:
+    """Attach the plan's manifest for the child to persist (issue #1346)."""
+    if plan is None:
+        return env
+    rows = [row.model_dump(mode="json") for row in plan.manifest()]
+    if rows:
+        env[CONTEXT_MANIFEST_ENV] = json.dumps(rows)
+    return env
 
 
 def _with_step_input_records(

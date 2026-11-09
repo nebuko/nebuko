@@ -135,10 +135,11 @@ def git_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
     bounded = {
         key: value
         for key, value in os.environ.items()
-        if key not in ("CONTEXT_BODIES", "STEP_INPUT_RESULTS")
+        if key not in ("CONTEXT_BODIES", "STEP_INPUT_RESULTS", "CONTEXT_MANIFEST")
     }
     bounded.pop("CONTEXT_BODIES", None)
     bounded.pop("STEP_INPUT_RESULTS", None)
+    bounded.pop("CONTEXT_MANIFEST", None)
     return {**bounded, **overlay, "GIT_TERMINAL_PROMPT": "0"}
 
 
