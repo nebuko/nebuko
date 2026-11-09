@@ -30,6 +30,7 @@ from .base import (
     drive_turn,
 )
 from .engine_tools import MCP_SERVER_NAME, TOOL_PREFIX, EngineToolServer, FinalizeSink
+from .mcp import resolve_mcp_env
 
 __all__ = [
     "ClaudeCodeClosingChannel",
@@ -43,6 +44,29 @@ log = logging.getLogger(__name__)
 #: The only tool the closing turn may call.
 FINALIZE_TOOL = f"{TOOL_PREFIX}finalize"
 
+#: Engine tool name -> the Claude Code built-in that serves the same role.
+#: A name missing here (``think``, ``finish``) has no Claude Code equivalent and
+#: is served by the engine MCP server only when it is an engine tool.
+BUILTIN_TOOLS: dict[str, str] = {
+    "terminal": "Bash",
+    "read": "Read",
+    "edit": "Edit",
+    "write": "Write",
+    "file_editor": "Edit",
+    "task_tracker": "TodoWrite",
+}
+
+#: Engine tools the in-process MCP server exposes.
+ENGINE_TOOL_NAMES = frozenset(
+    {
+        "finalize",
+        "terminal_batch",
+        "complexity_review",
+        "fetch_comment_bodies",
+        "report_scaffold_branch",
+    }
+)
+
 CLOSING_PROMPT = (
     "Engine finalize turn - the work phase is over; do not call any work tool. "
     "Call the `finalize` tool once. Put your COMPLETE, self-contained report in "
@@ -55,18 +79,36 @@ CLOSING_PROMPT = (
 )
 
 
+class _ToolPolicy:
+    """The session's current tool allow-list, shared with the SDK hook."""
+
+    def __init__(self) -> None:
+        self._allow: frozenset[str] | None = None
+        self._lock = threading.Lock()
+
+    def set(self, allow: frozenset[str] | None) -> None:
+        with self._lock:
+            self._allow = allow
+
+    def permits(self, tool_name: str) -> bool:
+        with self._lock:
+            allow = self._allow
+        return allow is None or tool_name in allow
+
+
 class ClaudeCodeSession:
     """A live ``ClaudeSDKClient`` behind the :class:`HarnessSession` protocol."""
 
-    def __init__(self, options: Any, sink: FinalizeSink) -> None:
+    def __init__(
+        self, options: Any, sink: FinalizeSink, policy: "_ToolPolicy | None" = None
+    ) -> None:
         self.options = options
         self.sink = sink
+        self.policy = policy or _ToolPolicy()
         self._client: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._callbacks: list[Callable[[HarnessEvent], None]] = []
-        self._allow: frozenset[str] | None = None
-        self._lock = threading.Lock()
 
     # ── HarnessSession ───────────────────────────────────────────
     def send_message(self, text: str) -> None:
@@ -101,14 +143,11 @@ class ClaudeCodeSession:
 
     def set_tool_policy(self, allow: frozenset[str] | None) -> None:
         """Restrict the tools this session may call (``None`` = all)."""
-        with self._lock:
-            self._allow = allow
+        self.policy.set(allow)
 
     def permits(self, tool_name: str) -> bool:
         """True when ``tool_name`` is allowed by the current policy."""
-        with self._lock:
-            allow = self._allow
-        return allow is None or tool_name in allow
+        return self.policy.permits(tool_name)
 
     # ── async bridge ─────────────────────────────────────────────
     def _ensure_client(self) -> None:
@@ -150,6 +189,7 @@ def _events_of(message: Any) -> list[HarnessEvent]:
         TextBlock,
         ToolResultBlock,
         ToolUseBlock,
+        UserMessage,
     )
 
     events: list[HarnessEvent] = []
@@ -163,11 +203,15 @@ def _events_of(message: Any) -> list[HarnessEvent]:
                         kind="action", text=block.name, data={"input": block.input}
                     )
                 )
-            elif isinstance(block, ToolResultBlock):
+    elif isinstance(message, UserMessage):
+        # Tool results arrive on the user side of the stream, not the assistant's.
+        content = message.content if isinstance(message.content, list) else []
+        for block in content:
+            if isinstance(block, ToolResultBlock):
                 events.append(
                     HarnessEvent(
                         kind="observation",
-                        text=str(block.content or ""),
+                        text=_block_text(block.content),
                         data={"is_error": bool(block.is_error)},
                     )
                 )
@@ -292,15 +336,24 @@ class ClaudeCodeHarness:
             agent_context=agent_context,
             sink=sink,
         )
+        policy = _ToolPolicy()
+        builtins, engine_tools = _declared_tools(agent_cfg)
+        mcp_servers = {MCP_SERVER_NAME: server.as_sdk_server()}
+        mcp_servers.update(_stdio_servers(agent_cfg))
         options = ClaudeAgentOptions(
             system_prompt=prompt,
-            mcp_servers={MCP_SERVER_NAME: server.as_sdk_server()},
-            allowed_tools=list(_declared_tools(agent_cfg)),
+            mcp_servers=mcp_servers,
+            tools=builtins,
+            # Headless Claude Code denies every tool outside ``allowed_tools``.
+            allowed_tools=[*builtins, *engine_tools],
+            hooks={"PreToolUse": [_policy_hook(policy)]},
             model=_model_alias(agent_cfg),
             cwd=os.environ.get("GFA_REPO_ROOT") or os.getcwd(),
             permission_mode="acceptEdits",
         )
-        return BuiltAgent(session=ClaudeCodeSession(options, sink), prompt=prompt)
+        return BuiltAgent(
+            session=ClaudeCodeSession(options, sink, policy), prompt=prompt
+        )
 
     def build_conversation(
         self, *, role_name: str, agent_cfg: Any, prompt: str, agent_context: Any
@@ -323,15 +376,82 @@ class ClaudeCodeHarness:
         return ClaudeCodeClosingChannel()
 
 
-def _declared_tools(agent_cfg: Any) -> tuple[str, ...]:
-    """The engine tools this role declares, as ``mcp__nebuko__*`` names."""
+def _declared_tools(agent_cfg: Any) -> tuple[list[str], list[str]]:
+    """Split a role's declared tools into Claude built-ins and engine MCP tools."""
     declared = getattr(agent_cfg, "tools", None) or ()
-    return tuple(
-        f"{TOOL_PREFIX}{name}"
-        for name in declared
-        if name in {"finalize", "terminal_batch", "complexity_review",
-                    "fetch_comment_bodies", "report_scaffold_branch"}
-    )
+    builtins: list[str] = []
+    engine_tools: list[str] = []
+    for name in declared:
+        if name in ENGINE_TOOL_NAMES:
+            engine_tools.append(f"{TOOL_PREFIX}{name}")
+        elif name in BUILTIN_TOOLS:
+            builtin = BUILTIN_TOOLS[name]
+            if builtin not in builtins:
+                builtins.append(builtin)
+    # Every step ends through ``finalize``; it must be callable even when the
+    # role's static tool list predates it (mirrors the OpenHands run path).
+    if FINALIZE_TOOL not in engine_tools:
+        engine_tools.append(FINALIZE_TOOL)
+    return builtins, engine_tools
+
+
+def _stdio_servers(agent_cfg: Any) -> dict[str, Any]:
+    """The role's declared MCP servers as SDK stdio configs."""
+    servers: dict[str, Any] = {}
+    for spec in getattr(agent_cfg, "mcp_servers", None) or ():
+        env, missing = resolve_mcp_env(spec.env)
+        if missing:
+            log.warning(
+                f"MCP server '{spec.name}' skipped — unset env var(s): "
+                f"{', '.join(missing)}"
+            )
+            continue
+        servers[spec.name] = {
+            "type": "stdio",
+            "command": spec.command,
+            "args": list(spec.args),
+            "env": env,
+        }
+    return servers
+
+
+def _policy_hook(policy: "_ToolPolicy") -> Any:
+    """A ``PreToolUse`` hook enforcing ``policy`` on every tool call.
+
+    ``can_use_tool`` is shadowed by ``allowed_tools`` / ``permission_mode``, so
+    it cannot narrow a session that already allows a tool; a ``PreToolUse`` hook
+    sees every call and can deny it.
+    """
+    from claude_agent_sdk import HookMatcher  # noqa: PLC0415
+
+    async def _guard(input_data: Any, tool_use_id: Any, context: Any) -> Any:
+        name = str(input_data.get("tool_name", ""))
+        if policy.permits(name):
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"tool '{name}' is not allowed during this turn"
+                ),
+            }
+        }
+
+    return HookMatcher(matcher=None, hooks=[_guard])
+
+
+def _block_text(content: Any) -> str:
+    """Flatten a tool result's content (string or block list) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict)
+        )
+    return "" if content is None else str(content)
 
 
 def _model_alias(agent_cfg: Any) -> Optional[str]:

@@ -125,6 +125,138 @@ def test_conversation_view_records_agent_text_and_carries_the_session() -> None:
     assert len(conversation.state.events) == 1
 
 
+def test_declared_tools_map_to_claude_builtins_and_engine_mcp() -> None:
+    from types import SimpleNamespace
+
+    from nebuko.engine.harness.claude_code import _declared_tools
+
+    cfg = SimpleNamespace(
+        tools=[
+            "terminal",
+            "read",
+            "edit",
+            "write",
+            "task_tracker",
+            "think",
+            "finish",
+            "terminal_batch",
+            "complexity_review",
+        ]
+    )
+    builtins, engine_tools = _declared_tools(cfg)
+    assert builtins == ["Bash", "Read", "Edit", "Write", "TodoWrite"]
+    # ``finalize`` is always callable, even when the role predates it.
+    assert engine_tools == [
+        "mcp__nebuko__terminal_batch",
+        "mcp__nebuko__complexity_review",
+        "mcp__nebuko__finalize",
+    ]
+
+
+def test_build_agent_allows_the_declared_tools_and_guards_every_call() -> None:
+    from types import SimpleNamespace
+
+    from nebuko.engine.harness.claude_code import ClaudeCodeHarness
+
+    cfg = SimpleNamespace(
+        tools=["terminal", "read", "finalize"],
+        mcp_servers=[],
+        model_ref=None,
+    )
+    built = ClaudeCodeHarness().build_agent(
+        role_name="dev", agent_cfg=cfg, prompt="p", agent_context=None
+    )
+    options = built.session.options
+    assert options.tools == ["Bash", "Read"]
+    assert options.allowed_tools == [
+        "Bash",
+        "Read",
+        "mcp__nebuko__finalize",
+    ]
+    assert "PreToolUse" in options.hooks
+
+
+def test_policy_hook_denies_tools_outside_the_closing_policy() -> None:
+    import asyncio
+
+    from nebuko.engine.harness.claude_code import _policy_hook
+
+    session, _, _ = _session()
+    hook = _policy_hook(session.policy).hooks[0]
+
+    allowed = asyncio.run(hook({"tool_name": FINALIZE_TOOL}, None, {}))
+    assert allowed == {}
+
+    session.set_tool_policy(frozenset({FINALIZE_TOOL}))
+    denied = asyncio.run(hook({"tool_name": "Bash"}, None, {}))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_declared_mcp_servers_become_stdio_configs(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from nebuko.engine.harness.claude_code import _stdio_servers
+
+    monkeypatch.setenv("BRAVE_API_KEY", "secret-value")
+    cfg = SimpleNamespace(
+        mcp_servers=[
+            SimpleNamespace(
+                name="brave-search",
+                command="npx",
+                args=["-y", "server"],
+                env={"BRAVE_API_KEY": "BRAVE_API_KEY"},
+            )
+        ]
+    )
+    assert _stdio_servers(cfg) == {
+        "brave-search": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "server"],
+            "env": {"BRAVE_API_KEY": "secret-value"},
+        }
+    }
+
+
+def test_declared_mcp_server_with_unset_env_is_skipped(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from nebuko.engine.harness.claude_code import _stdio_servers
+
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    cfg = SimpleNamespace(
+        mcp_servers=[
+            SimpleNamespace(
+                name="brave-search",
+                command="npx",
+                args=[],
+                env={"BRAVE_API_KEY": "BRAVE_API_KEY"},
+            )
+        ]
+    )
+    assert _stdio_servers(cfg) == {}
+
+
+def test_tool_results_surface_as_observation_events() -> None:
+    from claude_agent_sdk import ToolResultBlock, UserMessage
+
+    from nebuko.engine.harness.claude_code import _events_of
+
+    events = _events_of(
+        UserMessage(
+            content=[
+                ToolResultBlock(
+                    tool_use_id="t1",
+                    content=[{"type": "text", "text": "line one"}],
+                    is_error=False,
+                )
+            ]
+        )
+    )
+    assert [event.kind for event in events] == ["observation"]
+    assert events[0].text == "line one"
+
+
 def test_harness_build_conversation_wraps_the_built_session(monkeypatch) -> None:
     from types import SimpleNamespace
 

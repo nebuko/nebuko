@@ -238,10 +238,17 @@ the OpenHands tools use — one implementation, two transports, never a copy.
 and `claude-agent-sdk` hosts an **in-process** MCP server
 (`create_sdk_mcp_server` + `@tool`): the handlers are ordinary Python functions
 in the engine process, called back over the SDK control channel. No sidecar, no
-socket, no ACP hop. The closing turn narrows the tool surface to
-`mcp__nebuko__finalize` through the session's `set_tool_policy` (Claude Code
-denies every tool outside `allowed_tools` in headless mode), which replaces the
-OpenHands-only mutation of the SDK's private `agent._tools` map.
+socket, no ACP hop. A role's declared `tools` map onto the Claude Code
+built-ins that serve the same role (`terminal`→`Bash`, `read`→`Read`,
+`edit`→`Edit`, `write`→`Write`, `task_tracker`→`TodoWrite`), with the engine
+tools exposed as `mcp__nebuko__*`; `finalize` is always allowed, mirroring the
+OpenHands run path. Declared `mcp_servers` become SDK stdio configs.
+
+The closing turn narrows the tool surface to `mcp__nebuko__finalize` through
+`set_tool_policy`, enforced by a `PreToolUse` hook: `can_use_tool` is shadowed
+by `allowed_tools` / `permission_mode`, so it cannot take a tool away, while
+the hook sees every call and can deny it. That replaces the OpenHands-only
+mutation of the SDK's private `agent._tools` map.
 
 The run path is unchanged downstream: `run_agent` returns a conversation-shaped
 view (id, `state.events`, `execution_status`, `run_outcome`) carrying its session
