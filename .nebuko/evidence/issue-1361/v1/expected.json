@@ -1,6 +1,0 @@
-{
-  "deltas": {
-    "quoted_caller": {"symptom": "dev\nunknown", "healthy": "dev"},
-    "quoted_skip_agent": {"symptom": "false", "healthy": "true"}
-  }
-}
