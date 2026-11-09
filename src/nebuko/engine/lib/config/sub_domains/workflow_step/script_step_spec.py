@@ -1,7 +1,7 @@
 """Script step spec entity (issue #541)."""
 
 import json
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
@@ -25,6 +25,10 @@ class ScriptStepSpec(BaseModel):
     working_dir: Optional[str] = None
     env: Optional[dict[str, str]] = None
     timeout_minutes: Optional[int] = None
+    # Which checkout the command runs on (issue #1327). ``session`` (default)
+    # checks out the pushed dev branch, so the command sees the code under
+    # review; ``workflow`` keeps the workflow's own ref (the opt-out).
+    checkout: Literal["session", "workflow"] = "session"
 
     @model_validator(mode="after")
     def _validate_script_source(self) -> "ScriptStepSpec":
@@ -52,10 +56,12 @@ class ScriptStepSpec(BaseModel):
         JSON object, so both round-trip losslessly through the environment (the
         pre-#974 space-join/``shlex.split`` pair did not). ``SCRIPT_WORKING_DIR``
         stays repo-relative — the executor anchors it at the session workspace
-        root.
+        root. ``SCRIPT_CHECKOUT`` selects the checkout the command runs on
+        (issue #1327).
         """
         return {
             "SCRIPT_ARGS": json.dumps(list(self.args or [])),
             "SCRIPT_WORKING_DIR": self.working_dir or "",
             "SCRIPT_ENV": json.dumps(dict(self.env or {})),
+            "SCRIPT_CHECKOUT": self.checkout,
         }

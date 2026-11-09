@@ -159,7 +159,7 @@ def _resolve_binding(binding: Any, scope: Mapping[str, Any]) -> Any:
     return str(binding.str_ if binding.str_ is not None else "")
 
 
-def _force(value: Any) -> str:
+def _force(value: Any, cwd: str | None = None) -> str:
     """Materialize a resolved value: run a deferred command, else return text."""
     if isinstance(value, _Deferred):
         completed = subprocess.run(
@@ -167,6 +167,7 @@ def _force(value: Any) -> str:
             capture_output=True,
             text=True,
             timeout=EXEC_TIMEOUT_SECONDS,
+            cwd=cwd,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or "").strip() or f"exit code {completed.returncode}"
@@ -179,6 +180,7 @@ def _force(value: Any) -> str:
 def materialize(
     step_inputs: StepInputs,
     step_scope: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> list[Materialization]:
     """Resolve frame bindings then consumer bindings; never raises for a provider.
 
@@ -188,6 +190,8 @@ def materialize(
     ``step_scope`` maps upstream step names to their state-stripped comment
     bodies (issue #756): a consumer binding whose ``ref`` is a bare step name
     resolves against it. ``input.<name>`` frame parameters take precedence.
+    ``cwd`` is the evidence workspace an ``exec`` provider runs in (issue
+    #1327), so it sees the code under review.
     """
     scope: dict[str, Any] = {}
     for frame in step_inputs.frames:
@@ -200,7 +204,7 @@ def materialize(
     for name, binding in step_inputs.consumer.items():
         kind = _binding_kind(binding)
         try:
-            body = _force(_resolve_binding(binding, scope))
+            body = _force(_resolve_binding(binding, scope), cwd)
             results.append(
                 Materialization(name=name, ok=True, body=body, binding=kind)
             )

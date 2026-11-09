@@ -85,13 +85,14 @@ class InputBinding(BaseModel):
                 return kind  # type: ignore[return-value]
         raise InputMaterializationError("binding declares no source")
 
-    def resolve(self, scope: dict[str, str]) -> str:
+    def resolve(self, scope: dict[str, str], cwd: str | None = None) -> str:
         """Materialize this binding against ``scope``.
 
         ``str`` returns its constant; ``ref`` returns the value registered
         under the reference (a ``KeyError`` is surfaced as a typed
         :class:`InputMaterializationError`); ``exec`` runs the command and
-        returns its captured stdout.
+        returns its captured stdout. ``cwd`` is the evidence workspace the
+        command runs in (issue #1327).
         """
         if self.str_ is not None:
             return self.str_
@@ -102,14 +103,16 @@ class InputBinding(BaseModel):
                 )
             return scope[self.ref]
         if self.exec_ is not None:
-            return _capture_exec(self.exec_, self.ref)
+            return _capture_exec(self.exec_, self.ref, cwd)
         raise InputMaterializationError("binding declares no source")
 
 
-def _capture_exec(argv: list[str], _ref: Optional[str] = None) -> str:
+def _capture_exec(
+    argv: list[str], _ref: Optional[str] = None, cwd: str | None = None
+) -> str:
     """Run ``argv`` and return its stdout; raise on non-zero exit."""
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True)
+        completed = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
     except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
         raise InputMaterializationError(f"command {argv!r} failed: {exc}") from exc
     if completed.returncode != 0:
