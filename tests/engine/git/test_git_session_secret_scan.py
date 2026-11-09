@@ -42,7 +42,13 @@ def checkout(tmp_path, remote):
     _git(path, "config", "user.email", "test@example.com")
     _git(path, "remote", "add", "origin", str(remote))
     (path / "a.txt").write_text("a\n", encoding="utf-8")
-    _git(path, "add", "a.txt")
+    # The guard is opt-in (``features.secret_scan``, issue #1347): the fixture
+    # repo enables it in its initial, already-published commit.
+    (path / ".nebuko").mkdir()
+    (path / ".nebuko" / "nebuko.yaml").write_text(
+        "features:\n  secret_scan: true\n", encoding="utf-8"
+    )
+    _git(path, "add", "a.txt", ".nebuko/nebuko.yaml")
     _git(path, "commit", "-m", "initial")
     _git(path, "push", "-u", "origin", "main")
     return path
@@ -55,6 +61,23 @@ def _commit(checkout, name: str, content: str, message: str = "add log") -> None
 
 
 class TestPrePushRedaction:
+    def test_the_scan_is_off_without_the_manifest_flag(self, checkout, remote):
+        """``features.secret_scan`` defaults to false (issue #1347)."""
+        (checkout / ".nebuko" / "nebuko.yaml").unlink()
+        _commit(checkout, "console.txt", f"token={FAKE_OAUTH}\n")
+
+        result = GitSessionGuard(checkout, {}).finalize(expected_branch="main")
+
+        assert result.ok, result.detail
+        assert result.secret_findings == ()
+        pushed = subprocess.run(
+            ["git", "-C", str(remote), "log", "-p", "--all"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert FAKE_OAUTH in pushed
+
     def test_a_leaked_token_never_reaches_the_remote(self, checkout, remote):
         _commit(checkout, "console.txt", f"token={FAKE_OAUTH}\n")
 

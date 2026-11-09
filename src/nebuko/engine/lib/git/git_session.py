@@ -42,6 +42,7 @@ from nebuko.engine.lib.redaction import (
 from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
     SecretFinding,
 )
+from nebuko.engine.paths import secret_scan_enabled
 
 # Plain stdlib logger: ``openhands.sdk.get_logger`` is ``logging.getLogger`` plus
 # ``propagate = True`` (the default), and importing it at module top dragged the
@@ -131,10 +132,15 @@ class GitSessionGuard:
         repo_root: Path,
         env: Mapping[str, str],
         remote: str = "origin",
+        secret_scan: bool | None = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.env = env
         self.remote = remote
+        #: Whether the pre-push scan runs (``features.secret_scan`` in
+        #: ``.nebuko/nebuko.yaml``, disabled by default). ``None`` resolves it
+        #: from this checkout's manifest on first use.
+        self._secret_scan = secret_scan
         #: Set when this guard installed the token extraheader itself.
         self._token_installed = False
 
@@ -244,9 +250,10 @@ class GitSessionGuard:
                 "automatic commit (see `git status`)"
             )
         if not problems:
-            secret_findings, scan_problem = self._redact_unpublished(branch)
-            if scan_problem:
-                problems.append(scan_problem)
+            if self.secret_scan_enabled():
+                secret_findings, scan_problem = self._redact_unpublished(branch)
+                if scan_problem:
+                    problems.append(scan_problem)
         if not problems:
             push_problem = self._push_branch(branch)
             if push_problem:
@@ -284,6 +291,12 @@ class GitSessionGuard:
             auto_commit=auto_commit,
             secret_findings=secret_findings,
         )
+
+    def secret_scan_enabled(self) -> bool:
+        """Whether the pre-push scan is on for this checkout (issue #1347)."""
+        if self._secret_scan is None:
+            self._secret_scan = secret_scan_enabled(self.repo_root)
+        return self._secret_scan
 
     def head_sha(self) -> str:
         """The current HEAD SHA, empty when it cannot be read."""

@@ -119,6 +119,13 @@ documented in [github-api-limits.md](./github-api-limits.md).
 
 ### Secret Scanning and Redaction (issue #1347)
 
+> **Opt-in.** Enable it with `features.secret_scan: true` in
+> `.nebuko/nebuko.yaml` ([configuration.md — Feature
+> flags](./configuration.md#feature-flags)). The flag defaults to `false`, so a
+> repo that does not declare it pushes and posts unchanged; both the pre-push
+> guard (`GitSessionGuard.secret_scan_enabled`) and the pre-post publish seam
+> (`Engine._secret_scan_enabled`) read it.
+
 Two channels publish agent output: the **git history** (the commits the engine
 pushes) and the **issue comment** (the step's answer). Both are public, and
 agents routinely paste raw tool output — CI logs, env dumps, artifacts — into

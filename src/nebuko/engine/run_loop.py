@@ -78,6 +78,7 @@ from nebuko.engine.paths import (
     LIB_DIR,
     NebukoPaths,
     repo_root,
+    secret_scan_enabled,
 )
 
 from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
@@ -3118,6 +3119,14 @@ class Engine:
             branch_name=result.branch,
         )
 
+    def _secret_scan_enabled(self) -> bool:
+        """Whether the secret-scan guard is on for the caller repo (issue #1347).
+
+        Opt-in via ``features.secret_scan`` in ``.nebuko/nebuko.yaml``; a
+        missing or invalid manifest reads as disabled.
+        """
+        return secret_scan_enabled(self._caller_root())
+
     def _scan_comment_sources(
         self, *, answer: str, final_message: str, console_log: str
     ) -> list[SecretFinding]:
@@ -3549,8 +3558,14 @@ class Engine:
         # and a pasted log is the likeliest leak channel, so the sources are
         # scanned before framing. The findings are merged into the run's
         # ``secret_scan`` record (warning + persistence), never the values.
-        comment_findings = self._scan_comment_sources(
-            answer=answer, final_message=final_message, console_log=console_log
+        # Opt-in via ``features.secret_scan`` (disabled by default).
+        scan_enabled = self._secret_scan_enabled()
+        comment_findings = (
+            self._scan_comment_sources(
+                answer=answer, final_message=final_message, console_log=console_log
+            )
+            if scan_enabled
+            else []
         )
         recorded_scan = self._publish_state.get("secret_scan")
         if recorded_scan is not None and publish_state is not None:
@@ -3576,6 +3591,7 @@ class Engine:
             state=publish_state,
             engine_failed=engine_failed,
             secret_findings=comment_findings,
+            secret_scan=scan_enabled,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).

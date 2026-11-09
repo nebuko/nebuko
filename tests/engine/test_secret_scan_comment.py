@@ -43,6 +43,7 @@ class TestCommentBodyRedaction:
             latest_answer=f"here is the log:\n{FAKE_OAUTH}\n",
             final_message=f"here is the log:\n{FAKE_OAUTH}\n",
             role_name="dev",
+            secret_scan=True,
         )
 
         assert FAKE_OAUTH not in body
@@ -56,14 +57,33 @@ class TestCommentBodyRedaction:
         )
 
         header, _ = build_comment_body_parts(
-            latest_answer="done", final_message="done", role_name="dev", state=state
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=state,
+            secret_scan=True,
         )
 
         assert FAKE_OAUTH not in header
 
+    def test_the_scan_is_off_by_default(self):
+        """``features.secret_scan`` is opt-in (disabled unless the manifest says so)."""
+        _, body = build_comment_body_parts(
+            latest_answer=f"here is the log:\n{FAKE_OAUTH}\n",
+            final_message=f"here is the log:\n{FAKE_OAUTH}\n",
+            role_name="dev",
+            secret_scan=False,
+        )
+
+        assert FAKE_OAUTH in body
+        assert "REDACTED" not in body
+
     def test_a_clean_body_is_untouched(self):
         _, body = build_comment_body_parts(
-            latest_answer="all good\n", final_message="all good\n", role_name="dev"
+            latest_answer="all good\n",
+            final_message="all good\n",
+            role_name="dev",
+            secret_scan=True,
         )
 
         assert body.startswith("all good")
@@ -88,7 +108,11 @@ class TestSecretScanWarning:
         state = WorkflowState(workflow="spec-tdd", step="spec", secret_scan=_redacted_scan())
 
         _, body = build_comment_body_parts(
-            latest_answer="done", final_message="done", role_name="dev", state=state
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=state,
+            secret_scan=True,
         )
 
         assert "Secret redacted" in body
@@ -98,7 +122,11 @@ class TestSecretScanWarning:
         state = WorkflowState(workflow="spec-tdd", step="spec", secret_scan=SecretScan())
 
         _, body = build_comment_body_parts(
-            latest_answer="done", final_message="done", role_name="dev", state=state
+            latest_answer="done",
+            final_message="done",
+            role_name="dev",
+            state=state,
+            secret_scan=True,
         )
 
         assert "Secret redacted" not in body
@@ -141,7 +169,12 @@ def _trigger() -> Trigger:
 
 
 class TestPublishSeam:
-    def _engine(self, tmp_path) -> Engine:
+    def _engine(self, tmp_path, *, enabled: bool = True) -> Engine:
+        if enabled:
+            (tmp_path / ".nebuko").mkdir(exist_ok=True)
+            (tmp_path / ".nebuko" / "nebuko.yaml").write_text(
+                "features:\n  secret_scan: true\n", encoding="utf-8"
+            )
         return Engine(
             adapter=LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger()),
             repo_root=tmp_path,
@@ -149,9 +182,24 @@ class TestPublishSeam:
                 "GITHUB_REPOSITORY": "nebuko/nebuko",
                 "GITHUB_SERVER_URL": "https://github.com",
                 "GITHUB_RUN_ID": "1",
+                "GITHUB_WORKSPACE": str(tmp_path),
                 "TRIGGER_AUTHOR": "olivier-norture",
             },
         )
+
+    def test_the_scan_is_disabled_without_the_manifest_flag(self, tmp_path):
+        """``features.secret_scan`` defaults to false (issue #1347)."""
+        engine = self._engine(tmp_path, enabled=False)
+        result = {
+            "answer": f"leaked {FAKE_OAUTH}",
+            "turn_outcome": {"appreciation": "approved"},
+            "state": WorkflowState(workflow="spec-tdd", step="spec", agent="dev"),
+        }
+
+        posted = engine.publish(result)
+
+        assert FAKE_OAUTH in posted
+        assert engine._publish_state.get("secret_scan") is None
 
     def test_the_publish_seam_redacts_and_records(self, tmp_path):
         engine = self._engine(tmp_path)
