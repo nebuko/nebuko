@@ -34,6 +34,7 @@ from nebuko.engine.lib.workflow_state import (
     GateDecision,
     GateLock,
     GateStatus,
+    HistoryEntry,
     IncompleteReason,
     TurnOutcome,
     TurnStatus,
@@ -111,6 +112,20 @@ def _write_workflow(tmpdir: str) -> str:
 
 def _cmd(text: str):
     return parse_workflow_command(text)
+
+
+def _entry(step: str, comment_id: int) -> HistoryEntry:
+    """A completed history entry of the gated workflow at ``step``."""
+    return HistoryEntry(
+        step=step,
+        agent="architect",
+        comment_ids=[comment_id],
+        position=[StepRef(workflow="default", step=step)],
+        turn_outcome=TurnOutcome(
+            status=TurnStatus.COMPLETED,
+            appreciation=Appreciation.APPROVED,
+        ),
+    )
 
 
 class TestResolveGateDecisionPath(unittest.TestCase):
@@ -254,6 +269,81 @@ class TestResolveGateDecisionPath(unittest.TestCase):
             )
         self.assertEqual(cfg.get("SKIP_AGENT"), "true")
         self.assertIn("single-shot", cfg.get("REASON", ""))
+
+    def test_replay_on_the_same_hold_is_still_inert(self):
+        """A decision recorded after the hold began binds that hold (issue #1294)."""
+        held_at = [StepRef(workflow="default", step="stub_approval")]
+        prior = GateDecision(
+            status="approved",
+            workflow="default",
+            target_step="stub_approval",
+            decided_by="olivier",
+            decided_at=datetime.now(timezone.utc),
+            comment_id=350,
+            position=held_at,
+        )
+        state = _held_state(gate_history=[prior])
+        state.history = [_entry("plan", 200), _entry("stub_approval", 300)]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_gate_decision_path(
+                state, _cmd("/nebuko approve gate"), HUMAN, tmpdir
+            )
+        self.assertEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertIn("single-shot", cfg.get("REASON", ""))
+
+    def test_new_hold_after_loop_back_accepts_a_new_decision(self):
+        """Decide, loop back, hold again, decide again (issue #1294)."""
+        held_at = [StepRef(workflow="default", step="stub_approval")]
+        prior = GateDecision(
+            status="rejected",
+            workflow="default",
+            target_step="stub_approval",
+            decided_by="olivier",
+            decided_at=datetime.now(timezone.utc),
+            comment_id=150,
+            position=held_at,
+        )
+        state = _held_state(gate_history=[prior])
+        state.history = [
+            _entry("stub_approval", 100),
+            _entry("plan", 200),
+            _entry("stub_approval", 300),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_gate_decision_path(
+                state, _cmd("/nebuko reject gate"), HUMAN, tmpdir
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["config_step"], "plan")
+        decision = json.loads(cfg["config_gate_decision"])
+        self.assertEqual(decision["status"], "rejected")
+
+    def test_new_hold_without_comment_ids_accepts_a_new_decision(self):
+        """Without comparable ids, hold instances are counted (issue #1294)."""
+        held_at = [StepRef(workflow="default", step="stub_approval")]
+        prior = GateDecision(
+            status="approved",
+            workflow="default",
+            target_step="stub_approval",
+            decided_by="olivier",
+            decided_at=datetime.now(timezone.utc),
+            position=held_at,
+        )
+        state = _held_state(gate_history=[prior])
+        state.history = [
+            _entry("stub_approval", 100),
+            _entry("plan", 200),
+            _entry("stub_approval", 300),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_workflow(tmpdir)
+            cfg = _resolve_gate_decision_path(
+                state, _cmd("/nebuko approve gate"), HUMAN, tmpdir
+            )
+        self.assertNotEqual(cfg.get("SKIP_AGENT"), "true")
+        self.assertEqual(cfg["config_step"], "implement")
 
 
 class TestResumeGuardOnGateHold(unittest.TestCase):
