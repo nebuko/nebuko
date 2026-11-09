@@ -13,6 +13,7 @@ from nebuko.engine.models import (
     CommentEntry,
     DeterministicStep,
     ExitCode,
+    NebukoManifest,
     RunOutcome,
     SkipKind,
     SkipOutcome,
@@ -199,6 +200,19 @@ class TestStepResult:
         result = StepResult(step_kind="delete_comments", ok=True, detail="done", affected=1)
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.ok = False
+
+
+class TestNebukoManifest:
+    def test_merge_main_defaults_to_true(self):
+        """Issue #1344: the merge-before-tests default is on for every repo."""
+        assert NebukoManifest().merge_main is True
+
+    def test_merge_main_can_be_turned_off(self):
+        assert NebukoManifest(merge_main=False).merge_main is False
+
+    def test_unknown_keys_are_still_rejected(self):
+        with pytest.raises(ValueError):
+            NebukoManifest(unknown_key=True)
 
 
 class TestDeterministicStepFromResolved:

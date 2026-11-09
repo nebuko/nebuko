@@ -90,6 +90,25 @@ When the manifest is absent or does not declare `default_workflow`, the shipped
 
 ---
 
+## Merging `main` before a test run
+
+Script steps that run tests must test the same tree CI tests: GitHub checks out
+the **PR merge commit** (branch head merged into `main`), not the bare branch
+head. Testing the bare head reports failures `main` has already fixed (issue
+#1344). The manifest sets the repo-wide default:
+
+```yaml
+merge_main: true   # default when undeclared
+```
+
+`.nebuko/scripts/use-session-branch.sh` reads it and merges `origin/main` into
+the detached branch head — locally, never pushed. A single step overrides it
+with `NEBUKO_MERGE_MAIN=0` (`git_diff` does: a merge would pull `main`'s
+changes into the diff and hide the change under review) or `=1` to force the
+merge on.
+
+---
+
 ## Provider Schema
 
 | Field | Type | Required | Description |

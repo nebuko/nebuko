@@ -34,26 +34,25 @@ branch head ──┘
 The merge commit is created **locally only**. It is never pushed, so the
 feature branch and the PR history are untouched.
 
-## `NEBUKO_MERGE_MAIN` flag
+## `merge_main` manifest flag
 
-The merge is opt-in. Set `NEBUKO_MERGE_MAIN=1` in the environment of
-`use-session-branch.sh`:
+The merge is on by default. `.nebuko/nebuko.yaml` sets it repo-wide:
 
-```sh
-NEBUKO_MERGE_MAIN=1 sh .nebuko/scripts/use-session-branch.sh
+```yaml
+merge_main: true   # default when undeclared
 ```
 
-- **Default: off.** Without the variable the script behaves exactly as before:
-  fetch, detach onto the branch head, stop. Every other caller — including the
-  `git_diff` step — keeps that behaviour.
-- `git_diff` must **not** set the flag: a merge would pull `main`'s changes
-  into the diff and hide the change under review.
+- **Default: on.** With no manifest key the script merges `origin/main` into
+  the detached branch head before the step's command runs.
+- `NEBUKO_MERGE_MAIN=0` (or `1`) overrides the manifest for one step. The
+  `git_diff` step sets `0`: a merge would pull `main`'s changes into the diff
+  and hide the change under review.
 - The merge uses `git -c user.name=nebuko -c user.email=nebuko@invalid merge
   --no-edit --no-ff origin/main`, so it works on a runner with no git identity
   configured.
 
-`red-test-review-loop`'s `run_tests` step sets the flag; `dev-review-loop` and
-the other script steps do not.
+`red-test-review-loop`'s `run_tests` step relies on the manifest default;
+`dev-review-loop`'s and `red-test-review-loop`'s `git_diff` steps opt out.
 
 ## Merge conflicts
 

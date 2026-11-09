@@ -45,12 +45,19 @@ class NebukoManifest(BaseModel):
 
     Paths are resolved relative to the repo root. Both fields are optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+
+    ``merge_main`` (issue #1344) is the repo-wide default for script steps that
+    run tests: CI tests GitHub's PR merge commit, so a step that tests the bare
+    branch head reports failures ``main`` already fixed. Defaults to ``True``;
+    a step opts out with ``NEBUKO_MERGE_MAIN=0`` (``git_diff`` does, since a
+    merge would hide the change under review).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     skills_dir: str | None = None
     default_workflow: str | None = None
+    merge_main: bool = True
 
 
 # @stub-protected

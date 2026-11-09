@@ -1,1 +1,6 @@
 default_workflow: default
+
+# Script steps that run tests merge origin/main into the session branch first,
+# so they test the same tree CI tests (GitHub's PR merge commit). A step opts
+# out with NEBUKO_MERGE_MAIN=0 (git_diff does, to keep the diff clean).
+merge_main: true
