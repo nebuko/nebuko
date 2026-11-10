@@ -131,6 +131,56 @@ class TestCallStamps:
         assert CallStamps(request_started_at=1.0).first_token_at is None
 
 
+class TestRetryCapture:
+    """The SDK ``retry_listener`` feeds retry attempts into the seam (#1352)."""
+
+    def test_retry_is_recorded_and_attributed_to_the_completed_call(self):
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_retry(1, 1, TimeoutError("slow provider"))
+        collector.on_token(_Chunk(usage=_Usage(completion_tokens=2)))
+
+        observations = collector.drain()
+        assert observations[0].retry_count == 1
+        retries = collector.drain_retries()
+        assert len(retries) == 1
+        assert retries[0].attempt_number == 1
+        assert retries[0].num_retries == 1
+        assert retries[0].error_type == "TimeoutError"
+
+    def test_drain_retries_clears_them(self):
+        collector = TokenTelemetryCollector()
+        collector.on_retry(1, 1, None)
+
+        assert len(collector.drain_retries()) == 1
+        assert collector.drain_retries() == []
+
+    def test_retries_are_not_double_counted_across_calls(self):
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_retry(1, 1, TimeoutError())
+        collector.on_token(_Chunk(usage=_Usage(completion_tokens=1)))
+        _start(collector, "call-2")
+        collector.on_token(_Chunk(usage=_Usage(completion_tokens=1)))
+
+        observations = collector.drain()
+        assert [obs.retry_count for obs in observations] == [1, 0]
+
+    def test_failure_still_leaves_the_retry_visible(self):
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_retry(1, 1, TimeoutError())
+        collector.log_failure_event(
+            kwargs={"litellm_call_id": "call-1"},
+            response_obj=None,
+            start_time=0,
+            end_time=0,
+        )
+
+        assert collector.drain() == []
+        assert len(collector.drain_retries()) == 1
+
+
 class TestInstall:
     def test_install_sets_active_collector_and_subscribes(self, monkeypatch):
         previous_active = seam.get_active_collector()

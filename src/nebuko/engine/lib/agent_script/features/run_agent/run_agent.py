@@ -384,7 +384,12 @@ def run_agent(
     Returns:
         The completed Conversation object.
     """
-    llm = LLM(**llm_config)
+    # Token telemetry capture (issue #829). Created before the LLM so the SDK's
+    # ``retry_listener`` can report every retry attempt into the same sink
+    # (issue #1352).
+    collector = TokenTelemetryCollector()
+
+    llm = LLM(**llm_config, retry_listener=collector.on_retry)
 
     cwd = os.fspath(workspace) if workspace is not None else (
         os.environ.get("GFA_REPO_ROOT") or os.getcwd()
@@ -465,7 +470,6 @@ def run_agent(
     # The collector stamps each call's request start (via litellm.callbacks)
     # and reads first-token/finish/usage from the streamed chunks; LangFuse
     # self-registers only when its env keys opt in (default-off).
-    collector = TokenTelemetryCollector()
     install(collector)
     maybe_register_langfuse()
 

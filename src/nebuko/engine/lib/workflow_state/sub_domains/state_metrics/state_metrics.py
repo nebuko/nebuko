@@ -42,12 +42,17 @@ class StateMetrics(BaseModel):
     dispatch_recall_count: int = 0
     tokens_per_second: Optional[float] = None
     time_to_first_token: Optional[float] = None
+    llm_retry_count: int = 0
+    llm_max_call_latency_ms: Optional[float] = None
+    llm_stall_count: int = 0
+    llm_call_retry_counts: list[int] = Field(default_factory=list)
     error: Optional[str] = None
 
     @staticmethod
     def from_full_metrics_dict(data: dict[str, Any]) -> "StateMetrics":  # @stub-protected
         """Map the full Metrics dict onto the state metrics record."""
         runtimes = list(data.get("agent_runtimes_per_call_ms") or [])
+        retry_counts = list(data.get("llm_call_retry_counts") or [])
         return StateMetrics(
             run_id=data.get("run_id", ""),
             model_name=data.get("model_name", ""),
@@ -77,5 +82,9 @@ class StateMetrics(BaseModel):
             dispatch_recall_count=data.get("dispatch_recall_count", 0),
             tokens_per_second=data.get("tokens_per_second"),
             time_to_first_token=data.get("time_to_first_token"),
+            llm_retry_count=data.get("llm_retry_count", 0),
+            llm_max_call_latency_ms=data.get("llm_max_call_latency_ms"),
+            llm_stall_count=data.get("llm_stall_count", 0),
+            llm_call_retry_counts=retry_counts[-MAX_CALL_RUNTIMES:],
             error=data.get("error"),
         )
