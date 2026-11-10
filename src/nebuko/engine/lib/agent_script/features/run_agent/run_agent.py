@@ -44,6 +44,7 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
 )
 from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
     CHECKPOINT_100_PROMPT,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
     CheckpointScheduler,
     compute_checkpoints,
     count_plan_changes,
@@ -265,6 +266,7 @@ def _raise_if_provider_failure(failure: RunFailure, llm_config: dict) -> None:
 def _perform_wind_down(
     conversation: Conversation,
     budget: TimeoutBudget,
+    has_handoff: bool = True,
 ) -> bool:
     """Inject the wind-down prompt and run one bounded second pass.
 
@@ -272,13 +274,21 @@ def _perform_wind_down(
     consume the GitHub Actions hard timeout), but there is no recursion —
     if it trips we rely on the deterministic PR fallback instead.
 
+    Args:
+        conversation: The live conversation to wind down.
+        budget: The run's timeout budget.
+        has_handoff: Whether the role carries the ``handoff`` tool; roles
+            without it get the ``finalize``-only checkpoint 3 variant.
+
     Returns:
         True if the wind-down completed without tripping its own budget.
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
     # CHECKPOINT_100_PROMPT wraps WIND_DOWN_PROMPT and asks for the handoff
     # update first (issue #966, scope item 3).
-    conversation.send_message(CHECKPOINT_100_PROMPT)
+    conversation.send_message(
+        CHECKPOINT_100_PROMPT if has_handoff else CHECKPOINT_100_PROMPT_NO_HANDOFF
+    )
     wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
@@ -512,7 +522,9 @@ def run_agent(
         return count_plan_changes(text)
 
     checkpoint_scheduler = CheckpointScheduler(
-        compute_checkpoints(budget.soft_timeout_s)[:2],
+        compute_checkpoints(
+            budget.soft_timeout_s, has_handoff=resolved.has("handoff")
+        )[:2],
         deliver=lambda event: conversation.send_message(event.prompt),
         is_finished=lambda: status_value(conversation) == _STATUS_FINISHED,
     ).arm()
@@ -541,7 +553,9 @@ def run_agent(
         # The overall outcome stays "gracefully_timed_out" whether or not
         # the wind-down itself completed; the engine's publisher commits
         # and pushes whatever the agent left after the run.
-        wind_down_completed = _perform_wind_down(conversation, budget)
+        wind_down_completed = _perform_wind_down(
+            conversation, budget, has_handoff=resolved.has("handoff")
+        )
         outcome = OutcomeStatus.GRACEFULLY_TIMED_OUT
     elif main_error is not None:
         # A non-cancellation crash escaped arun(): whatever status the
