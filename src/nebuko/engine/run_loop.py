@@ -29,6 +29,7 @@ from nebuko.engine.finalize import (
 )
 from nebuko.engine.lib.git import (
     branch_scaffold,
+    evidence_checkout,
     git_session,
     pr_finalize,
 )
@@ -66,6 +67,7 @@ from nebuko.engine.models import (
     SkipOutcome,
     StepResult,
     Trigger,
+    session_workspace,
 )
 from nebuko.engine.paths import (
     ConfigKind,
@@ -79,6 +81,7 @@ from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
     GitActionStatus,
     GitInfo,
 )
+from nebuko.engine.lib.config import InputMaterializationError
 from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
@@ -114,6 +117,10 @@ _TRIGGER_KEY = "ENGINE_TRIGGER"
 # produced. It is the single hand-off source the agent child and the routing
 # phases read, so the resolver's output is never recomputed mid-run.
 _RUN_RESOLVED_KEY = "resolved"
+
+# ``current_context`` key mapping a step name to the ``{branch, head_sha}`` an
+# evidence script step ran on (issue #1327), so a reviewer can see the commit.
+EVIDENCE_COMMITS_KEY = "evidence_commits"
 
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
@@ -210,6 +217,11 @@ def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
         if kind == WORKFLOW_COMPLETE:
             return RunStatus.REVIEW_NEEDED
     return None
+
+
+def _binding_source(binding: Any) -> str:
+    """The binding's source key (``exec``/``str``/``ref``), or ``""``."""
+    return str(getattr(binding, "source", "") or "")
 
 
 def _script_exit_code(result: StepResult) -> int | None:
@@ -807,7 +819,13 @@ class Engine:
         from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import wrap_script_comment
 
         self.notify_script_started(self._script_start_notice(step, trigger))
-        result = step.execute(self.adapter)
+        checkout, failure = self._evidence_checkout(step.script_checkout, phases)
+        if failure is not None:
+            # An unreachable session branch is an engine failure, never a
+            # silent fallback to the workflow ref (issue #1327): the command
+            # must not run against the wrong commit.
+            return failure
+        result = step.execute(self.adapter, checkout)
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
 
         state = self._advance_script_state(step, resolved, result)
@@ -821,9 +839,11 @@ class Engine:
                 exit_code=_script_exit_code(result),
                 duration_seconds=result.duration_seconds,
                 output=result.output,
+                branch=result.branch,
+                head_sha=result.head_sha,
             ).render(),
         )
-        state = self._post_script_output(state, body)
+        state = self._post_script_output(state, body, result)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
             turn_outcome=TurnOutcome(
@@ -864,19 +884,115 @@ class Engine:
             ),
         )
 
-    def _post_script_output(self, state: WorkflowState, body: str) -> WorkflowState:
+    def _post_script_output(
+        self, state: WorkflowState, body: str, result: StepResult | None = None
+    ) -> WorkflowState:
         """Post the script output comment and save its backfilled state.
 
         The comment id is unknown when the state is embedded, so it is
         backfilled into the persisted locator afterwards — the same seam agent
         answers use (ADR-0013), which is what makes ``inputs: [...]`` resolve
-        this comment.
+        this comment. The commit the command ran on is recorded alongside it
+        (issue #1327), so a later reader can tell which SHA the evidence came
+        from.
         """
         self._publish_state["body"] = body
         self._publish_state["comment_id"] = self.adapter.post(body).comment_id
         new_state = self._backfill_step_output(state)
+        if result is not None:
+            new_state = self._record_evidence_commit(new_state, result)
         self.adapter.save_state(new_state)
         return new_state
+
+    def _record_evidence_commit(
+        self, state: WorkflowState, result: StepResult
+    ) -> WorkflowState:
+        """Record the branch and SHA a script step ran on (issue #1327).
+
+        ``current_context`` is the durable surface, so review can see which
+        commit the evidence came from and the engine can flag drift against
+        what ``implement`` pushed.
+        """
+        if not state.step:
+            return state
+        context = dict(state.current_context)
+        records = dict(context.get(EVIDENCE_COMMITS_KEY) or {})
+        records[state.step] = {
+            "branch": result.branch,
+            "head_sha": result.head_sha,
+        }
+        context[EVIDENCE_COMMITS_KEY] = records
+        return state.model_copy(update={"current_context": context})
+
+    def _evidence_checkout(
+        self, mode: str, phases: list[str]
+    ) -> tuple[evidence_checkout.EvidenceCheckout | None, "RunOutcome | None"]:
+        """Check out the commit an evidence command must run on (issue #1327).
+
+        ``session`` (the default) checks out the branch ``_record_scaffold_branch``
+        persisted in ``current_context["dev_branch"]``; with no branch yet (a
+        script before any agent scaffolded one) it stays on the workflow ref and
+        reports ``branch: none``. ``workflow`` keeps today's behaviour. An
+        unreachable branch fails the run here, before the command executes.
+        """
+        checkout, failure = self._resolve_evidence_checkout(mode)
+        if failure:
+            log.error("[phase:action] evidence checkout failed: %s", failure)
+            return None, self._evidence_failure_outcome(
+                f"evidence checkout failed: {failure}", phases
+            )
+        return checkout, None
+
+    def _resolve_evidence_checkout(
+        self, mode: str
+    ) -> tuple[evidence_checkout.EvidenceCheckout | None, str]:
+        """Resolve the evidence checkout; ``(checkout, "")`` or ``(None, detail)``.
+
+        The branch comes from ``current_context["dev_branch"]``, which
+        ``_record_scaffold_branch`` persists after a run scaffolded one. A state
+        without it is a first run (no agent has pushed yet), not an unreachable
+        branch: session mode then runs on the workflow ref and reports
+        ``branch: none``.
+        """
+        state = self._previous_state()
+        branch = ""
+        if state is not None and mode == "session":
+            branch = str((state.current_context or {}).get("dev_branch") or "")
+        checkout = evidence_checkout.resolve_evidence_checkout(
+            self._evidence_workspace(), self._session_env(), mode=mode, branch=branch
+        )
+        if not checkout.ok:
+            return None, checkout.detail
+        return checkout, ""
+
+    def _evidence_workspace(self) -> Path:
+        """The directory the evidence checkout moves and the command runs in.
+
+        ``session_workspace()`` is what the script executor anchors at, so the
+        checkout must be applied there or the command would run in a different
+        directory than the one checked out (issue #1327). A host that sets no
+        workspace falls back to the caller root, which is where the engine's
+        other git work happens.
+        """
+        return session_workspace() or self._caller_root()
+
+    def _evidence_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
+        """Terminal outcome for an unreachable evidence checkout (issue #1327).
+
+        An engine failure, not a step verdict: the command never ran, so the
+        workflow must not advance on a fabricated result.
+        """
+        posted = self._post_terminal_notice(detail)
+        return RunOutcome(
+            exit_code=ExitCode.ERROR,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.FAILURE, note=detail
+            ),
+            prompt=None,
+            posted_body=posted,
+            state=None,
+            phases=tuple(phases),
+        )
 
     def _script_start_notice(
         self, step: DeterministicStep, trigger: Trigger
@@ -2172,6 +2288,13 @@ class Engine:
             return [], self._input_failure_outcome(str(exc), phases)
         if step_inputs is None:
             return [], None
+        try:
+            workspace = self._input_workspace(step_inputs)
+        except InputMaterializationError as exc:
+            # An unreachable session branch is a failure, never a silent run on
+            # the workflow ref (issue #1327).
+            log.error("[phase:action] %s", exc)
+            return [], self._input_failure_outcome(str(exc), phases)
         if step_inputs.depth_exceeded():
             detail = (
                 f"call-frame depth {len(step_inputs.frames)} exceeds the "
@@ -2179,13 +2302,31 @@ class Engine:
             )
             log.error("[phase:action] sub-workflow call depth exceeded: %s", detail)
             return [], self._call_depth_outcome(detail, phases)
-        results = materialize_inputs(step_inputs, step_scope)
+        results = materialize_inputs(step_inputs, step_scope, workspace)
         failures = step_inputs.required_failures(results)
         if failures:
             detail = "; ".join(f"{f.name}: {f.detail}" for f in failures)
             log.error("[phase:action] required step inputs failed: %s", detail)
             return results, self._input_failure_outcome(detail, phases)
         return results, None
+
+    def _input_workspace(self, step_inputs: StepInputs) -> str | None:
+        """The evidence workspace an ``exec`` input runs in (issue #1327).
+
+        Exec-style inputs have the same ordering problem as script steps: they
+        run before the branch scaffold, on the workflow's ref. They resolve in
+        the session checkout instead, so a provider command sees the code under
+        review. A step with no ``exec`` binding is untouched, and an
+        unreachable branch raises rather than falling back to the workflow ref.
+        """
+        if not any(_binding_source(b) == "exec" for b in step_inputs.consumer.values()):
+            return None
+        checkout, failure = self._resolve_evidence_checkout("session")
+        if checkout is None:
+            raise InputMaterializationError(
+                f"evidence checkout failed: {failure}"
+            )
+        return str(self._evidence_workspace())
 
     # @stub-protected
     def _context_entries(self) -> list[ContextEntry] | None:

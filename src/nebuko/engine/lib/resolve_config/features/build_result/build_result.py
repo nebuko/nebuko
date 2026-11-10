@@ -243,6 +243,7 @@ def _build_result(
             "SCRIPT_ARGS": run_script.get("args", "[]"),
             "SCRIPT_WORKING_DIR": run_script.get("working_dir", ""),
             "SCRIPT_ENV": run_script.get("env", "{}"),
+            "SCRIPT_CHECKOUT": run_script.get("checkout", "session"),
             "SCRIPT_TIMEOUT_MINUTES": str(run_script.get("timeout_minutes") or ""),
             "WORKFLOW_NAME": config.get("config_workflow", ""),
             "WORKFLOW_STEP": config.get("config_step", ""),
