@@ -33,7 +33,10 @@ from typing import Any
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
-from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
+    RetryEvent,
+    TokenTelemetry,
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +77,9 @@ def _call_id(kwargs: dict[str, Any]) -> str:
     return str(kwargs.get("litellm_call_id") or "")
 
 
-def _observation(stamps: CallStamps, usage: Any, finished_at: float) -> TokenTelemetry:
+def _observation(
+    stamps: CallStamps, usage: Any, finished_at: float, retry_count: int = 0
+) -> TokenTelemetry:
     """Build the per-call observation from the bracket and the billed counts."""
     cache_read, cache_write = _cache_tokens(usage)
     return TokenTelemetry(
@@ -85,6 +90,7 @@ def _observation(stamps: CallStamps, usage: Any, finished_at: float) -> TokenTel
         completion_tokens=_as_int(getattr(usage, "completion_tokens", None)),
         cache_read_tokens=cache_read,
         cache_write_tokens=cache_write,
+        retry_count=retry_count,
     )
 
 
@@ -101,6 +107,8 @@ class TokenTelemetryCollector(CustomLogger):
         self._in_flight: dict[str, CallStamps] = {}
         self._current_call_id: str | None = None
         self._observations: list[TokenTelemetry] = []
+        self._retries: list[RetryEvent] = []
+        self._pending_retries = 0
 
     # ── Request start ────────────────────────────────────────────
 
@@ -124,6 +132,25 @@ class TokenTelemetryCollector(CustomLogger):
         if usage is not None:
             self._close(call_id, stamps, usage, now)
 
+    # ── Retries (SDK ``retry_listener``) ─────────────────────────
+
+    def on_retry(
+        self, attempt_number: int, num_retries: int, error: BaseException | None
+    ) -> None:
+        """Record one SDK retry so stalls surface in the step metrics (#1352).
+
+        The SDK opens a fresh LiteLLM call per attempt, so the count is
+        attributed to the call that eventually completes.
+        """
+        self._retries.append(
+            RetryEvent(
+                attempt_number=attempt_number,
+                num_retries=num_retries,
+                error_type=type(error).__name__ if error is not None else "",
+            )
+        )
+        self._pending_retries += 1
+
     # ── Terminal (best-effort fallback for non-streamed calls) ───
 
     def log_success_event(
@@ -136,8 +163,11 @@ class TokenTelemetryCollector(CustomLogger):
             return
         if call_id == self._current_call_id:
             self._current_call_id = None
+        retries = self._take_pending_retries()
         self._observations.append(
-            _observation(stamps, getattr(response_obj, "usage", None), time.monotonic())
+            _observation(
+                stamps, getattr(response_obj, "usage", None), time.monotonic(), retries
+            )
         )
 
     def log_failure_event(
@@ -156,12 +186,23 @@ class TokenTelemetryCollector(CustomLogger):
         drained, self._observations = self._observations, []
         return drained
 
+    def drain_retries(self) -> list[RetryEvent]:
+        """Return the retry events collected so far and clear them."""
+        drained, self._retries = self._retries, []
+        return drained
+
+    def _take_pending_retries(self) -> int:
+        """Claim the retries accumulated since the last closed observation."""
+        retries, self._pending_retries = self._pending_retries, 0
+        return retries
+
     def _close(self, call_id: str, stamps: CallStamps, usage: Any, finished_at: float) -> None:
         """Record a closed observation and release the in-flight bracket."""
         self._in_flight.pop(call_id, None)
         if call_id == self._current_call_id:
             self._current_call_id = None
-        self._observations.append(_observation(stamps, usage, finished_at))
+        retries = self._take_pending_retries()
+        self._observations.append(_observation(stamps, usage, finished_at, retries))
 
 
 _active_collector: TokenTelemetryCollector | None = None

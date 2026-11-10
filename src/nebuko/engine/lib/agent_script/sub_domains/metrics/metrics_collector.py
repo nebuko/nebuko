@@ -16,7 +16,10 @@ from nebuko.engine.lib.pricing.features.resolve_model_rates.resolve_model_rates 
 )
 
 from nebuko.engine.lib.agent_script.sub_domains.metrics.cost import CostRates, SessionCost
-from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
+    CallHealth,
+    TokenTelemetry,
+)
 from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collector import (
     get_active_collector,
 )
@@ -32,6 +35,7 @@ class _CapturedTelemetry:
     time_to_first_token: float | None
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    health: CallHealth = CallHealth()
 
 
 def _drain_captured_telemetry() -> "_CapturedTelemetry":
@@ -46,12 +50,14 @@ def _drain_captured_telemetry() -> "_CapturedTelemetry":
     if collector is None:
         return _CapturedTelemetry(None, None, 0, 0)
     observations = collector.drain()
+    retries = collector.drain_retries()
     mean_ttft, mean_tps = TokenTelemetry.aggregate(observations)
     return _CapturedTelemetry(
         tokens_per_second=mean_tps,
         time_to_first_token=mean_ttft,
         cache_read_tokens=sum(obs.cache_read_tokens for obs in observations),
         cache_write_tokens=sum(obs.cache_write_tokens for obs in observations),
+        health=TokenTelemetry.call_health(observations, retries),
     )
 
 
@@ -419,9 +425,11 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
         end_time = datetime.now(timezone.utc).isoformat()
         wall_clock_ms = round(_duration_ms(start_time, end_time), 2)
 
-        # Provider-health indicators captured over the run's LLM calls (#829).
+        # Provider-health indicators captured over the run's LLM calls (#829),
+        # plus the stall/retry signals that make a hung call visible (#1352).
         tokens_per_second = captured.tokens_per_second
         time_to_first_token = captured.time_to_first_token
+        health = captured.health
 
         # Build Metrics object
         role_name = os.environ.get("ROLE_NAME", "unknown")
@@ -452,6 +460,10 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             wall_clock_ms=wall_clock_ms,
             tokens_per_second=tokens_per_second,
             time_to_first_token=time_to_first_token,
+            llm_retry_count=health.retry_count,
+            llm_max_call_latency_ms=health.max_call_latency_ms,
+            llm_stall_count=health.stall_count,
+            llm_call_retry_counts=list(health.call_retry_counts),
         )
 
         logger.info(f"Collected LLM metrics for run {metrics.run_id}")

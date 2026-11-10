@@ -211,6 +211,77 @@ class TestCollectLlmMetricsProviderHealth:
         assert metrics.time_to_first_token is None
 
 
+class _Clock:
+    """Deterministic monotonic clock so a call can be made to look 70s long."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def _record_call_of(collector, clock, duration_s, retries=0):
+    collector.log_pre_api_call(model="m", messages=[], kwargs={"litellm_call_id": "c1"})
+    for attempt in range(retries):
+        collector.on_retry(attempt + 1, retries, TimeoutError("stalled"))
+    clock.advance(duration_s)
+    collector.on_token(_Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=9)))
+
+
+class TestCollectLlmMetricsStallsAndRetries:
+    """A stalled or retried call is visible in the step metrics (issue #1352)."""
+
+    def test_reports_max_latency_and_stall_count(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=70.0)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_max_call_latency_ms == pytest.approx(70000.0, rel=1e-3)
+        assert metrics.llm_stall_count == 1
+
+    def test_a_normal_call_is_not_a_stall(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=3.0)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_max_call_latency_ms == pytest.approx(3000.0, rel=1e-3)
+
+    def test_reports_retry_count_and_per_call_counts(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=2.0, retries=1)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_retry_count == 1
+        assert metrics.llm_call_retry_counts == [1]
+
+    def test_defaults_without_any_observation(self):
+        install(TokenTelemetryCollector())
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_retry_count == 0
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_max_call_latency_ms is None
+        assert metrics.llm_call_retry_counts == []
+
+
 class TestCollectLlmMetricsCacheAndReasoning:
     def test_populates_rate_and_reasoning_sum(self):
         conversation = _conversation_with(

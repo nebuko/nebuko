@@ -361,6 +361,7 @@ class TestMetricsSchema(unittest.TestCase):
             "start_time", "end_time", "tool_calls_per_tool", "errors_per_tool",
             "tokens_per_tool", "tool_time_per_tool", "tool_runtime_ms",
             "wall_clock_ms", "review_fix_requests", "dispatch_recall_count",
+            "llm_retry_count", "llm_stall_count", "llm_call_retry_counts",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 

@@ -15,6 +15,44 @@ it — so the capture mechanism can be swapped without touching downstream code.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+#: A single LLM call taking longer than this is counted as a stall (issue #1352).
+#: Measured p95 is ~10-27s, so 60s is well outside normal latency yet below the
+#: 90s per-attempt request timeout.
+STALL_THRESHOLD_S = 60.0
+
+
+@dataclass(frozen=True)
+class RetryEvent:
+    """One retry the SDK scheduled for a failed LLM attempt (issue #1352).
+
+    Fields:
+        attempt_number: 1-based number of the attempt that just failed.
+        num_retries: Configured retry budget for the call.
+        error_type: Exception class name, or ``""`` when none was reported.
+    """
+
+    attempt_number: int
+    num_retries: int
+    error_type: str = ""
+
+
+@dataclass(frozen=True)
+class CallHealth:
+    """Stall/retry indicators derived from a run's LLM calls (issue #1352).
+
+    Fields:
+        max_call_latency_ms: Longest observed call duration in milliseconds, or
+            ``None`` when no call duration was observable.
+        stall_count: Number of calls longer than :data:`STALL_THRESHOLD_S`.
+        retry_count: Total retries the SDK scheduled across the run.
+        call_retry_counts: Retries attributed to each observed call, in order.
+    """
+
+    max_call_latency_ms: float | None = None
+    stall_count: int = 0
+    retry_count: int = 0
+    call_retry_counts: tuple[int, ...] = ()
+
 
 @dataclass(frozen=True)
 class TokenTelemetry:
@@ -38,6 +76,12 @@ class TokenTelemetry:
     completion_tokens: int
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    retry_count: int = 0
+
+    def duration_s(self) -> float | None:
+        """Wall-clock duration of the call in seconds, or ``None`` when unordered."""
+        duration = self.request_finished_at - self.request_started_at
+        return duration if duration > 0 else None
 
     def time_to_first_token(self) -> float | None:
         """Seconds between request start and first token, or ``None`` when unobservable.
@@ -91,3 +135,29 @@ class TokenTelemetry:
         mean_ttft = sum(ttfts) / len(ttfts) if ttfts else None
         mean_tps = sum(throughputs) / len(throughputs) if throughputs else None
         return mean_ttft, mean_tps
+
+    @staticmethod
+    def call_health(
+        observations: Sequence["TokenTelemetry"],
+        retries: Sequence[RetryEvent] = (),
+        stall_threshold_s: float = STALL_THRESHOLD_S,
+    ) -> CallHealth:
+        """Stall and retry indicators across a run's calls (issue #1352).
+
+        ``retry_count`` counts every retry event, including retries whose final
+        attempt failed and therefore produced no observation; the per-call
+        counts only cover the calls that completed.
+        """
+        durations = [
+            duration
+            for duration in (obs.duration_s() for obs in observations)
+            if duration is not None
+        ]
+        return CallHealth(
+            max_call_latency_ms=(
+                round(max(durations) * 1000, 2) if durations else None
+            ),
+            stall_count=sum(1 for d in durations if d > stall_threshold_s),
+            retry_count=len(retries),
+            call_retry_counts=tuple(obs.retry_count for obs in observations),
+        )
