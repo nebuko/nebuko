@@ -388,14 +388,16 @@ def _run_harness_agent(
         agent_context=SimpleNamespace(id=uuid.uuid4().hex, workspace=cwd),
     )
     session = conversation.harness_session
+    capabilities = harness.capabilities()
     budget = resolve_timeout_budget()
     logger.info(
         f"Starting {harness.name} task execution "
-        f"(soft timeout budget: {budget.soft_timeout_s:.0f}s)..."
+        f"(soft timeout budget: {budget.soft_timeout_s:.0f}s, "
+        f"wind-down: {budget.wind_down_timeout_s:.0f}s)..."
     )
     logger.info(f"Prompt: {prompt[:200]}...")
 
-    watchdog = RunWatchdog(budget.soft_timeout_s, session.close).arm()
+    watchdog = RunWatchdog(budget.soft_timeout_s, _interrupt_hook(session)).arm()
     error: Exception | None = None
     try:
         session.send_message(prompt)
@@ -406,10 +408,18 @@ def _run_harness_agent(
     finally:
         watchdog.cancel()
 
-    if watchdog.fired:
+    # The session's own turn timeout and the outer watchdog trip together; a
+    # ``TimeoutError`` from ``run`` is a soft timeout even if the timer lost
+    # the race by a few milliseconds.
+    soft_timeout_fired = watchdog.fired or isinstance(error, TimeoutError)
+    wind_down_completed = False
+    if soft_timeout_fired:
         conversation.execution_status = SimpleNamespace(value="paused")
+        wind_down_completed = _wind_down_harness(session, budget)
         outcome = RunOutcome(
-            status=OutcomeStatus.GRACEFULLY_TIMED_OUT, soft_timeout_fired=True
+            status=OutcomeStatus.GRACEFULLY_TIMED_OUT,
+            soft_timeout_fired=True,
+            wind_down_completed=wind_down_completed,
         )
     elif error is not None:
         conversation.execution_status = SimpleNamespace(value="error")
@@ -420,8 +430,88 @@ def _run_harness_agent(
         outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
 
     conversation.run_outcome = outcome
+
+    # ── Bounded dispatch recall (issue #524) ────────────────────
+    if outcome is not OutcomeStatus.FAILURE:
+        recall_count, recall_offset = _harness_dispatch_recalls(
+            session, conversation, capabilities
+        )
+        if recall_count:
+            conversation.run_outcome = dataclasses.replace(
+                conversation.run_outcome,
+                dispatch_recall_count=recall_count,
+                dispatch_recall_event_offset=recall_offset,
+            )
+
     logger.info(f"Run outcome: {outcome.status.value}")
     return conversation
+
+
+def _interrupt_hook(session: Any):
+    """The watchdog's callback: stop the turn, keep the session usable.
+
+    Closing the session on a soft timeout would make the wind-down impossible,
+    so a session that can interrupt is preferred; ``close`` is the fallback for
+    a runtime that cannot.
+    """
+    interrupt = getattr(session, "interrupt", None)
+    return interrupt if callable(interrupt) else session.close
+
+
+def _wind_down_harness(session: Any, budget: TimeoutBudget) -> bool:
+    """Inject the wind-down prompt and run one bounded second pass.
+
+    Returns:
+        True if the wind-down completed without tripping its own budget.
+    """
+    logger.info("Soft timeout reached — starting graceful wind-down phase")
+    try:
+        session.send_message(CHECKPOINT_100_PROMPT)
+        session.run(timeout_s=budget.wind_down_timeout_s)
+        return True
+    except Exception as exc:  # noqa: BLE001 - the fallback is deterministic
+        logger.warning(
+            f"Wind-down budget also exhausted ({exc}) — relying on "
+            "deterministic PR fallback"
+        )
+        return False
+
+
+def _harness_dispatch_recalls(
+    session: Any, conversation: Any, capabilities: Any
+) -> tuple[int, int | None]:
+    """Bounded missing-outcome recall for a harness run (issue #524).
+
+    On this path the closing verdict lands in the session's ``FinalizeSink``
+    rather than in the engine registry, so an empty sink after the work turn is
+    exactly the "no decision" signal the recall pass exists for.
+
+    Returns:
+        The number of recall turns performed and the pre-recall event offset
+        (``None`` when no recall fired).
+    """
+    sink = getattr(session, "sink", None)
+    if not capabilities.dispatch_recall or sink is None:
+        return 0, None
+
+    def _has_dispatch() -> bool:
+        return sink.result() is not None
+
+    def _run_recall_pass(n: int) -> bool:
+        logger.warning(
+            f"Run ended without a finalize turn outcome — recall "
+            f"{n}/{MAX_DISPATCH_RECALLS}"
+        )
+        try:
+            session.run(timeout_s=RECALL_PASS_BUDGET_S)
+            return True
+        except Exception as exc:  # noqa: BLE001 - give up, keep the outcome
+            logger.warning(f"Dispatch recall {n} exhausted its budget — giving up: {exc}")
+            return False
+
+    offset = len(getattr(getattr(conversation, "state", None), "events", []))
+    count = perform_dispatch_recalls(session, _has_dispatch, _run_recall_pass)
+    return count, (offset if count else None)
 
 
 def _harness_system_prompt(role_name: str) -> str:

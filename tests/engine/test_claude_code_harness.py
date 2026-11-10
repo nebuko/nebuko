@@ -28,6 +28,7 @@ class _FakeClient:
         self.queries: list[str] = []
         self.connected = False
         self.disconnected = False
+        self.interrupted = False
         self._on_query = on_query
 
     async def connect(self) -> None:
@@ -38,6 +39,9 @@ class _FakeClient:
 
     async def query(self, text: str) -> None:
         self.queries.append(text)
+
+    async def interrupt(self) -> None:
+        self.interrupted = True
 
     async def receive_response(self):
         if self._on_query is not None:
@@ -105,6 +109,15 @@ def test_session_reuses_the_client_across_turns() -> None:
     session.run()
     assert client.connected is False  # never connected: the fake is pre-bound
     assert client.queries == ["one", "two"]
+
+
+def test_interrupt_stops_the_turn_but_keeps_the_session() -> None:
+    session, client, _ = _session()
+    session.send_message("one")  # binds the private loop the bridge submits on
+    session.interrupt()
+    assert client.interrupted is True
+    assert client.disconnected is False
+    assert session._client is client
 
 
 def test_conversation_view_records_agent_text_and_carries_the_session() -> None:

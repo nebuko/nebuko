@@ -253,7 +253,10 @@ mutation of the SDK's private `agent._tools` map.
 The run path is unchanged downstream: `run_agent` returns a conversation-shaped
 view (id, `state.events`, `execution_status`, `run_outcome`) carrying its session
 and closing channel, so metrics, answer capture and `build_output` consume
-either runtime identically. The live `claude` smoke test is opt-in
+either runtime identically. The soft-timeout contract holds on both backends: the
+watchdog *interrupts* the session (never closes it) so a bounded wind-down turn
+can still run, and a missing `finalize` verdict after the work turn triggers the
+same bounded dispatch-recall passes. The live `claude` smoke test is opt-in
 (`NEBUKO_LIVE_CLAUDE=1`) and never runs in CI.
 
 ---

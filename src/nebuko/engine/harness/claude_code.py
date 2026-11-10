@@ -121,9 +121,15 @@ class ClaudeCodeSession:
             self._submit(self._receive(), timeout=timeout_s)
         except TimeoutError:
             log.warning("[phase:agent] claude turn exceeded its budget - interrupting")
-            with contextlib.suppress(Exception):
-                self._submit(self._client.interrupt(), timeout=30.0)
+            self.interrupt()
             raise
+
+    def interrupt(self) -> None:
+        """Stop the in-flight turn, keeping the session usable for a wind-down."""
+        if self._client is None:
+            return
+        with contextlib.suppress(Exception):
+            self._submit(self._client.interrupt(), timeout=30.0)
 
     def close(self) -> None:
         client, loop = self._client, self._loop
@@ -144,6 +150,10 @@ class ClaudeCodeSession:
     def set_tool_policy(self, allow: frozenset[str] | None) -> None:
         """Restrict the tools this session may call (``None`` = all)."""
         self.policy.set(allow)
+
+    # ── the run path's soft-timeout contract ─────────────────────
+    # ``run_agent`` interrupts rather than closes on a soft timeout so the
+    # wind-down turn still has a live session.
 
     def permits(self, tool_name: str) -> bool:
         """True when ``tool_name`` is allowed by the current policy."""
@@ -314,7 +324,10 @@ class ClaudeCodeHarness:
             # The SDK's ``skills`` catalog is not wired here: a discover-mode
             # skill on this backend is a config error, not a silent drop.
             skills_discover=False,
-            dispatch_recall=False,
+            # The run path implements the bounded missing-outcome recall for
+            # harness sessions too: an empty sink after the work turn is the
+            # same "no decision" signal the OpenHands path reads.
+            dispatch_recall=True,
             publication_guard=False,
             closing_channel="tool",
         )
