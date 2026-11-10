@@ -403,18 +403,21 @@ def _is_publish_error(exc_type: type | None) -> bool:
 
 # The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
 # -->.*/\1/p'``: per line, last match wins, and only lowercase-letters names
-# match (``issue-reviewer`` therefore never counts as a caller).
+# match (``issue-reviewer`` therefore never counts as a caller). The engine reads
+# it from the header region only (issue #1361): the marker sits on line 2 of an
+# answer comment (``format_answer_header``) or line 1 of a continuation part
+# (``format_bot_marker``); a marker quoted inside the agent's own text is not a
+# caller.
 _CALLER_RE = re.compile(r"<!-- bot-agent-([a-z]*) -->")
 
 
 def _caller_agent(trigger_body: str) -> str:
     """The caller marker the legacy guard-comparison reads from the body."""
-    found = [
-        matches[-1]
-        for line in (trigger_body or "").splitlines()
-        if (matches := _CALLER_RE.findall(line))
-    ]
-    return "\n".join(found)
+    for line in (trigger_body or "").splitlines()[:2]:
+        matches = _CALLER_RE.findall(line)
+        if matches:
+            return matches[-1]
+    return ""
 
 
 def _answer_of(agent_result: Any) -> str:
