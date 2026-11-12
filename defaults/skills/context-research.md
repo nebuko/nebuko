@@ -64,6 +64,13 @@ Every factual statement in the report carries one evidence type:
 4. **Compare conditions when they differ.** When results depend on conditions (cold vs warm cache, with vs without a flag), measure each condition and report both numbers.
 5. **Say what you could not verify** (`### NOT VERIFIED`), and report relevant facts nobody asked for (`### SURPRISES`). The request only covers what @@architect knew to ask.
 
+### Stop rule and cheapest first
+
+1. **List the deltas.** Every difference the request reports is one delta (counts, versions, timings, SHAs, …). Name each with a short id.
+2. **Measure cheapest first.** Compare identifiers before running anything heavy: tested SHAs, tool versions, collected test IDs, config. Then targeted runs of the specific failing IDs. A full suite is the last resort; run each long job at most once and launch independent ones in one batch, then poll once. Read only what a measurement needs.
+3. **Stop rule.** Once ONE measured reproduction matches the reported numbers, stop investigating. Keep going only for a delta that still has no verdict.
+4. **Report the match.** State under `### WHAT THE MEASUREMENTS SHOW` which reported deltas you reproduced and by what command. That is fact-reporting, not analysis: the conclusion stays with @@architect.
+
 ## Claim verification (issue #1250)
 
 When the request carries claim IDs (C1, C2, …), open the report with a verdict per claim, **before** `### FILES FOUND`:
@@ -117,6 +124,8 @@ Each section content **must** be insude a <details> </details> block.
    Requested facts or claims you could not settle, and why (no access, JS-rendered page, could not reproduce). Write `None` if everything was settled.
 9. **`### OTHER FILES`**
    An italic one-liner, then a brief list of files examined and found irrelevant.
+10. **`### WHAT THE MEASUREMENTS SHOW`** (only when the request reports numbers to reproduce)
+    One line per reported delta: which reported numbers your measurements reproduced, and the exact command that produced them. Facts only — which numbers matched, which did not. No cause, no explanation, no next step.
 
 ### Forbidden
 
