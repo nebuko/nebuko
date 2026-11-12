@@ -131,3 +131,10 @@ class TestConfigPathAnchorCallerRoot:
         assert anchor.resolve() == str(
             workspace.resolve() / ".nebuko" / "agents" / "agent-config.yaml"
         )
+
+
+def test_manifest_ignores_unknown_keys():
+    from nebuko.engine.models import NebukoManifest
+
+    m = NebukoManifest.model_validate({"default_workflow": "x", "features": {"secret_scan": False}})
+    assert m.default_workflow == "x"

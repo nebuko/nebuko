@@ -45,9 +45,12 @@ class NebukoManifest(BaseModel):
 
     Paths are resolved relative to the repo root. Both fields are optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+
+    Unknown keys are ignored (not rejected): a manifest written for a newer
+    engine (e.g. a ``features:`` block) must not abort every run of an older one.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     skills_dir: str | None = None
     default_workflow: str | None = None
