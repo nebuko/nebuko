@@ -1,0 +1,20 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index 6ac6961..f13c686 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -441,6 +441,15 @@ jobs:
+                 if-no-files-found: ignore
+                 retention-days: 7
+ 
++            - name: Upload timings.json artifact
++              uses: actions/upload-artifact@v7
++              if: always()
++              with:
++                path: ${{ runner.temp }}/nebuko-task-logs/timings.json
++                archive: false
++                if-no-files-found: ignore
++                retention-days: 7
++
+     agent-metrics:
+         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+         if: |
