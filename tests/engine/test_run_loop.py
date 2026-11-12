@@ -4756,6 +4756,88 @@ class TestGitSessionGuardWiring:
         ).stdout
         assert scaffolded not in remote_heads
 
+    def test_a_detached_head_at_the_branch_tip_is_reattached_and_finalize_passes(
+        self, tmp_path, monkeypatch
+    ):
+        """Repro of run 42288598222 (issue #1351): a reviewer's verification ran
+        ``use-session-branch.sh``, whose ``git checkout --detach origin/<b>``
+        left HEAD detached at the branch tip. finalize must re-attach instead of
+        failing the run.
+        """
+        import subprocess
+
+        from nebuko.engine.lib.git import git_session
+
+        remote = tmp_path / "caller-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        caller = tmp_path / "caller"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.name", "t"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.email", "t@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "remote", "add", "origin", str(remote)],
+            check=True,
+        )
+        (caller / "base.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(caller), "add", "base.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "commit", "-q", "-m", "base"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "push", "-q", "origin", "main"], check=True
+        )
+
+        trigger = _trigger(number=1351)
+        object.__setattr__(
+            trigger, "payload", {"issue": {"title": "fix it", "number": 1351}}
+        )
+        engine = _engine(tmp_path, trigger, env={"GITHUB_WORKSPACE": str(caller)})
+        engine._run_resolved["resolved"] = {"ENGINE_TRIGGER": trigger, "TASK": "dev"}
+        object.__setattr__(engine, "repo_root", caller)
+
+        scaffold = engine._branch_scaffold()
+        assert scaffold.ok and not scaffold.skipped, scaffold.detail
+        scaffolded = "feature/issue-1351-fix-it"
+        assert scaffold.branch == scaffolded
+        engine._scaffold_state["head_before"] = git_session.GitSessionGuard(
+            engine._caller_root(), engine._session_env()
+        ).head_sha()
+        # The branch is published before the reviewer's script runs.
+        subprocess.run(
+            ["git", "-C", str(caller), "push", "-q", "origin", scaffolded],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(caller),
+                "checkout",
+                "-q",
+                "--detach",
+                f"origin/{scaffolded}",
+            ],
+            check=True,
+        )
+
+        result = engine._git_session_finalize()
+
+        assert result.ok, result.detail
+        assert "re-attached from detached HEAD" in result.detail
+        assert subprocess.run(
+            ["git", "-C", str(caller), "rev-parse", "--abbrev-ref", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == scaffolded
+
     def test_a_skipped_finalize_is_not_a_failure(self, tmp_path, monkeypatch):
         from nebuko.engine.lib.git import git_session
 
