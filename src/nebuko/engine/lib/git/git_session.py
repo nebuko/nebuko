@@ -173,9 +173,14 @@ class GitSessionGuard:
         ``expected_branch`` is the branch the engine scaffolded for the
         session: ending on a detached HEAD or another branch is then a failure,
         not a benign skip (the agent, or a test it ran, moved the checkout and
-        its work would never reach the PR). ``head_before`` is the HEAD SHA
-        recorded before the agent ran; when it is unchanged the success detail
-        says so, so "committed and pushed" can be checked against fact.
+        its work would never reach the PR). A HEAD detached at the branch tip
+        is re-attached first (issue #1351): a read-only check such as
+        ``use-session-branch.sh``'s ``git checkout --detach origin/<branch>``
+        loses nothing, so failing the run there would punish a legitimate
+        verification. A HEAD detached anywhere else still fails.
+        ``head_before`` is the HEAD SHA recorded before the agent ran; when it
+        is unchanged the success detail says so, so "committed and pushed" can
+        be checked against fact.
 
         Auth is re-proven first and the env token installed when the probe
         fails on a github.com HTTPS remote (issue #1134): finalize never
@@ -191,6 +196,13 @@ class GitSessionGuard:
         if self._remote_url() is None:
             return GuardResult(ok=True, skipped=True, detail="no git remote")
         branch = self._current_branch()
+        reattached = False
+        if expected_branch and branch in ("", "HEAD"):
+            problem = self._reattach_detached_head(expected_branch)
+            if problem:
+                return GuardResult(ok=False, detail=problem)
+            branch = self._current_branch()
+            reattached = branch == expected_branch
         if expected_branch and branch != expected_branch:
             detached = " (detached HEAD)" if branch in ("", "HEAD") else ""
             return GuardResult(
@@ -246,9 +258,76 @@ class GitSessionGuard:
                 auto_commit=auto_commit,
             )
         detail = f"{branch} is clean and pushed"
+        if reattached:
+            detail += " (re-attached from detached HEAD)"
         if head_before and self.head_sha() == head_before:
             detail += " (no new commit this session)"
         return GuardResult(ok=True, detail=detail, auto_commit=auto_commit)
+
+    # @stub-protected
+    def _branch_tips(self, branch: str) -> tuple[str, str]:
+        """The local and ``origin/<branch>`` tip SHAs, ``""`` when missing."""
+
+        def tip(ref: str) -> str:
+            try:
+                return self._run_git(["rev-parse", "--verify", "-q", ref]).strip()
+            except (RuntimeError, OSError):
+                return ""
+
+        return (
+            tip(f"refs/heads/{branch}"),
+            tip(f"refs/remotes/{self.remote}/{branch}"),
+        )
+
+    # @stub-protected
+    def _reattach_detached_head(self, branch: str) -> str:
+        """Re-attach a HEAD detached at the branch tip; return a problem, or ``""``.
+
+        Only a HEAD whose SHA is the local branch tip, or the ``origin/<branch>``
+        tip the local branch already contains, is re-attached: it is the same
+        commit, so the checkout strands nothing (issue #1351). Any other
+        detached HEAD is left alone and ``""`` is returned, so ``finalize``
+        reports its usual branch-mismatch failure. A failed checkout is
+        returned as a problem and is never forced.
+        """
+        head = self.head_sha()
+        local_tip, origin_tip = self._branch_tips(branch)
+
+        def contains(descendant: str, ancestor: str) -> bool:
+            try:
+                self._run_git(["merge-base", "--is-ancestor", ancestor, descendant])
+            except (RuntimeError, OSError):
+                return False
+            return True
+
+        safe = bool(head) and (
+            head == local_tip
+            or (
+                head == origin_tip
+                and (not local_tip or contains(local_tip, origin_tip))
+            )
+        )
+        if not safe:
+            return ""
+        try:
+            if local_tip:
+                self._run_git(["checkout", branch])
+            else:
+                self._run_git(
+                    ["checkout", "-b", branch, f"refs/remotes/{self.remote}/{branch}"]
+                )
+        except (RuntimeError, OSError) as exc:
+            return (
+                f"could not re-attach the detached HEAD to {branch}: "
+                f"{_dedent(str(exc))}"
+            )
+        current = self._current_branch()
+        if current != branch:
+            return f"checked out {branch} but HEAD is on {current!r}"
+        logger.info(
+            "git session: re-attached detached HEAD %s to %s", head[:12], branch
+        )
+        return ""
 
     def head_sha(self) -> str:
         """The current HEAD SHA, empty when it cannot be read."""
