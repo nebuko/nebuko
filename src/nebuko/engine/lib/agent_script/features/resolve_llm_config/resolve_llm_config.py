@@ -25,9 +25,8 @@ _REASONING_ALIASES = {"high": "xhigh"}
 # same bound between chunks.
 LLM_TIMEOUT_S = 90
 
-# One retry (two attempts) bounds a stall to ~2x the timeout plus the SDK's
-# 8/16s backoff, instead of the SDK default of 5 retries (issue #1352).
-LLM_NUM_RETRIES = 1
+# Five retries (the SDK default) so transient 429 / capacity errors are absorbed.
+LLM_NUM_RETRIES = 5
 
 
 def normalize_reasoning_effort(raw: str | None) -> str | None:

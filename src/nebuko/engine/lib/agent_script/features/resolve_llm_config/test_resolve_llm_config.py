@@ -267,7 +267,7 @@ agents:
         """One retry keeps the worst case near 2x the timeout (#1352)."""
         cfg = self._resolve(reasoning="xhigh")
         self.assertEqual(cfg["num_retries"], LLM_NUM_RETRIES)
-        self.assertEqual(LLM_NUM_RETRIES, 1)
+        self.assertEqual(LLM_NUM_RETRIES, 5)
 
     def test_streaming_requested(self):
         """Streaming keeps the request warm across the long reasoning phase (#775)."""
