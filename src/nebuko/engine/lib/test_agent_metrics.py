@@ -362,6 +362,7 @@ class TestMetricsSchema(unittest.TestCase):
             "tokens_per_tool", "tool_time_per_tool", "tool_runtime_ms",
             "wall_clock_ms", "review_fix_requests", "dispatch_recall_count",
             "llm_retry_count", "llm_stall_count", "llm_call_retry_counts",
+            "provider", "provider_retry_wait_ms",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -1364,6 +1365,21 @@ class TestGenerateAgentSummaryTable(unittest.TestCase):
                 self.assertEqual(len(_table_cells(line)), 2 + n_agents, line)
         header = next(line for line in lines if line.startswith("| | "))
         self.assertEqual(len(_table_cells(header)), 2 + n_agents)
+
+    def test_detail_block_renders_llm_retries_and_stalls(self):
+        """Retries and stalls were persisted but never rendered (issue #1375)."""
+        agg = self._make_aggregated()
+        agg["dev"]["llm_retry_sum"] = 3
+        agg["dev"]["llm_stall_sum"] = 1
+
+        lines = generate_agent_summary_table(agg)
+
+        self.assertEqual(
+            _table_cells(self._row(lines, "LLM retries"))[1:], ["**3**", "0", "0", "3"]
+        )
+        self.assertEqual(
+            _table_cells(self._row(lines, "LLM stalls"))[1:], ["**1**", "0", "0", "1"]
+        )
 
     def test_detail_block_keeps_provider_health_and_per_tool(self):
         agg = self._make_aggregated()

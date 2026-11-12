@@ -110,6 +110,9 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+    # Per-phase wall-clock durations in milliseconds (issue #1375), keyed by
+    # phase name. Empty for a run that never entered a timed phase.
+    timings: dict[str, float] = field(default_factory=dict)
 
     # @stub-protected
     def process_exit_code(self) -> int:

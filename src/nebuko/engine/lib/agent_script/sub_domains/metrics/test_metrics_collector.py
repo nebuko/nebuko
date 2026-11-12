@@ -1,6 +1,7 @@
 """Tests for wiring captured token telemetry into the run Metrics (issue #829)."""
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -71,6 +72,22 @@ class _TokenUsage:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.cache_read_tokens = cache_read_tokens
+
+
+def _agent_cfg(api_url="https://api.mistral.ai/v1"):
+    """A minimal agent config whose provider resolves to ``api_url``."""
+    provider = SimpleNamespace(api_url=api_url, api_token_env="TEST_KEY")
+    model_ref = SimpleNamespace(
+        model_path="mistral/deepseek-v4-1-flash-1017",
+        provider_ref=provider,
+        input_price=None,
+        output_price=None,
+        cache_read_price=None,
+        cache_write_price=None,
+    )
+    return SimpleNamespace(
+        model_ref=model_ref, complexity_overrides={}, temperature=0.0
+    )
 
 
 def _conversation_with(cache_hit_rate, token_usages):
@@ -213,7 +230,6 @@ class TestCollectLlmMetricsProviderHealth:
 
 class _Clock:
     """Deterministic monotonic clock so a call can be made to look 70s long."""
-
     def __init__(self):
         self.now = 1000.0
 
@@ -280,6 +296,27 @@ class TestCollectLlmMetricsStallsAndRetries:
         assert metrics.llm_stall_count == 0
         assert metrics.llm_max_call_latency_ms is None
         assert metrics.llm_call_retry_counts == []
+
+    def test_reports_the_retry_wait_and_provider(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        collector.log_pre_api_call(
+            model="m", messages=[], kwargs={"litellm_call_id": "c1"}
+        )
+        collector.on_retry(1, 1, TimeoutError("backend_out_of_capacity"))
+        clock.advance(8.0)
+        collector.log_pre_api_call(
+            model="m", messages=[], kwargs={"litellm_call_id": "c2"}
+        )
+        clock.advance(2.0)
+        collector.on_token(_Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=9)))
+
+        metrics = collect_llm_metrics(_Conversation(), agent_cfg=_agent_cfg())
+
+        assert metrics.provider_retry_wait_ms == pytest.approx(8000.0)
+        assert metrics.provider == "https://api.mistral.ai/v1"
 
 
 class TestCollectLlmMetricsCacheAndReasoning:
