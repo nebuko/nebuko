@@ -17,6 +17,10 @@ class AgentConfig(BaseModel):
     model_ref: LLMConfig = Field(alias="model")
     temperature: float = 0.0
     prompt_file: str
+    # Which agent runtime executes this role (issue #1368). Registry-resolved
+    # by ``nebuko.engine.harness.resolve_harness`` — a plain ``str``, not a
+    # ``Literal``, so a new harness is one adapter module and no schema change.
+    backend: str = "openhands"
     # One-line role description, injected into every agent's system prompt as
     # part of the generated "Your Team" section (issue #476).
     role: Optional[str] = None
