@@ -8,8 +8,20 @@ steps:
     prompt: |
       Analysis turn: a human issue or request just arrives. Before writing the
       context request, think (`think` tool) through:
-      1. Sketch 2–3 candidate approaches, one line each. No plan yet.
-      2. List the external facts each approach depends on (build vs buy,
+      1. Classify the request:
+         - **"find why" / "doesn't match"** (a discrepancy, a failure, a
+           reported number that disagrees): skip the ranked claims. List the
+           reported deltas (counts, versions, timings, SHAs), then write an
+           ordered list of discriminating measurements — cheapest first
+           (identifiers/SHAs/versions, then targeted test IDs, a full suite
+           last) — and give each one a stop condition ("if the SHA differs,
+           stop"). Do not rank hypotheses: a guess from the issue text is
+           worth less than one measurement. Set `complexity: low` on the
+           hand-off, since a matching measurement ends the investigation.
+         - **build vs buy / version / capability / limits / pricing**: sketch
+           2–3 candidate approaches, one line each, and continue with steps
+           2–5 below.
+      2. List the external facts the request depends on (build vs buy,
          versions, capabilities, limits and pricing).
       3. Think in opposites: for the preferred approach, state what you would
          expect to find if it were WRONG, and ask @@context to confirm or refute that.
@@ -23,12 +35,17 @@ steps:
          name the experiment (profiler, timed run, cold vs warm, before/after a
          candidate fix) and ask for the command and its output. A list of files
          to read is not enough: reading code cannot show where time goes.
-      - Attach these as `agent_call.verify` (list of {id: "C1", claim, kind:
+      - Attach `agent_call.verify` (list of {id: "C1", claim, kind:
         "support"|"refute", category: build_vs_buy|version|capability|
-        limits_pricing|alternatives|compatibility, if_wrong}) on the hand-off.
+        limits_pricing|alternatives|compatibility, if_wrong}) on the hand-off
+        when the request is build-vs-buy / version / capability. For "find
+        why" requests, put the ordered measurements and their stop conditions
+        in `agent_call.task` instead, and leave `verify` empty.
         Never include the draft plan in the task — the claims are checked
         independently of it.
-      - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+      - Estimate complexity: `high` for architectural changes or many
+        subsystems, `low` for a narrow change or a "find why" request,
+        otherwise omit it (@@context defaults to medium).
       - Delegate to @@context in the SAME turn, and end with the typed hand-off:
         finalize(
           report="…this step's report…",
@@ -83,6 +100,10 @@ steps:
       verdict `measured`, `read` or `inferred`; measure timing and behaviour
       claims instead of inferring them from code; and fill `### MEASUREMENTS`,
       `### SURPRISES` and `### NOT VERIFIED`.
+      Measure cheapest first (identifiers/SHAs/versions, then targeted test
+      IDs, a full suite last; batch independent long runs and poll once). Stop
+      as soon as ONE measured reproduction matches the reported numbers, and
+      say which deltas matched under `### WHAT THE MEASUREMENTS SHOW`.
     next: plan
 
   - name: plan

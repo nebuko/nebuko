@@ -76,3 +76,21 @@ class TestScriptStepReport:
             step="run_tests", ok=True, exit_code=0, duration_seconds=1.5, output="out"
         )
         assert ScriptStepReport.model_validate(report.model_dump()) == report
+
+    def test_the_commit_line_names_the_branch_and_short_sha(self):
+        report = ScriptStepReport(
+            step="run_tests",
+            ok=True,
+            branch="feature/issue-1327-x",
+            head_sha="0123456789abcdef",
+        )
+        assert "branch: `feature/issue-1327-x` · head: `0123456789ab`" in report.render()
+
+    def test_the_commit_line_says_none_on_the_workflow_ref(self):
+        report = ScriptStepReport(step="run_tests", ok=True, head_sha="0123456789abcdef")
+        body = report.render()
+        assert "branch: `none`" in body
+        assert "head: `0123456789ab`" in body
+
+    def test_an_unknown_commit_says_unknown(self):
+        assert "head: unknown" in ScriptStepReport(step="run_tests", ok=True).render()

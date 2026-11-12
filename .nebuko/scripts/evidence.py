@@ -54,7 +54,7 @@ class EvidenceError(Exception):
 
 
 def issue_number_from_event() -> int:
-    """Issue number of the triggering GitHub event (as use-session-branch.sh)."""
+    """Issue number of the triggering GitHub event."""
     path = os.environ.get("GITHUB_EVENT_PATH")
     if not path:
         raise EvidenceError("--issue auto needs GITHUB_EVENT_PATH")

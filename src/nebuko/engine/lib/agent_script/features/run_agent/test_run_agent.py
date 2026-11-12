@@ -197,6 +197,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertEqual(len(callbacks), 2)
         self.assertIs(callbacks[0], _discard_token)
         self.assertEqual(callbacks[1].__name__, "on_token")
+        # The same collector receives the SDK's retry attempts (#1352).
+        listener = mock_llm.call_args.kwargs["retry_listener"]
+        self.assertEqual(listener.__name__, "on_retry")
+        self.assertIs(listener.__self__, callbacks[1].__self__)
 
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")

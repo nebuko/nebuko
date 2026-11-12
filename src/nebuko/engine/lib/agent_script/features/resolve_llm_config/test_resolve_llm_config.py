@@ -11,6 +11,7 @@ import litellm
 
 
 from resolve_llm_config import (
+    LLM_NUM_RETRIES,
     LLM_TIMEOUT_S,
     LLMConfigError,
     normalize_base_url,
@@ -256,11 +257,17 @@ agents:
         self.assertTrue(cfg["drop_params"])
         self.assertEqual(cfg["api_key"], "test-key")
 
-    def test_llm_timeout_raised_to_900(self):
-        """300s aborts a high-reasoning turn mid-think; 900s gives headroom (#775)."""
+    def test_llm_timeout_bounded_to_90s(self):
+        """A stalled call must be cut off well before the old 900s bound (#1352)."""
         cfg = self._resolve(reasoning="xhigh")
         self.assertEqual(cfg["timeout"], LLM_TIMEOUT_S)
-        self.assertEqual(LLM_TIMEOUT_S, 900)
+        self.assertEqual(LLM_TIMEOUT_S, 90)
+
+    def test_llm_retries_bounded_to_one(self):
+        """One retry keeps the worst case near 2x the timeout (#1352)."""
+        cfg = self._resolve(reasoning="xhigh")
+        self.assertEqual(cfg["num_retries"], LLM_NUM_RETRIES)
+        self.assertEqual(LLM_NUM_RETRIES, 5)
 
     def test_streaming_requested(self):
         """Streaming keeps the request warm across the long reasoning phase (#775)."""
@@ -268,7 +275,7 @@ agents:
         self.assertIs(cfg["stream"], True)
 
     def test_sdk_derives_stream_idle_timeout_from_llm_timeout(self):
-        """The stream idle guard must match the raised LLM timeout (#775)."""
+        """The stream idle guard matches the per-request bound (#775, #1352)."""
         from openhands.sdk import LLM
 
         llm = LLM(**self._resolve(reasoning="xhigh"))

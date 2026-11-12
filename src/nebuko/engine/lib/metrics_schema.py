@@ -64,6 +64,14 @@ class Metrics:
             None when it could not be observed (issue #722).
         time_to_first_token: Derived seconds between request start and first
             token, or None when it could not be observed (issue #722).
+        llm_retry_count: Total SDK retries scheduled across the run's LLM calls
+            (issue #1352).
+        llm_max_call_latency_ms: Longest single LLM call in milliseconds, or
+            None when no call duration was observable (issue #1352).
+        llm_stall_count: Number of LLM calls longer than the stall threshold
+            (``STALL_THRESHOLD_S``), whether or not they succeeded (issue #1352).
+        llm_call_retry_counts: Retries attributed to each observed call, in
+            order (issue #1352).
         error: Optional error message if metrics collection failed.
     """
 
@@ -95,6 +103,10 @@ class Metrics:
     dispatch_recall_count: int = 0
     tokens_per_second: float | None = None
     time_to_first_token: float | None = None
+    llm_retry_count: int = 0
+    llm_max_call_latency_ms: float | None = None
+    llm_stall_count: int = 0
+    llm_call_retry_counts: List[int] = field(default_factory=list)
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
