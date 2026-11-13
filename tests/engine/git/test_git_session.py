@@ -226,12 +226,88 @@ def test_finalize_passes_a_clean_pushed_tree(checkout):
 
 def test_finalize_fails_on_a_detached_head_when_a_branch_was_scaffolded(checkout):
     _git(checkout, "checkout", "-b", "feature/x")
-    _git(checkout, "checkout", "--detach")
+    (checkout / "work.txt").write_text("w\n", encoding="utf-8")
+    _git(checkout, "add", "work.txt")
+    _git(checkout, "commit", "-m", "work")
+    # Detach at a commit that is not the branch tip: nothing to re-attach to.
+    _git(checkout, "checkout", "--detach", "HEAD~1")
 
     result = _local_guard(checkout).finalize(expected_branch="feature/x")
 
     assert not result.ok
     assert "detached HEAD" in result.detail and "feature/x" in result.detail
+    # A diverged HEAD is never forced onto the branch.
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
+
+
+def test_finalize_reattaches_a_detached_head_at_the_branch_tip(checkout):
+    """Repro of run 42288598222 (issue #1351): a script step runs
+    ``use-session-branch.sh``, whose ``git checkout --detach origin/<branch>``
+    leaves HEAD at the branch tip. That must not fail the run.
+    """
+    _git(checkout, "checkout", "-b", "feature/x")
+    (checkout / "work.txt").write_text("w\n", encoding="utf-8")
+    _git(checkout, "add", "work.txt")
+    _git(checkout, "commit", "-m", "work")
+    _git(checkout, "push", "origin", "feature/x")
+    _git(checkout, "checkout", "--detach", "origin/feature/x")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert result.ok, result.detail
+    assert "re-attached from detached HEAD" in result.detail
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "feature/x"
+    assert _git(checkout, "rev-parse", "HEAD") == _git(
+        checkout, "ls-remote", "origin", "refs/heads/feature/x"
+    ).split()[0]
+
+
+def test_finalize_reattaches_at_the_origin_tip_when_local_is_ahead(checkout):
+    _git(checkout, "checkout", "-b", "feature/x")
+    (checkout / "work.txt").write_text("w\n", encoding="utf-8")
+    _git(checkout, "add", "work.txt")
+    _git(checkout, "commit", "-m", "work")
+    _git(checkout, "push", "origin", "feature/x")
+    (checkout / "more.txt").write_text("m\n", encoding="utf-8")
+    _git(checkout, "add", "more.txt")
+    _git(checkout, "commit", "-m", "more")
+    local_tip = _git(checkout, "rev-parse", "HEAD")
+    _git(checkout, "checkout", "--detach", "origin/feature/x")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert result.ok, result.detail
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "feature/x"
+    # The local branch keeps its unpushed commit; the checkout is not reset.
+    assert _git(checkout, "rev-parse", "feature/x") == local_tip
+
+
+def test_finalize_reattaches_a_remote_only_branch(checkout):
+    _git(checkout, "checkout", "-b", "feature/x")
+    _git(checkout, "push", "origin", "feature/x")
+    _git(checkout, "checkout", "main")
+    _git(checkout, "branch", "-D", "feature/x")
+    _git(checkout, "checkout", "--detach", "origin/feature/x")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert result.ok, result.detail
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "feature/x"
+
+
+def test_finalize_fails_when_the_detached_head_diverged_from_the_branch(checkout):
+    _git(checkout, "checkout", "-b", "feature/x")
+    (checkout / "work.txt").write_text("w\n", encoding="utf-8")
+    _git(checkout, "add", "work.txt")
+    _git(checkout, "commit", "-m", "work")
+    _git(checkout, "push", "origin", "feature/x")
+    _git(checkout, "checkout", "--detach", "main")
+
+    result = _local_guard(checkout).finalize(expected_branch="feature/x")
+
+    assert not result.ok
+    assert "detached HEAD" in result.detail and "feature/x" in result.detail
+    assert _git(checkout, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
 
 
 def test_finalize_fails_when_the_session_switched_branch(checkout):

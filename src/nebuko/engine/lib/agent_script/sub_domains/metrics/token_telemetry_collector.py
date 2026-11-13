@@ -35,6 +35,7 @@ from litellm.integrations.custom_logger import CustomLogger
 
 from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
     RetryEvent,
+    RetryWait,
     TokenTelemetry,
 )
 
@@ -108,13 +109,22 @@ class TokenTelemetryCollector(CustomLogger):
         self._current_call_id: str | None = None
         self._observations: list[TokenTelemetry] = []
         self._retries: list[RetryEvent] = []
+        self._retry_waits: list[RetryWait] = []
         self._pending_retries = 0
+        # The retry the SDK scheduled but whose next attempt has not started
+        # yet: its backoff window is only measurable once that attempt begins
+        # (issue #1375).
+        self._open_retry: RetryEvent | None = None
+        self._open_retry_at: float | None = None
 
     # ── Request start ────────────────────────────────────────────
 
     def log_pre_api_call(self, model: Any, messages: Any, kwargs: dict[str, Any]) -> None:
         call_id = _call_id(kwargs)
-        self._in_flight[call_id] = CallStamps(request_started_at=time.monotonic())
+        now = time.monotonic()
+        # A fresh attempt after a retry closes that retry's backoff window.
+        self._close_open_retry(now)
+        self._in_flight[call_id] = CallStamps(request_started_at=now)
         self._current_call_id = call_id
 
     # ── Chunks (first token, finish, usage) ──────────────────────
@@ -140,16 +150,40 @@ class TokenTelemetryCollector(CustomLogger):
         """Record one SDK retry so stalls surface in the step metrics (#1352).
 
         The SDK opens a fresh LiteLLM call per attempt, so the count is
-        attributed to the call that eventually completes.
+        attributed to the call that eventually completes. The backoff window
+        this retry waits for is measured when the next attempt starts
+        (issue #1375).
         """
-        self._retries.append(
-            RetryEvent(
-                attempt_number=attempt_number,
-                num_retries=num_retries,
-                error_type=type(error).__name__ if error is not None else "",
+        event = RetryEvent(
+            attempt_number=attempt_number,
+            num_retries=num_retries,
+            error_type=type(error).__name__ if error is not None else "",
+        )
+        # A second retry with no attempt in between: the previous window was
+        # never observable, so it is recorded as zero rather than lost.
+        self._close_open_retry(time.monotonic())
+        self._retries.append(event)
+        self._open_retry = event
+        self._open_retry_at = time.monotonic()
+        self._pending_retries += 1
+
+    def _close_open_retry(self, now: float) -> None:
+        """Attribute the open retry's backoff window, if one is open."""
+        if self._open_retry is None:
+            return
+        started = self._open_retry_at
+        self._retry_waits.append(
+            RetryWait(
+                event=self._open_retry,
+                wait_ms=(
+                    round((now - started) * 1000.0, 2)
+                    if started is not None
+                    else 0.0
+                ),
             )
         )
-        self._pending_retries += 1
+        self._open_retry = None
+        self._open_retry_at = None
 
     # ── Terminal (best-effort fallback for non-streamed calls) ───
 
@@ -188,7 +222,16 @@ class TokenTelemetryCollector(CustomLogger):
 
     def drain_retries(self) -> list[RetryEvent]:
         """Return the retry events collected so far and clear them."""
+        self._close_open_retry(time.monotonic())
         drained, self._retries = self._retries, []
+        self._retry_waits = []
+        return drained
+
+    def drain_retry_waits(self) -> list[RetryWait]:
+        """Return the retry events with their backoff windows and clear them."""
+        self._close_open_retry(time.monotonic())
+        drained, self._retry_waits = self._retry_waits, []
+        self._retries = []
         return drained
 
     def _take_pending_retries(self) -> int:

@@ -29,6 +29,9 @@ RULE_SEVERITY_EXPECTED = {
     "C6-unreferenced-entry": "warning",
     "C7-mcp-servers": "error",
     "C8-missing-role": "warning",
+    "C9-unknown-backend": "error",
+    "C10-backend-tool": "error",
+    "C11-skills-discover": "error",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -89,6 +92,7 @@ class TestConfigLinterContract:
             "_check_refs",
             "_check_schema",
             "_check_tools",
+            "_check_backends",
             "_check_roles",
             "_check_mcp_servers",
             "_check_prompt_files",
@@ -241,3 +245,19 @@ class TestShippedConfigs:
         for path in shipped:
             issues = ConfigLinter().lint(path)
             assert [issue for issue in issues if issue.rule in FILE_RULES] == []
+
+    def test_tracked_claude_profile_is_backend_clean(self):
+        """The tracked Claude Code profile must satisfy C9-C11 (issue #1368).
+
+        It was silently inert before the ``backend`` field existed: every role
+        ran OpenHands with the key dropped. The linter now fails loud, so the
+        profile has to stay servable by the backend it declares.
+        """
+        path = REPO_ROOT / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        issues = ConfigLinter().lint(path)
+        backend_rules = {
+            "C9-unknown-backend",
+            "C10-backend-tool",
+            "C11-skills-discover",
+        }
+        assert [issue for issue in issues if issue.rule in backend_rules] == []

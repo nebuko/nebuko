@@ -37,6 +37,21 @@ class RetryEvent:
 
 
 @dataclass(frozen=True)
+class RetryWait:
+    """One retry event with the backoff window that preceded it (issue #1375).
+
+    Fields:
+        event: The retry event the SDK reported.
+        wait_ms: Monotonic time between the previous attempt's end and this
+            retry's scheduling, in milliseconds. ``0.0`` when no start stamp
+            was observable.
+    """
+
+    event: RetryEvent
+    wait_ms: float = 0.0
+
+
+@dataclass(frozen=True)
 class CallHealth:
     """Stall/retry indicators derived from a run's LLM calls (issue #1352).
 
@@ -46,12 +61,15 @@ class CallHealth:
         stall_count: Number of calls longer than :data:`STALL_THRESHOLD_S`.
         retry_count: Total retries the SDK scheduled across the run.
         call_retry_counts: Retries attributed to each observed call, in order.
+        retry_wait_ms: Time spent waiting for the SDK's backoff between a
+            failed attempt and the next retry, in milliseconds (issue #1375).
     """
 
     max_call_latency_ms: float | None = None
     stall_count: int = 0
     retry_count: int = 0
     call_retry_counts: tuple[int, ...] = ()
+    retry_wait_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -139,14 +157,15 @@ class TokenTelemetry:
     @staticmethod
     def call_health(
         observations: Sequence["TokenTelemetry"],
-        retries: Sequence[RetryEvent] = (),
+        retries: Sequence["RetryEvent | RetryWait"] = (),
         stall_threshold_s: float = STALL_THRESHOLD_S,
     ) -> CallHealth:
-        """Stall and retry indicators across a run's calls (issue #1352).
+        """Stall, retry and retry-wait indicators across a run's calls (#1352).
 
         ``retry_count`` counts every retry event, including retries whose final
         attempt failed and therefore produced no observation; the per-call
-        counts only cover the calls that completed.
+        counts only cover the calls that completed. ``retry_wait_ms`` sums the
+        observed backoff windows (issue #1375).
         """
         durations = [
             duration
@@ -160,4 +179,5 @@ class TokenTelemetry:
             stall_count=sum(1 for d in durations if d > stall_threshold_s),
             retry_count=len(retries),
             call_retry_counts=tuple(obs.retry_count for obs in observations),
+            retry_wait_ms=round(sum(getattr(r, "wait_ms", 0.0) for r in retries), 2),
         )

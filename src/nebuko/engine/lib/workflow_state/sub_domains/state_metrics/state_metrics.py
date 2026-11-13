@@ -46,6 +46,8 @@ class StateMetrics(BaseModel):
     llm_max_call_latency_ms: Optional[float] = None
     llm_stall_count: int = 0
     llm_call_retry_counts: list[int] = Field(default_factory=list)
+    provider: str = ""
+    provider_retry_wait_ms: float = 0.0
     error: Optional[str] = None
 
     @staticmethod
@@ -86,5 +88,7 @@ class StateMetrics(BaseModel):
             llm_max_call_latency_ms=data.get("llm_max_call_latency_ms"),
             llm_stall_count=data.get("llm_stall_count", 0),
             llm_call_retry_counts=retry_counts[-MAX_CALL_RUNTIMES:],
+            provider=data.get("provider", ""),
+            provider_retry_wait_ms=data.get("provider_retry_wait_ms", 0.0) or 0.0,
             error=data.get("error"),
         )

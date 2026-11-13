@@ -244,6 +244,7 @@ llms:
 | Field | Type | Description |
 |-------|------|-------------|
 | `model` | `${ref}` | LLM entry from the `llms:` layer. |
+| `backend` | string | Agent runtime that executes this role: `openhands` (default) or `claude-code`. Registry-resolved (`nebuko.engine.harness.resolve_harness`), so a new harness is one adapter module and no schema change. An unregistered value fails the `C9-unknown-backend` lint error instead of silently running OpenHands. |
 | `role` | string | One-line role description, rendered into every other agent's "Your Team" section. Optional; a missing role renders a placeholder and raises the `C8-missing-role` lint warning. |
 | `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
 | `prompt_file` | string | Path to the agent's system prompt (convention: `defaults/prompts/{agent}.md`). Only the basename is used at run time — the layered lookup re-resolves it, so deployments can override a prompt by name. |

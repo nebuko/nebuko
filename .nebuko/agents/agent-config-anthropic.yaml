@@ -1,7 +1,11 @@
-# ── Providers: Claude Code (ACP) ──
+# ── Providers: Claude Code (claude-agent-sdk) ──
 # Every role runs through Claude Code (`backend: claude-code`), not the OpenHands
 # model loop: Claude Code brings its own tools, context management and model
-# calls, so the `tools`, `temperature` and sampling fields below are ignored.
+# calls, so `temperature` and sampling fields below are ignored. `tools` is not:
+# each entry maps to the Claude Code built-in that serves the same role
+# (terminal→Bash, read→Read, ...) or, for the engine tools, to the in-process
+# `mcp__nebuko__*` server. Skills are injected into the prompt (this backend has
+# no skill-discovery tool).
 # `api_url` is unused; only `api_token_env` matters. Generate the token with
 # `claude setup-token` (subscription) and expose it as CLAUDE_CODE_OAUTH_TOKEN:
 # as a repository secret, or in the environment of your self-hosted runner
@@ -49,8 +53,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/architect.md"
     skills:
-      - inject: ["call-agent", "planning"]
-      - discover: ["complexity", "posting-contract"]
+      - inject: ["call-agent", "planning", "complexity", "posting-contract"]
     tools: ["think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]
     complexity_overrides:
       low:
@@ -67,7 +70,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/dev.md"
     skills:
-      - discover: ["complexity", "posting-contract"]
+      - inject: ["complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
 
   context:
@@ -77,8 +80,7 @@ agents:
     temperature: 0.1
     prompt_file: "defaults/prompts/context.md"
     skills:
-      - inject: ["call-agent", "context-research"]
-      - discover: ["complexity", "posting-contract"]
+      - inject: ["call-agent", "context-research", "complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review"]
     mcp_servers:
       - "${mcp_servers.brave-search}"
@@ -90,8 +92,7 @@ agents:
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
     skills:
-      - inject: ["plan-review"]
-      - discover: ["retrospective", "complexity", "posting-contract"]
+      - inject: ["plan-review", "retrospective", "complexity", "posting-contract"]
     tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
 
   po:
@@ -100,6 +101,5 @@ agents:
     role: "Product owner — triages and refines issues into actionable specs; never modifies code."
     prompt_file: "defaults/prompts/po.md"
     skills:
-      - inject: ["call-agent", "issue-refinement"]
-      - discover: ["complexity", "posting-contract"]
+      - inject: ["call-agent", "issue-refinement", "complexity", "posting-contract"]
     tools: ["think", "finish", "finalize", "complexity_review"]

@@ -353,6 +353,38 @@ class TestStateMetricsStallsAndRetries(unittest.TestCase):
         self.assertEqual(metrics.llm_call_retry_counts, [1])
 
 
+class TestStateMetricsProviderLabel(unittest.TestCase):
+    """The provider label and retry wait survive the state mirror (#1375)."""
+
+    def test_fields_extracted_from_full_metrics_dict(self):
+        metrics = StateMetrics.from_full_metrics_dict(
+            {
+                "input_tokens": 10,
+                "provider": "https://api.mistral.ai/v1",
+                "provider_retry_wait_ms": 24000.0,
+            }
+        )
+        self.assertEqual(metrics.provider, "https://api.mistral.ai/v1")
+        self.assertEqual(metrics.provider_retry_wait_ms, 24000.0)
+
+    def test_fields_default_when_absent(self):
+        metrics = StateMetrics.from_full_metrics_dict({"input_tokens": 10})
+        self.assertEqual(metrics.provider, "")
+        self.assertEqual(metrics.provider_retry_wait_ms, 0.0)
+
+    def test_round_trips_from_metrics_to_dict(self):
+        from nebuko.engine.lib.metrics_schema import Metrics
+
+        original = Metrics(
+            run_id="r1",
+            provider="https://api.mistral.ai/v1",
+            provider_retry_wait_ms=8000.0,
+        )
+        metrics = StateMetrics.from_full_metrics_dict(original.to_dict())
+        self.assertEqual(metrics.provider, "https://api.mistral.ai/v1")
+        self.assertEqual(metrics.provider_retry_wait_ms, 8000.0)
+
+
 class TestStateMetricsToolTime(unittest.TestCase):
     """Tool execution time survives the workflow-state metrics mirror (#1016)."""
 

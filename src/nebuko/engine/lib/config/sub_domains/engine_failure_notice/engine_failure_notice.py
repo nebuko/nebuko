@@ -78,6 +78,8 @@ class EngineFailureNotice(BaseModel):
         model: Model identifier of that call (issue #1322).
         requires_config_fix: The provider refused the configuration, so a
             retry cannot help until it is fixed (issue #1322).
+        timings: Pre-rendered wall-clock breakdown of the failed run (issue
+            #1375), shown as its own block when non-empty.
     """
 
     step: str
@@ -91,6 +93,7 @@ class EngineFailureNotice(BaseModel):
     provider: str = ""
     model: str = ""
     requires_config_fix: bool = False
+    timings: str = ""
 
     # Frozen: a notice describes one already-failed run (functional-first
     # value object); nothing downstream may rewrite it.
@@ -122,6 +125,7 @@ class EngineFailureNotice(BaseModel):
                         else _AFTERMATH_NOT_ADVANCED
                     ),
                 ),
+                *([self.timings] if self.timings else []),
             ]
         )
 

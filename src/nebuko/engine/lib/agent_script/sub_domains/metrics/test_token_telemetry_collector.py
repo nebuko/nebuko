@@ -34,6 +34,19 @@ class _Chunk:
         self.usage = usage
 
 
+class _Clock:
+    """Deterministic monotonic clock, so a backoff window is measurable."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 class _Response:
     def __init__(self, usage=None):
         self.usage = usage
@@ -179,6 +192,43 @@ class TestRetryCapture:
 
         assert collector.drain() == []
         assert len(collector.drain_retries()) == 1
+
+
+class TestRetryWait:
+    """The SDK's backoff window is measured, not guessed (issue #1375)."""
+
+    def test_measures_the_gap_until_the_next_attempt_starts(self, monkeypatch):
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        collector = TokenTelemetryCollector()
+        _start(collector, "call-1")
+        collector.on_retry(1, 1, TimeoutError("slow provider"))
+        clock.advance(8.0)
+        _start(collector, "call-2")
+        collector.on_token(_Chunk(usage=_Usage(completion_tokens=1)))
+
+        waits = collector.drain_retry_waits()
+
+        assert len(waits) == 1
+        assert waits[0].wait_ms == pytest.approx(8000.0)
+        assert waits[0].event.error_type == "TimeoutError"
+
+    def test_draining_waits_also_clears_the_retry_events(self):
+        collector = TokenTelemetryCollector()
+        collector.on_retry(1, 1, TimeoutError())
+
+        assert len(collector.drain_retry_waits()) == 1
+        assert collector.drain_retries() == []
+
+    def test_a_retry_whose_next_attempt_never_starts_still_counts(self):
+        """A run that dies on the last retry must not lose that retry's wait."""
+        collector = TokenTelemetryCollector()
+        collector.on_retry(1, 1, TimeoutError())
+
+        waits = collector.drain_retry_waits()
+
+        assert len(waits) == 1
+        assert waits[0].wait_ms >= 0.0
 
 
 class TestInstall:

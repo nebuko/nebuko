@@ -46,9 +46,14 @@ class NebukoManifest(BaseModel):
     Paths are resolved relative to the repo root. Every field is optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders and the
     built-in defaults. Secrets never live here — they stay in the workflow.
+    Paths are resolved relative to the repo root. Both fields are optional, so an
+    absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+
+    Unknown keys are ignored (not rejected): a manifest written for a newer
+    engine (e.g. a ``features:`` block) must not abort every run of an older one.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     skills_dir: str | None = None
     default_workflow: str | None = None
@@ -170,6 +175,9 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+    # Per-phase wall-clock durations in milliseconds (issue #1375), keyed by
+    # phase name. Empty for a run that never entered a timed phase.
+    timings: dict[str, float] = field(default_factory=dict)
 
     # @stub-protected
     def process_exit_code(self) -> int:

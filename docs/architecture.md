@@ -206,6 +206,61 @@ per-prompt edits.
 
 ---
 
+## Harness Port (issue #1368)
+
+Every agent runtime sits behind one seam, `src/nebuko/engine/harness/`. Two
+independent axes meet there:
+
+- **transport** — a `HarnessAdapter` (`openhands`, `claude-code`) builds the
+  agent and its `HarnessSession` (`send_message` / `run` / `close` /
+  `on_event`) and declares a frozen `HarnessCapabilities` set (native tools,
+  response schema, MCP, tool narrowing, condenser, skills discovery, dispatch
+  recall, publication guard, closing channel). The engine reads capabilities
+  instead of assuming one runtime's mechanism is the contract.
+- **closing channel** — how that runtime hands the engine its closing
+  `(report, turn_outcome)`: a native tool (`finalize`) or parsed text. Both
+  return the same `ClosingResult`, so `finalize.py` and all routing are
+  untouched.
+
+`backend` in `agent-config.yaml` is registry-resolved (`resolve_harness`), not a
+`Literal`: a third harness is one adapter module, no schema change. An unknown
+backend raises `EngineAgentUnavailable` naming the registered set, and
+`lint-config` rejects it before a run starts (rules C9–C11: unknown backend, a
+tool the backend cannot serve, discover-mode skills without `skills_discover`).
+
+**Engine tools: sink vs query.** `finalize` is a write-only *sink* — it needs no
+engine state mid-turn, so it records into a `FinalizeSink` and returns. The
+engine's query tools (`terminal_batch`, `complexity_review`,
+`fetch_comment_bodies`, `report_scaffold_branch`) delegate to the same executors
+the OpenHands tools use — one implementation, two transports, never a copy.
+
+**No out-of-process bridge.** Claude Code's only tool-injection surface is MCP,
+and `claude-agent-sdk` hosts an **in-process** MCP server
+(`create_sdk_mcp_server` + `@tool`): the handlers are ordinary Python functions
+in the engine process, called back over the SDK control channel. No sidecar, no
+socket, no ACP hop. A role's declared `tools` map onto the Claude Code
+built-ins that serve the same role (`terminal`→`Bash`, `read`→`Read`,
+`edit`→`Edit`, `write`→`Write`, `task_tracker`→`TodoWrite`), with the engine
+tools exposed as `mcp__nebuko__*`; `finalize` is always allowed, mirroring the
+OpenHands run path. Declared `mcp_servers` become SDK stdio configs.
+
+The closing turn narrows the tool surface to `mcp__nebuko__finalize` through
+`set_tool_policy`, enforced by a `PreToolUse` hook: `can_use_tool` is shadowed
+by `allowed_tools` / `permission_mode`, so it cannot take a tool away, while
+the hook sees every call and can deny it. That replaces the OpenHands-only
+mutation of the SDK's private `agent._tools` map.
+
+The run path is unchanged downstream: `run_agent` returns a conversation-shaped
+view (id, `state.events`, `execution_status`, `run_outcome`) carrying its session
+and closing channel, so metrics, answer capture and `build_output` consume
+either runtime identically. The soft-timeout contract holds on both backends: the
+watchdog *interrupts* the session (never closes it) so a bounded wind-down turn
+can still run, and a missing `finalize` verdict after the work turn triggers the
+same bounded dispatch-recall passes. The live `claude` smoke test is opt-in
+(`NEBUKO_LIVE_CLAUDE=1`) and never runs in CI.
+
+---
+
 ## Routing Cascade
 
 `resolve_config.py` decides which agent runs, in priority order
