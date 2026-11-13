@@ -371,22 +371,6 @@ jobs:
                   [ "$VENV_CACHE_HIT" = "true" ] && COMPILE=
                   uv sync --project "$NEBUKO_ROOT" --extra runtime --locked --no-dev $COMPILE
 
-            - name: Install gitleaks
-              # Secret scanning before push/post (issue #1347). Pinned by
-              # version and sha256; the engine falls back to its builtin rules
-              # when the binary is absent, so this is a hardening step.
-              run: |
-                  GITLEAKS_VERSION=8.30.1
-                  GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-                  ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-                  curl -sSL --retry 3 --max-time 60 \
-                    "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ARCHIVE}" \
-                    -o "/tmp/${ARCHIVE}"
-                  echo "${GITLEAKS_SHA256}  /tmp/${ARCHIVE}" | sha256sum -c -
-                  tar -xzf "/tmp/${ARCHIVE}" -C /tmp gitleaks
-                  install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
-                  gitleaks version
-
             - name: "Materialize extra secret slots as env vars"
               env:
                 EXTRA_SECRET_1_NAME: ${{ inputs.EXTRA_SECRET_1_NAME }}
@@ -453,6 +437,15 @@ jobs:
               if: always()
               with:
                 path: ${{ runner.temp }}/nebuko-task-logs/events.jsonl
+                archive: false
+                if-no-files-found: ignore
+                retention-days: 7
+
+            - name: Upload timings.json artifact
+              uses: actions/upload-artifact@v7
+              if: always()
+              with:
+                path: ${{ runner.temp }}/nebuko-task-logs/timings.json
                 archive: false
                 if-no-files-found: ignore
                 retention-days: 7
