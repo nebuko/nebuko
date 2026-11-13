@@ -36,9 +36,14 @@ class TestManifestFields:
         assert manifest.env_defaults() == {}
         assert manifest.overlay_env({}) == {}
 
-    def test_unknown_key_is_rejected(self):
-        with pytest.raises(ValidationError):
-            NebukoManifest.model_validate({"circuit_breaker": 15})
+    def test_unknown_key_is_ignored(self):
+        # A manifest written for a newer engine must not abort an older run.
+        manifest = NebukoManifest.model_validate(
+            {"circuit_breaker_threshold": 15, "features": {"foo": True}}
+        )
+
+        assert manifest.circuit_breaker_threshold == 15
+        assert not hasattr(manifest, "features")
 
     def test_threshold_below_one_is_rejected(self):
         with pytest.raises(ValidationError):

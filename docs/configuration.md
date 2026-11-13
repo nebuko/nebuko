@@ -91,7 +91,8 @@ pin_comment: false
 skills_dir: .nebuko/skills              # optional path override
 ```
 
-Every key is optional and unknown keys are rejected. The engine reads the
+Every key is optional and unknown keys are ignored, so a manifest written for
+a newer engine does not abort an older run. The engine reads the
 manifest from the caller's workspace at startup and overlays it on the
 environment it was given, so the precedence is:
 
