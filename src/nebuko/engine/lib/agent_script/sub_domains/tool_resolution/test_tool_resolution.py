@@ -34,6 +34,7 @@ def _names(tools: tuple[Tool, ...]) -> tuple[str, ...]:
     return tuple(t.name for t in tools)
 
 
+@pytest.mark.slow
 class TestCleanInterpreterRegression:
     """Reproduces the exact #860 failure mode in an untouched interpreter."""
 

@@ -23,7 +23,13 @@ uv run pytest                              # everything (both testpaths)
 uv run pytest tests                        # tests/ only (fast gate)
 uv run pytest src/nebuko/engine/lib        # runtime engine/lib unit tests
 uv run pytest tests src/nebuko/engine/lib  # the documented full command
+uv run pytest -n 4 -m "not slow"           # fast run: ~35s instead of ~150s
 ```
+
+The fast run parallelises with `pytest-xdist` and skips the `slow` tests (each
+spawns a fresh interpreter that imports the agent SDK, ~10s apiece). It is for
+inner loops and for investigation oracles; CI and the documented full command
+still run everything, so use the full command before you declare a change done.
 
 `main` is expected to be green on both suites (they only need `defaults/` in the
 checkout). CI runs the full command on every pull request
@@ -53,6 +59,11 @@ Test-writing pitfalls that have broken `main` before:
   path *under a regular file*, not a missing top-level directory.
 - Red spec tests (`# @stub-protected`) must not be merged to `main` without
   their implementation; if the feature is dropped, delete the tests.
+- Tests run in parallel (`-n`), so they must not share a fixed path. The step
+  prompt file (`/tmp/step_prompt.md`, `STEP_PROMPT_PATH`) is redirected per
+  test by the autouse fixture in the repo-root `conftest.py`
+  (`NEBUKO_STEP_PROMPT_DIR`): read it through `step_prompt_path()`, never as a
+  literal. Use `tmp_path` for any other file a test writes.
 
 ## Debugging engine decisions (replay helper)
 `src/nebuko/engine/lib/replay.py` replays the engine's **per-invocation routing

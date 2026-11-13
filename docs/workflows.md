@@ -83,7 +83,8 @@ stays the base identity. Injection order in the agent context:
 `### 🔴 STEP INSTRUCTION (from workflow.yaml)`).
 
 **Mechanics.** The resolver writes the prompt verbatim to
-`/tmp/step_prompt.md` and emits `STEP_PROMPT_FILE` (path only — the prompt may
+`/tmp/step_prompt.md` (`STEP_PROMPT_PATH`; tests redirect it with
+`NEBUKO_STEP_PROMPT_DIR`) and emits `STEP_PROMPT_FILE` (path only — the prompt may
 contain newlines). When the step has no `prompt`, the variable is empty and any
 stale file is removed, so existing workflows are unaffected. Multi-line YAML
 block scalars (`|` / `>`) are supported.
@@ -319,6 +320,7 @@ steps:
       env:                      # optional, overlaid on the engine environment
         PYTHONWARNINGS: error
       timeout_minutes: 15       # optional, >= 1 (default 30, capped at 60)
+      checkout: session         # optional: session (default) | workflow
     next: review
 ```
 
@@ -330,14 +332,47 @@ survives the round trip to the child process intact. `working_dir` is resolved
 against the session checkout (absolute paths and `..` segments are rejected)
 and `env` overrides inherited variables with the same key.
 
+### Which checkout the script runs on (`checkout`)
+
+Script steps run *before* the branch scaffold prepares the dev branch, so by
+default the engine checks the session branch out itself (issue #1327):
+
+| Value | Behaviour |
+|---|---|
+| `session` (default) | Check out the branch recorded in `current_context.dev_branch` (written by the branch scaffold) at the pushed SHA, detached, with enough history for `git diff origin/main...HEAD`. Read-only: it never creates a branch, merges the base or pushes. |
+| `workflow` | Run on the workflow's own ref, exactly as before issue #1327. |
+
+Edge cases:
+
+- **No session branch yet** (a script before any agent has scaffolded one): the
+  command runs on the workflow ref and the report says `branch: none`.
+- **Branch expected but unreachable**: the run fails with an engine error and
+  the command does not run. There is no silent fallback to the workflow ref.
+- **The base moved on**: it is not merged. The evidence must test exactly what
+  was pushed.
+
+This is a **behaviour change** for existing scripts: with `session` as the
+default, repo-relative scripts run from the agent's branch, so an agent could
+change a check that grades it. Set `checkout: workflow` to keep the old
+behaviour for a step that must not see the agent's changes.
+
+Exec-style `inputs` (a binding's `exec:` command) use the same checkout: they
+resolve in the session workspace, and an unreachable branch fails the step.
+
+The completion comment always carries a `branch: … · head: …` line naming the
+commit the command ran on (`branch: none` for the workflow ref), and the same
+pair is recorded in `current_context.evidence_commits[<step>]`, so review can
+see which commit the evidence came from.
+
 Mechanics:
 
 1. The resolver detects the `script:` source and emits the execution contract
    (`RUN_SCRIPT=true`, `SKIP_AGENT=true`, `SCRIPT_PATH`, `SCRIPT_ARGS` as a
    JSON array, `SCRIPT_WORKING_DIR`, `SCRIPT_ENV` as a JSON object,
-   `SCRIPT_TIMEOUT_MINUTES`, `WORKFLOW_STEP`) instead of a task assignment; no
-   agent is run for that step. `SCRIPT_PATH` carries the `command` verbatim and
-   `SCRIPT_ARGS` is decoded with `json.loads`, so argv round-trips losslessly.
+   `SCRIPT_CHECKOUT`, `SCRIPT_TIMEOUT_MINUTES`, `WORKFLOW_STEP`) instead of a
+   task assignment; no agent is run for that step. `SCRIPT_PATH` carries the
+   `command` verbatim and `SCRIPT_ARGS` is decoded with `json.loads`, so argv
+   round-trips losslessly.
 2. The engine runs the script from `[phase:action]` (bounded by the optional
    `timeout_minutes`), capturing stdout and stderr **merged**, and posts **two**
    comments — the same comment lifecycle as an agent step:
@@ -390,8 +425,10 @@ Security notes:
   agent answer.
 - The script runs in the same CI job with the job's full environment and
   permissions — the same trust level as the workflow YAML itself, plus the
-  step's own `env`. Secret scrubbing / sandboxed execution are deferred
-  enhancements.
+  step's own `env`. In particular `GH_TOKEN`, `GITHUB_TOKEN` and provider API
+  keys are visible to the command, and a step's `env` can override but not
+  remove them. That is the same exposure the agent child already has; an
+  `env_clear`/allowlist setting is deferred to #1313.
 
 ---
 

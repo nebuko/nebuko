@@ -238,6 +238,22 @@ def _step_output_json(step: object) -> str:
     return output.model_dump_json()
 
 
+#: Default location of the step prompt file the resolver emits as
+#: ``STEP_PROMPT_FILE`` (issue #551). A fixed path is right on a CI runner
+#: (one resolution at a time); tests set ``STEP_PROMPT_DIR_ENV`` per test so
+#: parallel workers never share it.
+STEP_PROMPT_PATH = "/tmp/step_prompt.md"
+STEP_PROMPT_DIR_ENV = "NEBUKO_STEP_PROMPT_DIR"
+
+
+def step_prompt_path() -> str:
+    """Where the step prompt file is written (``STEP_PROMPT_PATH`` by default)."""
+    override = os.environ.get(STEP_PROMPT_DIR_ENV)
+    if not override:
+        return STEP_PROMPT_PATH
+    return os.path.join(override, os.path.basename(STEP_PROMPT_PATH))
+
+
 def _write_step_prompt_file(prompt: str | None) -> str:
     """Write a non-empty step prompt to a temp file; return the path or ''.
 
@@ -245,13 +261,13 @@ def _write_step_prompt_file(prompt: str | None) -> str:
     RESOLVE_OUTPUT protocol, so the content is written to a file and only
     the path is emitted (issue #551, same pattern as PROMPT_LOCATION).
     """
+    path = step_prompt_path()
     if not prompt or not prompt.strip():
         # Remove any stale file from a previous resolution on this runner.
-        path = "/tmp/step_prompt.md"
-        if os.path.exists(path):
-            os.remove(path)
+        # ``missing_ok``: an exists()-then-remove() pair raced with another
+        # process deleting the file.
+        Path(path).unlink(missing_ok=True)
         return ""
-    path = "/tmp/step_prompt.md"
     with open(path, "w") as f:
         f.write(prompt)
     return path
@@ -399,6 +415,7 @@ def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
                 "args": marker.get("script_args", "[]"),
                 "working_dir": marker.get("script_working_dir", ""),
                 "env": marker.get("script_env", "{}"),
+                "checkout": marker.get("script_checkout", "session"),
                 "timeout_minutes": marker.get("timeout_minutes"),
             },
         )
@@ -1318,6 +1335,8 @@ class SubWorkflowLeaf:
         script_args: JSON array of the script's argv (issue #974).
         script_working_dir: Repo-relative working directory (issue #974).
         script_env: JSON object of extra environment variables (issue #974).
+        script_checkout: Checkout the script runs on, ``session``/``workflow``
+            (issue #1327).
         script_timeout: Script timeout in minutes for a ``"script"`` leaf.
         complexity: Declared complexity tier of the leaf step ("" when unset).
     """
@@ -1335,6 +1354,7 @@ class SubWorkflowLeaf:
     script_args: str = "[]"  # @stub-protected
     script_working_dir: str = ""  # @stub-protected
     script_env: str = "{}"  # @stub-protected
+    script_checkout: str = "session"  # @stub-protected
     script_timeout: Optional[float] = None  # @stub-protected
     # Declared complexity tier of the leaf step (issue #787); "" when unset.
     complexity: str = ""  # @stub-protected
@@ -1528,6 +1548,7 @@ def _resolve_sub_workflow_leaf(
             script_args=leaf.script.to_process_env()["SCRIPT_ARGS"],
             script_working_dir=leaf.script.working_dir or "",
             script_env=leaf.script.to_process_env()["SCRIPT_ENV"],
+            script_checkout=leaf.script.to_process_env()["SCRIPT_CHECKOUT"],
             script_timeout=leaf.script.timeout_minutes,
             complexity=leaf.complexity or "",
         )
@@ -1669,6 +1690,7 @@ def _resolve_sub_workflow_entry(
             "SCRIPT_ARGS": leaf.script_args,
             "SCRIPT_WORKING_DIR": leaf.script_working_dir,
             "SCRIPT_ENV": leaf.script_env,
+            "SCRIPT_CHECKOUT": leaf.script_checkout,
             "SCRIPT_TIMEOUT_MINUTES": str(leaf.script_timeout or ""),
             "WORKFLOW_NAME": leaf.workflow,
             "WORKFLOW_STEP": leaf.step,
@@ -2614,6 +2636,7 @@ def _marker_for_target_step(
             "script_args": target_step.script.to_process_env()["SCRIPT_ARGS"],
             "script_working_dir": target_step.script.working_dir or "",
             "script_env": target_step.script.to_process_env()["SCRIPT_ENV"],
+            "script_checkout": target_step.script.to_process_env()["SCRIPT_CHECKOUT"],
             "timeout_minutes": target_step.script.timeout_minutes,
             "step": target_step.name,
         }

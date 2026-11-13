@@ -112,7 +112,19 @@ class TestRunOutcome:
             "posted_body",
             "state",
             "phases",
+            "timings",
         ]
+
+    def test_timings_default_to_empty(self):
+        outcome = RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            turn_outcome=_approved_outcome(),
+            prompt=None,
+            posted_body=None,
+            state=None,
+            phases=(),
+        )
+        assert outcome.timings == {}
 
     def test_carries_the_turn_outcome_and_the_emitted_phases(self):
         outcome = RunOutcome(
@@ -193,7 +205,24 @@ class TestStepResult:
             "affected",
             "output",
             "duration_seconds",
+            "branch",
+            "head_sha",
         ]
+
+    def test_records_the_commit_the_command_ran_on(self):
+        result = StepResult(
+            step_kind="run_script",
+            ok=True,
+            detail="",
+            affected=0,
+            branch="feature/issue-1-x",
+            head_sha="abc123",
+        )
+        assert (result.branch, result.head_sha) == ("feature/issue-1-x", "abc123")
+
+    def test_defaults_to_no_commit(self):
+        result = StepResult(step_kind="delete_comments", ok=True, detail="", affected=0)
+        assert (result.branch, result.head_sha) == ("", "")
 
     def test_is_frozen(self):
         result = StepResult(step_kind="delete_comments", ok=True, detail="done", affected=1)

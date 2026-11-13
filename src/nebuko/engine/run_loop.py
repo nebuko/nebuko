@@ -17,7 +17,8 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -27,8 +28,10 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
     branch_scaffold,
+    evidence_checkout,
     git_session,
     pr_finalize,
 )
@@ -71,6 +74,7 @@ from nebuko.engine.models import (
     SkipOutcome,
     StepResult,
     Trigger,
+    session_workspace,
 )
 from nebuko.engine.paths import (
     ConfigKind,
@@ -85,6 +89,7 @@ from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
     GitActionStatus,
     GitInfo,
 )
+from nebuko.engine.lib.config import InputMaterializationError
 from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
@@ -120,6 +125,10 @@ _TRIGGER_KEY = "ENGINE_TRIGGER"
 # produced. It is the single hand-off source the agent child and the routing
 # phases read, so the resolver's output is never recomputed mid-run.
 _RUN_RESOLVED_KEY = "resolved"
+
+# ``current_context`` key mapping a step name to the ``{branch, head_sha}`` an
+# evidence script step ran on (issue #1327), so a reviewer can see the commit.
+EVIDENCE_COMMITS_KEY = "evidence_commits"
 
 _USER_REQUEST_HEADER = "--- USER REQUEST / GITHUB CONTEXT ---"
 _STEP_HEADER = "## Current step prompt"
@@ -216,6 +225,11 @@ def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
         if kind == WORKFLOW_COMPLETE:
             return RunStatus.REVIEW_NEEDED
     return None
+
+
+def _binding_source(binding: Any) -> str:
+    """The binding's source key (``exec``/``str``/``ref``), or ``""``."""
+    return str(getattr(binding, "source", "") or "")
 
 
 def _script_exit_code(result: StepResult) -> int | None:
@@ -397,18 +411,21 @@ def _is_publish_error(exc_type: type | None) -> bool:
 
 # The bash guard reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\)
 # -->.*/\1/p'``: per line, last match wins, and only lowercase-letters names
-# match (``issue-reviewer`` therefore never counts as a caller).
+# match (``issue-reviewer`` therefore never counts as a caller). The engine reads
+# it from the header region only (issue #1361): the marker sits on line 2 of an
+# answer comment (``format_answer_header``) or line 1 of a continuation part
+# (``format_bot_marker``); a marker quoted inside the agent's own text is not a
+# caller.
 _CALLER_RE = re.compile(r"<!-- bot-agent-([a-z]*) -->")
 
 
 def _caller_agent(trigger_body: str) -> str:
     """The caller marker the legacy guard-comparison reads from the body."""
-    found = [
-        matches[-1]
-        for line in (trigger_body or "").splitlines()
-        if (matches := _CALLER_RE.findall(line))
-    ]
-    return "\n".join(found)
+    for line in (trigger_body or "").splitlines()[:2]:
+        matches = _CALLER_RE.findall(line)
+        if matches:
+            return matches[-1]
+    return ""
 
 
 def _answer_of(agent_result: Any) -> str:
@@ -747,6 +764,15 @@ class Engine:
     _ledger_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # Per-phase wall-clock timer for this run (issue #1375). A mutable object
+    # because ``Engine`` is frozen; reset at the start of every ``run``.
+    _clock: PhaseClock = field(
+        default_factory=PhaseClock, init=False, compare=False, repr=False
+    )
+    # Time ``main`` spent before the pipeline started — logging setup, the SDK
+    # prewarm and the adapter build (issue #1375). ``run`` merges it in front of
+    # the phase timings so a run's wall-clock is complete.
+    init_timings: Mapping[str, float] = field(default_factory=dict)
 
     # @stub-protected
     def _caller_root(self) -> Path:
@@ -810,7 +836,13 @@ class Engine:
         from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import wrap_script_comment
 
         self.notify_script_started(self._script_start_notice(step, trigger))
-        result = step.execute(self.adapter)
+        checkout, failure = self._evidence_checkout(step.script_checkout, phases)
+        if failure is not None:
+            # An unreachable session branch is an engine failure, never a
+            # silent fallback to the workflow ref (issue #1327): the command
+            # must not run against the wrong commit.
+            return failure
+        result = step.execute(self.adapter, checkout)
         log.info("[phase:action] %s: %s", result.step_kind, result.detail)
 
         state = self._advance_script_state(step, resolved, result)
@@ -824,9 +856,11 @@ class Engine:
                 exit_code=_script_exit_code(result),
                 duration_seconds=result.duration_seconds,
                 output=result.output,
+                branch=result.branch,
+                head_sha=result.head_sha,
             ).render(),
         )
-        state = self._post_script_output(state, body)
+        state = self._post_script_output(state, body, result)
         return RunOutcome(
             exit_code=ExitCode.ADVANCE,
             turn_outcome=TurnOutcome(
@@ -867,19 +901,115 @@ class Engine:
             ),
         )
 
-    def _post_script_output(self, state: WorkflowState, body: str) -> WorkflowState:
+    def _post_script_output(
+        self, state: WorkflowState, body: str, result: StepResult | None = None
+    ) -> WorkflowState:
         """Post the script output comment and save its backfilled state.
 
         The comment id is unknown when the state is embedded, so it is
         backfilled into the persisted locator afterwards — the same seam agent
         answers use (ADR-0013), which is what makes ``inputs: [...]`` resolve
-        this comment.
+        this comment. The commit the command ran on is recorded alongside it
+        (issue #1327), so a later reader can tell which SHA the evidence came
+        from.
         """
         self._publish_state["body"] = body
         self._publish_state["comment_id"] = self.adapter.post(body).comment_id
         new_state = self._backfill_step_output(state)
+        if result is not None:
+            new_state = self._record_evidence_commit(new_state, result)
         self.adapter.save_state(new_state)
         return new_state
+
+    def _record_evidence_commit(
+        self, state: WorkflowState, result: StepResult
+    ) -> WorkflowState:
+        """Record the branch and SHA a script step ran on (issue #1327).
+
+        ``current_context`` is the durable surface, so review can see which
+        commit the evidence came from and the engine can flag drift against
+        what ``implement`` pushed.
+        """
+        if not state.step:
+            return state
+        context = dict(state.current_context)
+        records = dict(context.get(EVIDENCE_COMMITS_KEY) or {})
+        records[state.step] = {
+            "branch": result.branch,
+            "head_sha": result.head_sha,
+        }
+        context[EVIDENCE_COMMITS_KEY] = records
+        return state.model_copy(update={"current_context": context})
+
+    def _evidence_checkout(
+        self, mode: str, phases: list[str]
+    ) -> tuple[evidence_checkout.EvidenceCheckout | None, "RunOutcome | None"]:
+        """Check out the commit an evidence command must run on (issue #1327).
+
+        ``session`` (the default) checks out the branch ``_record_scaffold_branch``
+        persisted in ``current_context["dev_branch"]``; with no branch yet (a
+        script before any agent scaffolded one) it stays on the workflow ref and
+        reports ``branch: none``. ``workflow`` keeps today's behaviour. An
+        unreachable branch fails the run here, before the command executes.
+        """
+        checkout, failure = self._resolve_evidence_checkout(mode)
+        if failure:
+            log.error("[phase:action] evidence checkout failed: %s", failure)
+            return None, self._evidence_failure_outcome(
+                f"evidence checkout failed: {failure}", phases
+            )
+        return checkout, None
+
+    def _resolve_evidence_checkout(
+        self, mode: str
+    ) -> tuple[evidence_checkout.EvidenceCheckout | None, str]:
+        """Resolve the evidence checkout; ``(checkout, "")`` or ``(None, detail)``.
+
+        The branch comes from ``current_context["dev_branch"]``, which
+        ``_record_scaffold_branch`` persists after a run scaffolded one. A state
+        without it is a first run (no agent has pushed yet), not an unreachable
+        branch: session mode then runs on the workflow ref and reports
+        ``branch: none``.
+        """
+        state = self._previous_state()
+        branch = ""
+        if state is not None and mode == "session":
+            branch = str((state.current_context or {}).get("dev_branch") or "")
+        checkout = evidence_checkout.resolve_evidence_checkout(
+            self._evidence_workspace(), self._session_env(), mode=mode, branch=branch
+        )
+        if not checkout.ok:
+            return None, checkout.detail
+        return checkout, ""
+
+    def _evidence_workspace(self) -> Path:
+        """The directory the evidence checkout moves and the command runs in.
+
+        ``session_workspace()`` is what the script executor anchors at, so the
+        checkout must be applied there or the command would run in a different
+        directory than the one checked out (issue #1327). A host that sets no
+        workspace falls back to the caller root, which is where the engine's
+        other git work happens.
+        """
+        return session_workspace() or self._caller_root()
+
+    def _evidence_failure_outcome(self, detail: str, phases: list[str]) -> RunOutcome:
+        """Terminal outcome for an unreachable evidence checkout (issue #1327).
+
+        An engine failure, not a step verdict: the command never ran, so the
+        workflow must not advance on a fabricated result.
+        """
+        posted = self._post_terminal_notice(detail)
+        return RunOutcome(
+            exit_code=ExitCode.ERROR,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.FAILURE, note=detail
+            ),
+            prompt=None,
+            posted_body=posted,
+            state=None,
+            phases=tuple(phases),
+        )
 
     def _script_start_notice(
         self, step: DeterministicStep, trigger: Trigger
@@ -895,7 +1025,26 @@ class Engine:
 
     # @stub-protected
     def run(self) -> RunOutcome:
-        """End-to-end pipeline; always returns an outcome."""
+        """End-to-end pipeline; always returns an outcome.
+
+        Thin timer wrapper: the phases run in :meth:`_run_phases` and the
+        per-phase durations measured on the way are attached here, so every
+        return path (including the skip and provider-failure ones) carries
+        them (issue #1375).
+        """
+        self._clock.reset()
+        try:
+            outcome = self._run_phases()
+        finally:
+            self._clock.stop_current()
+        timings = {**self.init_timings, **self._clock.summary()}
+        if timings:
+            log.info("[timings] %s", _format_timings(timings))
+        self._stage_timings({**timings, **_agent_timings(outcome.state)})
+        return replace(outcome, timings=timings)
+
+    def _run_phases(self) -> RunOutcome:
+        """The phase pipeline behind :meth:`run`; always returns an outcome."""
         phases: list[str] = []
         prompt: str | None = None
         posted_body: str | None = None
@@ -1455,10 +1604,10 @@ class Engine:
             phases=tuple(phases),
         )
 
-    @staticmethod
-    def _enter(phases: list[str], name: str) -> None:
+    def _enter(self, phases: list[str], name: str) -> None:
         phases.append(name)
         log.info("[phase:%s]", name)
+        self._clock.start(name)
 
     # @stub-protected
     def _run_phase(self, name: str, fn: Callable[[], Any]) -> PhaseResult:
@@ -1769,6 +1918,7 @@ class Engine:
             provider=str(failure.provider or ""),
             model=str(failure.model or ""),
             requires_config_fix=bool(failure.requires_config_fix),
+            timings=self._render_failure_timings(state),
         )
         return RunOutcome(
             exit_code=ExitCode.ERROR,
@@ -1780,6 +1930,25 @@ class Engine:
             state=state,
             phases=tuple(phases),
         )
+
+    def _render_failure_timings(self, state: Any = None) -> str:
+        """The failed run's wall-clock breakdown for the failure notice (#1375).
+
+        Engine phases measured so far plus the agent's own LLM/tool split when
+        the run got far enough to persist metrics. Empty when nothing was
+        timed, so the notice keeps its old shape.
+        """
+        timings = {**self.init_timings, **self._clock.snapshot()}
+        if not timings:
+            return ""
+        lines = ["Time spent: " + _format_timings(timings)]
+        agent = _agent_timings(state)
+        if agent:
+            lines.append(
+                "Agent: "
+                + " ".join(f"{key}={value}" for key, value in agent.items())
+            )
+        return "\n".join(lines) + "\n"
 
     def _pending_worktree_paths(self) -> tuple[str, ...]:
         """Uncommitted paths in the caller checkout, best-effort (#1322).
@@ -1826,6 +1995,7 @@ class Engine:
         provider: str = "",
         model: str = "",
         requires_config_fix: bool = False,
+        timings: str = "",
     ) -> None:
         """Post the engine's failure notice and ping the starter (#1288).
 
@@ -1834,7 +2004,8 @@ class Engine:
         selects the honest aftermath wording (issue #1288 round 4): a crash
         after the answer comment was created may re-fire the workflow gate.
         ``provider``/``model``/``requires_config_fix`` name the provider failure
-        the run stopped on (issue #1322).
+        the run stopped on (issue #1322); ``timings`` is its pre-rendered
+        wall-clock breakdown (issue #1375).
         """
         from nebuko.engine.lib.config import EngineFailureNotice
 
@@ -1853,6 +2024,7 @@ class Engine:
                 provider=provider,
                 model=model,
                 requires_config_fix=requires_config_fix,
+                timings=timings,
             )
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure
@@ -2186,6 +2358,13 @@ class Engine:
             return [], self._input_failure_outcome(str(exc), phases)
         if step_inputs is None:
             return [], None
+        try:
+            workspace = self._input_workspace(step_inputs)
+        except InputMaterializationError as exc:
+            # An unreachable session branch is a failure, never a silent run on
+            # the workflow ref (issue #1327).
+            log.error("[phase:action] %s", exc)
+            return [], self._input_failure_outcome(str(exc), phases)
         if step_inputs.depth_exceeded():
             detail = (
                 f"call-frame depth {len(step_inputs.frames)} exceeds the "
@@ -2193,13 +2372,31 @@ class Engine:
             )
             log.error("[phase:action] sub-workflow call depth exceeded: %s", detail)
             return [], self._call_depth_outcome(detail, phases)
-        results = materialize_inputs(step_inputs, step_scope)
+        results = materialize_inputs(step_inputs, step_scope, workspace)
         failures = step_inputs.required_failures(results)
         if failures:
             detail = "; ".join(f"{f.name}: {f.detail}" for f in failures)
             log.error("[phase:action] required step inputs failed: %s", detail)
             return results, self._input_failure_outcome(detail, phases)
         return results, None
+
+    def _input_workspace(self, step_inputs: StepInputs) -> str | None:
+        """The evidence workspace an ``exec`` input runs in (issue #1327).
+
+        Exec-style inputs have the same ordering problem as script steps: they
+        run before the branch scaffold, on the workflow's ref. They resolve in
+        the session checkout instead, so a provider command sees the code under
+        review. A step with no ``exec`` binding is untouched, and an
+        unreachable branch raises rather than falling back to the workflow ref.
+        """
+        if not any(_binding_source(b) == "exec" for b in step_inputs.consumer.values()):
+            return None
+        checkout, failure = self._resolve_evidence_checkout("session")
+        if checkout is None:
+            raise InputMaterializationError(
+                f"evidence checkout failed: {failure}"
+            )
+        return str(self._evidence_workspace())
 
     # @stub-protected
     def _context_entries(self) -> list[ContextEntry] | None:
@@ -3271,6 +3468,17 @@ class Engine:
             log.warning("[phase:publish] could not stage run logs: %s", exc)
             return
         log.info("[phase:publish] staged run logs in %s", staged.staging_dir)
+
+    def _stage_timings(self, timings: Mapping[str, float]) -> None:
+        """Stage ``timings.json`` for the CI artifact; never abort the run.
+
+        Best-effort like :meth:`_stage_run_logs`: a run that cannot persist its
+        timings must still report its outcome (issue #1375).
+        """
+        try:
+            self._artifacts().stage_timings(timings)
+        except Exception as exc:  # noqa: BLE001 - log staging is best-effort
+            log.warning("[phase:route] could not stage run timings: %s", exc)
 
     def _handoff_config(self) -> Any:
         """The resolver mapping the run routes on and hands to the agent child.
@@ -4591,6 +4799,41 @@ def _render_unverified_records(
     )
 
 
+def _format_timings(timings: Mapping[str, float]) -> str:
+    """One-line ``phase=1.23s`` summary for the ``[timings]`` log marker (#1375)."""
+    return " ".join(
+        f"{name}={duration_ms / 1000.0:.2f}s" for name, duration_ms in timings.items()
+    )
+
+
+def _agent_timings(state: Any) -> dict[str, Any]:
+    """The agent-internal time split from the just-persisted state (#1375).
+
+    The step's ``HistoryEntry.metrics`` is the single metrics authority
+    (issue #792): it already splits LLM generation (``agent_runtime_ms``) from
+    tool execution (``tool_runtime_ms``) and carries the provider label and
+    the retry wait. Absent metrics yield an empty mapping, never an error.
+    """
+    history = getattr(state, "history", None) or []
+    metrics = getattr(history[-1], "metrics", None) if history else None
+    if metrics is None:
+        return {}
+    return {
+        key: value
+        for key, value in {
+            "provider": metrics.provider,
+            "model_name": metrics.model_name,
+            "agent_runtime_ms": metrics.agent_runtime_ms,
+            "tool_runtime_ms": metrics.tool_runtime_ms,
+            "wall_clock_ms": metrics.wall_clock_ms,
+            "provider_retry_wait_ms": metrics.provider_retry_wait_ms,
+            "llm_retry_count": metrics.llm_retry_count,
+            "llm_stall_count": metrics.llm_stall_count,
+        }.items()
+        if value not in ("", None)
+    }
+
+
 def _one_line_preview(text: str, limit: int = 200) -> str:
     collapsed = " ".join(text.split())
     if len(collapsed) <= limit:
@@ -4673,6 +4916,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
 
+    init_started = time.monotonic()
     configure_logging(os.environ)
     # Overlap the agent SDK's ~5s import with the gh/git-bound phases (issue #1266).
     prewarm_agent_sdk(os.environ)
@@ -4690,11 +4934,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     from nebuko.engine.lib.config import HistoryWindowConfig
 
     window = HistoryWindowConfig.from_env(os.environ)
+    init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
     outcome = Engine(
         adapter=adapter,
         repo_root=repo_root(),
         env=dict(os.environ),
         history_limit=window.normalized_count(),
         render_limit=window.render_limit(),
+        init_timings={"engine_init": init_ms},
     ).run()
     return outcome.process_exit_code()

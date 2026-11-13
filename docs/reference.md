@@ -121,6 +121,7 @@ graph-level invariants below are checked offline by
 | `steps[].script.working_dir` | script | string | no | Repo-relative working directory for the command; defaults to the checkout root. Absolute paths and `..` segments are rejected. |
 | `steps[].script.env` | script | map<string,string> | no | Extra environment variables for the command; these override inherited variables with the same key. |
 | `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
+| `steps[].script.checkout` | script | `session`\|`workflow` | no | Which checkout the command runs on (issue #1327). `session` (default) checks out the pushed dev branch at its SHA, read-only, so the command sees the code under review; `workflow` keeps the workflow's own ref (the opt-out). |
 | `steps[].pre_hook` | step | object | no | Deterministic command run **in the session workspace immediately before the agent** (issue #884). Fail-closed: a non-zero exit or timeout skips the agent and fails the step. Agent steps only. |
 | `steps[].post_hook` | step | object | no | Deterministic command run **in the session workspace immediately after the agent attempt** (issue #884), even when the agent fails. Fail-open: its failure is recorded but never changes the step outcome or routing. Agent steps only. |
 | `steps[].pre_hook\|post_hook.path` | hook | string | yes (with the hook) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
@@ -468,6 +469,7 @@ Variables the orchestrator sets/consumes per run:
 | `SCRIPT_ARGS` | `resolve_config` | JSON array of the step's `script.args` argv entries (empty array when none); decoded with `json.loads` at spawn. |
 | `SCRIPT_WORKING_DIR` | `resolve_config` | Repo-relative working directory for the script (from `script.working_dir`; empty → checkout root). |
 | `SCRIPT_ENV` | `resolve_config` | JSON object of extra environment variables (from `script.env`; empty object when none), overlaid on the engine environment. |
+| `SCRIPT_CHECKOUT` | `resolve_config` / `resolve_workflow` | Checkout the script runs on (from `script.checkout`): `session` (default) or `workflow` (issue #1327). |
 | `SCRIPT_TIMEOUT_MINUTES` | `resolve_config` | Script timeout in minutes (empty → default 30). |
 | `PARENT_WORKFLOW` | `resolve_config` / `resolve_workflow` | Parent workflow name when the run is nested in a sub-workflow mount; empty at top level. Derived from the second-to-last `position` frame. |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |

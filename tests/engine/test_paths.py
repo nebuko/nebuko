@@ -163,3 +163,12 @@ class TestSecretScanFlag:
         )
 
         assert secret_scan_enabled(tmp_path) is False
+
+
+def test_manifest_ignores_unknown_keys():
+    from nebuko.engine.models import NebukoManifest
+
+    m = NebukoManifest.model_validate(
+        {"default_workflow": "x", "features": {"secret_scan": False}}
+    )
+    assert m.default_workflow == "x"

@@ -37,7 +37,10 @@ steps:
          path `nebuko.engine.lib.<mod>`, name tests given/when/then, put them
          under `tests/` (or next to the module under `src/nebuko/engine/lib`).
       5. Run the new tests with `uv run --extra runtime pytest <paths>` and
-         include the failing output as evidence. Commit and push.
+         include the failing output as evidence. Commit and push. If other
+         tests fail in a full run, list their IDs and do not explain them
+         ("pre-existing", "environment"): review classifies them against
+         `origin/main`.
 
       If this is a retry, the review findings are in your context: fix exactly
       those (missing coverage, vacuous test, wrong-reason failure, extra
@@ -53,7 +56,6 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           git --no-pager diff --stat origin/main...HEAD &&
           git --no-pager diff origin/main...HEAD
     # Default edges: a failed command is evidence for review, not a stop.
@@ -68,7 +70,6 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf
       timeout_minutes: 20
     conditions:
@@ -106,7 +107,32 @@ steps:
          exactly; no test pins behaviour the plan contradicts; no business logic
          was implemented.
       5. NO COLLATERAL. Any failing test that is NOT one of the new tests is a
-         finding, unless it also fails on `origin/main`.
+         finding until you have classified it with the check below. Never
+         accept "pre-existing" or "environment failures" from `write_tests`, and
+         never classify with `git stash`: it only hides uncommitted changes, and
+         the branch's commits stay in the tree, so it proves nothing.
+
+         `run_tests` tests the branch head ALONE. CI tests the branch merged
+         into the current `origin/main`, so a branch that is behind `main`
+         fails tests that `main` already fixed (this made a 31-failure loop run
+         look broken while CI showed 4). Classify each non-new failing test ID
+         (a few IDs, not the whole suite) on two throw-away trees:
+             git fetch origin main
+             git rev-list --count HEAD..origin/main     # > 0: branch is behind main
+             git worktree add --detach /tmp/rt-main origin/main
+             git worktree add --detach /tmp/rt-merge origin/main
+             git -C /tmp/rt-merge merge --no-edit <head from run_tests>
+             (cd /tmp/<tree> && uv run --extra runtime pytest <ids> -q --tb=no)
+         then remove the worktrees. Read the result like this:
+         - fails on `origin/main`: PRE-EXISTING. Not caused by this change, but
+           report the IDs explicitly (a red `main` is a bug); do not reject for it.
+         - passes on `origin/main` and on the merge tree: STALE BASE. The loop
+           tested a tree behind `main`; it says nothing about the change. Do not
+           reject for it; report it and ask for the branch to be synced with
+           `main` and `run_tests` re-run before relying on its counts.
+         - passes on `origin/main` but fails on the merge tree: COLLATERAL
+           caused by this change. Reject.
+         Quote the commands and the per-tree results under your findings.
 
       Approve only when every requirement is covered, the set is minimal, and
       every new test is red for the right reason. Otherwise reject with a

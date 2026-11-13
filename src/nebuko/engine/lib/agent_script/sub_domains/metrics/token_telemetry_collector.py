@@ -33,7 +33,11 @@ from typing import Any
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
-from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
+    RetryEvent,
+    RetryWait,
+    TokenTelemetry,
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +78,9 @@ def _call_id(kwargs: dict[str, Any]) -> str:
     return str(kwargs.get("litellm_call_id") or "")
 
 
-def _observation(stamps: CallStamps, usage: Any, finished_at: float) -> TokenTelemetry:
+def _observation(
+    stamps: CallStamps, usage: Any, finished_at: float, retry_count: int = 0
+) -> TokenTelemetry:
     """Build the per-call observation from the bracket and the billed counts."""
     cache_read, cache_write = _cache_tokens(usage)
     return TokenTelemetry(
@@ -85,6 +91,7 @@ def _observation(stamps: CallStamps, usage: Any, finished_at: float) -> TokenTel
         completion_tokens=_as_int(getattr(usage, "completion_tokens", None)),
         cache_read_tokens=cache_read,
         cache_write_tokens=cache_write,
+        retry_count=retry_count,
     )
 
 
@@ -101,12 +108,23 @@ class TokenTelemetryCollector(CustomLogger):
         self._in_flight: dict[str, CallStamps] = {}
         self._current_call_id: str | None = None
         self._observations: list[TokenTelemetry] = []
+        self._retries: list[RetryEvent] = []
+        self._retry_waits: list[RetryWait] = []
+        self._pending_retries = 0
+        # The retry the SDK scheduled but whose next attempt has not started
+        # yet: its backoff window is only measurable once that attempt begins
+        # (issue #1375).
+        self._open_retry: RetryEvent | None = None
+        self._open_retry_at: float | None = None
 
     # ── Request start ────────────────────────────────────────────
 
     def log_pre_api_call(self, model: Any, messages: Any, kwargs: dict[str, Any]) -> None:
         call_id = _call_id(kwargs)
-        self._in_flight[call_id] = CallStamps(request_started_at=time.monotonic())
+        now = time.monotonic()
+        # A fresh attempt after a retry closes that retry's backoff window.
+        self._close_open_retry(now)
+        self._in_flight[call_id] = CallStamps(request_started_at=now)
         self._current_call_id = call_id
 
     # ── Chunks (first token, finish, usage) ──────────────────────
@@ -124,6 +142,49 @@ class TokenTelemetryCollector(CustomLogger):
         if usage is not None:
             self._close(call_id, stamps, usage, now)
 
+    # ── Retries (SDK ``retry_listener``) ─────────────────────────
+
+    def on_retry(
+        self, attempt_number: int, num_retries: int, error: BaseException | None
+    ) -> None:
+        """Record one SDK retry so stalls surface in the step metrics (#1352).
+
+        The SDK opens a fresh LiteLLM call per attempt, so the count is
+        attributed to the call that eventually completes. The backoff window
+        this retry waits for is measured when the next attempt starts
+        (issue #1375).
+        """
+        event = RetryEvent(
+            attempt_number=attempt_number,
+            num_retries=num_retries,
+            error_type=type(error).__name__ if error is not None else "",
+        )
+        # A second retry with no attempt in between: the previous window was
+        # never observable, so it is recorded as zero rather than lost.
+        self._close_open_retry(time.monotonic())
+        self._retries.append(event)
+        self._open_retry = event
+        self._open_retry_at = time.monotonic()
+        self._pending_retries += 1
+
+    def _close_open_retry(self, now: float) -> None:
+        """Attribute the open retry's backoff window, if one is open."""
+        if self._open_retry is None:
+            return
+        started = self._open_retry_at
+        self._retry_waits.append(
+            RetryWait(
+                event=self._open_retry,
+                wait_ms=(
+                    round((now - started) * 1000.0, 2)
+                    if started is not None
+                    else 0.0
+                ),
+            )
+        )
+        self._open_retry = None
+        self._open_retry_at = None
+
     # ── Terminal (best-effort fallback for non-streamed calls) ───
 
     def log_success_event(
@@ -136,8 +197,11 @@ class TokenTelemetryCollector(CustomLogger):
             return
         if call_id == self._current_call_id:
             self._current_call_id = None
+        retries = self._take_pending_retries()
         self._observations.append(
-            _observation(stamps, getattr(response_obj, "usage", None), time.monotonic())
+            _observation(
+                stamps, getattr(response_obj, "usage", None), time.monotonic(), retries
+            )
         )
 
     def log_failure_event(
@@ -156,12 +220,32 @@ class TokenTelemetryCollector(CustomLogger):
         drained, self._observations = self._observations, []
         return drained
 
+    def drain_retries(self) -> list[RetryEvent]:
+        """Return the retry events collected so far and clear them."""
+        self._close_open_retry(time.monotonic())
+        drained, self._retries = self._retries, []
+        self._retry_waits = []
+        return drained
+
+    def drain_retry_waits(self) -> list[RetryWait]:
+        """Return the retry events with their backoff windows and clear them."""
+        self._close_open_retry(time.monotonic())
+        drained, self._retry_waits = self._retry_waits, []
+        self._retries = []
+        return drained
+
+    def _take_pending_retries(self) -> int:
+        """Claim the retries accumulated since the last closed observation."""
+        retries, self._pending_retries = self._pending_retries, 0
+        return retries
+
     def _close(self, call_id: str, stamps: CallStamps, usage: Any, finished_at: float) -> None:
         """Record a closed observation and release the in-flight bracket."""
         self._in_flight.pop(call_id, None)
         if call_id == self._current_call_id:
             self._current_call_id = None
-        self._observations.append(_observation(stamps, usage, finished_at))
+        retries = self._take_pending_retries()
+        self._observations.append(_observation(stamps, usage, finished_at, retries))
 
 
 _active_collector: TokenTelemetryCollector | None = None

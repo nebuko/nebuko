@@ -28,6 +28,7 @@ import pytest
 from nebuko.adapters.base import PlatformAdapter
 from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.models import ExitCode
+from nebuko.engine.lib.resolve_workflow import STEP_PROMPT_PATH, step_prompt_path
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import Engine
 
@@ -51,6 +52,8 @@ _RESOLVED_KEYS = (
 _GUARD_KEYS = ("SKIP_AGENT", "AGENT_CALLS", "CIRCUIT_BREAKER_TRIPPED")
 
 # The bash reads the caller with ``sed -n 's/.*<!-- bot-agent-\([a-z]*\) -->.*/\1/p'``.
+# The replay applies it to the header region only (issue #1361), matching
+# ``run_loop._caller_agent``.
 _LEGACY_CALLER_RE = re.compile(r"<!-- bot-agent-([a-z]*) -->")
 
 # Deterministic agent result stand-in, exactly as the plan's parity harness
@@ -80,6 +83,10 @@ def _prompt_selection(decision: Mapping[str, Any]) -> dict:
     selection: dict[str, str] = {}
     for key, name in (("PROMPT_LOCATION", "prompt"), ("STEP_PROMPT_FILE", "step_prompt")):
         location = decision.get(key) or ""
+        if location == step_prompt_path():
+            # Each test gets a private prompt dir (repo-root conftest.py); the
+            # recording holds the documented production path.
+            location = STEP_PROMPT_PATH
         path = Path(location) if location else None
         # Step prompts are rendered to a temp file outside the checkout.
         selection[name] = (
@@ -157,12 +164,16 @@ def _driver_decisions(engine: Engine) -> dict:
 
 
 def _legacy_caller(body: str) -> str:
-    found = [
-        matches[-1]
-        for line in (body or "").splitlines()
-        if (matches := _LEGACY_CALLER_RE.findall(line))
-    ]
-    return "\n".join(found)
+    # Header-only read (issue #1361), mirroring ``run_loop._caller_agent``: the
+    # bash replay reads the caller from the comment header — line 2 for answer
+    # comments, line 1 for continuation parts — so a marker quoted inside the
+    # agent's own text is not a caller. This is a deliberate divergence from
+    # the original bash, which scanned the whole body.
+    for line in (body or "").splitlines()[:2]:
+        matches = _LEGACY_CALLER_RE.findall(line)
+        if matches:
+            return matches[-1]
+    return ""
 
 
 def _legacy_resolve(body: str, number: int) -> dict:
@@ -352,3 +363,47 @@ def test_loop_verdict_matches_the_legacy_replay(body, task):
     )
 
     assert engine == _legacy_loop_verdict(resolved, body)
+
+
+# ── quoted-marker loop guard (issue #1361) ──────────────────────────────────
+#
+# The caller marker is read from the comment header only (first 2 lines), not
+# from the agent's own text: a dev report quoting ``<!-- bot-agent-unknown -->``
+# in a test failure must not read as a cross-agent call and re-trigger dev.
+
+
+def test_a_quoted_marker_in_the_body_is_not_a_caller():
+    """A dev answer quoting an unknown-role marker still skips as same-agent."""
+    body = (
+        "<!-- bot-workflow-terminal -->\n"
+        "<!-- bot-agent-dev -->\n"
+        "*Developer answer*\n\n"
+        "E   AssertionError: assert '<!-- workflow-continue -->' in '<!-- bot-agent-unknown -->'"
+    )
+
+    verdict = Engine._loop_verdict(body, "dev", "dev-review-loop/implement", "implement")
+
+    assert str(verdict["SKIP_AGENT"]).lower() == "true"
+
+
+def test_a_cross_agent_header_still_reaches_the_target_despite_a_quoted_marker():
+    """An architect-headed comment quoting a dev marker is a cross-agent call."""
+    body = (
+        "<!-- bot-workflow-terminal -->\n"
+        "<!-- bot-agent-architect -->\n"
+        "*Architect answer*\n\n"
+        "dev reported: <!-- bot-agent-dev -->"
+    )
+
+    verdict = Engine._loop_verdict(body, "context", "root-cause/investigate", "investigate")
+
+    assert str(verdict["SKIP_AGENT"]).lower() == "false"
+
+
+def test_a_continuation_part_marker_on_line_1_is_read():
+    """Continuation parts carry the marker at the top (``format_bot_marker``)."""
+    body = "<!-- bot-agent-dev -->\n\n*(Part 2/2)*\nrest of the answer"
+
+    verdict = Engine._loop_verdict(body, "dev", "dev-review-loop/implement", "implement")
+
+    assert str(verdict["SKIP_AGENT"]).lower() == "true"

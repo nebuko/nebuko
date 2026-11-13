@@ -2022,6 +2022,7 @@ def _script_step_entry(step: "WorkflowStep") -> dict:
             "args": step.script.to_process_env()["SCRIPT_ARGS"],
             "working_dir": step.script.working_dir or "",
             "env": step.script.to_process_env()["SCRIPT_ENV"],
+            "checkout": step.script.to_process_env()["SCRIPT_CHECKOUT"],
             "timeout_minutes": step.script.timeout_minutes,
         },
         "skip_reason": None,

@@ -62,9 +62,12 @@ class NebukoManifest(BaseModel):
     Paths are resolved relative to the repo root. All fields are optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders and every
     feature flag off.
+
+    Unknown keys are ignored (not rejected): a manifest written for a newer
+    engine (e.g. a ``features:`` block) must not abort every run of an older one.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     skills_dir: str | None = None
     default_workflow: str | None = None
@@ -128,6 +131,9 @@ class RunOutcome:
     posted_body: str | None
     state: WorkflowState | None
     phases: tuple[str, ...]  # ordered "[phase:*]" markers actually emitted
+    # Per-phase wall-clock durations in milliseconds (issue #1375), keyed by
+    # phase name. Empty for a run that never entered a timed phase.
+    timings: dict[str, float] = field(default_factory=dict)
 
     # @stub-protected
     def process_exit_code(self) -> int:
@@ -236,6 +242,10 @@ class StepResult:
     affected: int  # comments deleted / script exit code
     output: str = ""  # captured stdout/stderr (run_script; issue #885)
     duration_seconds: float = 0.0  # wall-clock execution time (run_script)
+    # The commit the command ran on (issue #1327): the session branch checked
+    # out for evidence, or "" when it ran on the workflow ref.
+    branch: str = ""
+    head_sha: str = ""
 
 
 # @stub-protected
@@ -250,6 +260,7 @@ class DeterministicStep:
     script_args: str = "[]"  # run_script: JSON array of argv entries (issue #974)
     script_working_dir: str = ""  # run_script: repo-relative cwd ("" = workspace root)
     script_env: str = "{}"  # run_script: JSON object merged over the engine env
+    script_checkout: str = "session"  # run_script: "session" | "workflow"
     timeout_minutes: int | None = None
     step_name: str = ""  # run_script: workflow step name (from WORKFLOW_STEP)
     circuit_breaker_value: int = 0  # update_circuit_breaker: new per-issue limit
@@ -279,6 +290,7 @@ class DeterministicStep:
                 script_args=str(resolved.get("SCRIPT_ARGS") or "[]"),
                 script_working_dir=str(resolved.get("SCRIPT_WORKING_DIR") or ""),
                 script_env=str(resolved.get("SCRIPT_ENV") or "{}"),
+                script_checkout=str(resolved.get("SCRIPT_CHECKOUT") or "session"),
                 timeout_minutes=int(timeout) if timeout.isdigit() else None,
                 step_name=str(resolved.get("WORKFLOW_STEP") or ""),
             )
@@ -291,8 +303,14 @@ class DeterministicStep:
         return None
 
     # @stub-protected
-    def execute(self, adapter: Any) -> StepResult:
-        """Run the step through the adapter/runner; never raises for step failure."""
+    def execute(self, adapter: Any, checkout: Any = None) -> StepResult:
+        """Run the step through the adapter/runner; never raises for step failure.
+
+        ``checkout`` is the already-resolved evidence checkout (issue #1327):
+        the caller resolves it first so an unreachable session branch fails the
+        run *before* the command executes. Only its ``branch``/``head_sha`` are
+        read here — the checkout itself is already in place on disk.
+        """
         try:
             if self.kind == "delete_comments":
                 deleted = int(
@@ -306,7 +324,7 @@ class DeterministicStep:
                 )
             if self.kind == "update_circuit_breaker":
                 return self._execute_circuit_breaker_update(adapter)
-            return self._execute_script(_session_workspace())
+            return self._execute_script(session_workspace(), checkout)
         except Exception as exc:  # noqa: BLE001 - a step failure is data, not a crash
             return StepResult(step_kind=self.kind, ok=False, detail=str(exc), affected=0)
 
@@ -346,7 +364,9 @@ class DeterministicStep:
             affected=self.circuit_breaker_value,
         )
 
-    def _execute_script(self, workspace: Path | None = None) -> StepResult:
+    def _execute_script(
+        self, workspace: Path | None = None, checkout: Any = None
+    ) -> StepResult:
         """Run the script, capturing combined output and timing it.
 
         ``argv`` is ``[command, *args]`` — no shell — with the args decoded from
@@ -365,6 +385,8 @@ class DeterministicStep:
         cwd, env = _script_process_context(
             workspace, self.script_working_dir, self.script_env
         )
+        branch = str(getattr(checkout, "branch", "") or "")
+        head_sha = str(getattr(checkout, "head_sha", "") or "")
         started = time.monotonic()
         try:
             completed = subprocess.run(
@@ -384,6 +406,8 @@ class DeterministicStep:
                 affected=0,
                 output=_as_text(exc.stdout),
                 duration_seconds=time.monotonic() - started,
+                branch=branch,
+                head_sha=head_sha,
             )
         return StepResult(
             step_kind=self.kind,
@@ -392,16 +416,20 @@ class DeterministicStep:
             affected=completed.returncode,
             output=completed.stdout or "",
             duration_seconds=time.monotonic() - started,
+            branch=branch,
+            head_sha=head_sha,
         )
 
 
-def _session_workspace() -> Path | None:
+def session_workspace() -> Path | None:
     """The session checkout a script step runs in, or ``None`` when unknown.
 
     Script steps are leaf vocabulary and must stay free of workspace policy, so
     the directory is read here from the same env contract the platform sets for
     the engine (``GITHUB_WORKSPACE`` in CI, ``NEBUKO_WORKSPACE`` for a local
-    host) rather than injected through the model.
+    host) rather than injected through the model. The evidence checkout
+    (issue #1327) resolves against the same directory, so the commit it checks
+    out is the one the command then sees.
     """
     for key in ("NEBUKO_WORKSPACE", "GITHUB_WORKSPACE"):
         value = os.environ.get(key)
