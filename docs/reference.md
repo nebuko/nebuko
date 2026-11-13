@@ -462,6 +462,7 @@ Variables the orchestrator sets/consumes per run:
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |
 | `COMMANDCODE_API_KEY` | repo secret (optional) | CommandCode subscription token — see [subscription-plans.md](./subscription-plans.md). |
+| `CLAUDE_CODE_OAUTH_TOKEN` | repo secret (optional) | Claude Code subscription token from `claude setup-token` — see [claude-code.md](./claude-code.md). Exported by the reusable workflow only when set, and `::add-mask::`ed. |
 | `GH_PAT` | repo secret (PAT fallback only) | Fine-grained GitHub PAT used for git push and API calls when the Nebuko App is not installed. App-mode runs mint a short-lived installation token from the OIDC broker instead. |
 
 `event_normalizer.py` emits `KEY=value` pairs (multi-line values use HEREDOC
