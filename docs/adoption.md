@@ -223,21 +223,30 @@ No GitHub token is needed in App mode. `GH_PAT` is a **PAT fallback only**
 
 ### Inputs
 
-Every input is optional; defaults are shown. Pass them under `with:`.
+Every input is optional; defaults are shown. Pass them under `with:`. The
+non-secret settings also live in `.nebuko/nebuko.yaml` (see
+[configuration.md](./configuration.md#the-nebuko-manifest-nebukonebukoyaml));
+an input you pass explicitly wins over the manifest.
 
 | Input | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `agent_config_path` | string | `agent-config.yaml` | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
+| `agent_config_path` | string | unset (manifest `agent_config`, else `agent-config.yaml`) | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
-| `circuit_breaker_threshold` | number | `25` | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
-| `pin_comment` | boolean | `false` | Pin every agent-step comment for verbatim context injection. |
-| `history_comment_count` | number | `5` | Most recent comments injected into each agent call. |
+| `circuit_breaker_threshold` | number | unset (manifest `circuit_breaker_threshold`, else `15`) | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
+| `pin_comment` | boolean | `false` (OR-ed with the manifest's `pin_comment`) | Pin every agent-step comment for verbatim context injection. |
+| `history_comment_count` | number | unset (manifest `history_comment_count`, else `5`) | Most recent comments injected into each agent call. |
 | `python_version` | string | `3.13` | Python version installed on the runner. |
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
 | `prompt_body` | string | `""` | Prompt/body text for programmatic (`workflow_call`) callers. |
 | `checkout_ref` | string | `""` | Explicit ref (SHA, tag, or branch) for the workspace checkout. When empty, the checkout follows the workflow's own commit if the workflow is checking out its own repo (issue #862), else the event default. |
 | `CALLER_AUTH` | string | `on` | When `on` (default), only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments; set to `off` to allow anyone. |
 | `EXTRA_SECRET_1_NAME` … `EXTRA_SECRET_9_NAME` | string | `""` | Env var name materialized from the matching `EXTRA_SECRET_n_VALUE` secret — use for MCP tokens (section 3.1). |
+
+What stays in the workflow, never in the manifest: the `uses: …@<tag>` version
+pin (it is resolved before the manifest can be read), secrets and
+`EXTRA_SECRET_n_NAME`, and the runner/bootstrap inputs (`runs_on`,
+`python_version`, `enable_uv_cache`, `checkout_ref`, `CALLER_AUTH`,
+`TRUSTED_BOTS`, `prompt_body`).
 
 ### Secrets
 

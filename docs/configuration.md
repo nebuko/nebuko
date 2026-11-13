@@ -75,18 +75,36 @@ caller's checkout.
 
 ---
 
-## The Default Workflow
+## The Nebuko Manifest (`.nebuko/nebuko.yaml`)
 
-A bare `/nebuko run workflow` (no `--name`) starts the repo's **default
-workflow** (issue #1094). Set it in the Nebuko manifest `.nebuko/nebuko.yaml`:
+The manifest is the single place for a repo's **non-secret** Nebuko settings
+(issue #1094). Secrets and the `uses: …@<tag>` version pin stay in the caller
+workflow: the manifest is only read once the engine starts, which is after the
+workflow ref has already been resolved.
 
 ```yaml
-default_workflow: default
+default_workflow: default                # bare `/nebuko run workflow` target
+agent_config: .nebuko/agents/agent-config.yaml
+circuit_breaker_threshold: 15
+history_comment_count: 5
+pin_comment: false
+skills_dir: .nebuko/skills              # optional path override
 ```
 
-When the manifest is absent or does not declare `default_workflow`, the shipped
-`default` workflow is used. The manifest is read from the caller's workspace
-(the same `.nebuko/` directory that holds workflow and agent overrides).
+Every key is optional and unknown keys are rejected. The engine reads the
+manifest from the caller's workspace at startup and overlays it on the
+environment it was given, so the precedence is:
+
+**explicit env / workflow input (non-blank) > `.nebuko/nebuko.yaml` > built-in default**
+
+That keeps existing callers working: a `with:` input still wins. `pin_comment`
+is the one OR-ed setting — the workflow input is a boolean and cannot express
+"unset", so a `true` from either source pins the step comments.
+
+A bare `/nebuko run workflow` uses `default_workflow`; when the manifest is
+absent or does not declare it, the shipped `default` workflow is used. The
+manifest is read from the caller's workspace (the same `.nebuko/` directory
+that holds workflow and agent overrides).
 
 ---
 
