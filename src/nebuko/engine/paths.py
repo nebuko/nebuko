@@ -53,6 +53,7 @@ __all__ = [
     "NebukoPaths",
     "defaults_dir",
     "repo_root",
+    "secret_scan_enabled",
 ]
 
 # Dot-prefixed tool-config directory in the target repo, mirroring ``.github/``.
@@ -270,6 +271,22 @@ def _load_manifest(path: Path) -> NebukoManifest:
     if not isinstance(raw, dict):
         raise ValueError(f"{path} must contain a YAML mapping")
     return NebukoManifest.model_validate(raw)
+
+
+def secret_scan_enabled(root: Path | str | None) -> bool:
+    """Whether the repo at ``root`` opted into the secret-scan guard (#1347).
+
+    The flag lives in ``<root>/.nebuko/nebuko.yaml`` under ``features`` and
+    defaults to ``False``: the guard rewrites unpublished history, so it must
+    be an explicit opt-in. Best-effort — an unreadable or invalid manifest
+    reads as disabled rather than crashing the guard.
+    """
+    if root is None:
+        return False
+    try:
+        return NebukoPaths.discover(Path(root)).manifest.features.secret_scan
+    except Exception:  # noqa: BLE001 - a bad manifest reads as disabled
+        return False
 
 
 def _dedupe(paths: list[Path]) -> list[Path]:

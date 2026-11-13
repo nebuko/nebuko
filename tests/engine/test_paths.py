@@ -7,6 +7,7 @@ from nebuko.engine.paths import (
     LIB_DIR,
     defaults_dir,
     repo_root,
+    secret_scan_enabled,
 )
 
 
@@ -133,8 +134,41 @@ class TestConfigPathAnchorCallerRoot:
         )
 
 
+class TestSecretScanFlag:
+    """``features.secret_scan`` is opt-in and defaults to false (issue #1347)."""
+
+    def test_absent_manifest_disables_the_guard(self, tmp_path):
+        assert secret_scan_enabled(tmp_path) is False
+
+    def test_an_explicit_true_enables_the_guard(self, tmp_path):
+        (tmp_path / ".nebuko").mkdir()
+        (tmp_path / ".nebuko" / "nebuko.yaml").write_text(
+            "features:\n  secret_scan: true\n", encoding="utf-8"
+        )
+
+        assert secret_scan_enabled(tmp_path) is True
+
+    def test_a_manifest_without_the_flag_disables_it(self, tmp_path):
+        (tmp_path / ".nebuko").mkdir()
+        (tmp_path / ".nebuko" / "nebuko.yaml").write_text(
+            "default_workflow: default\n", encoding="utf-8"
+        )
+
+        assert secret_scan_enabled(tmp_path) is False
+
+    def test_an_invalid_manifest_reads_as_disabled(self, tmp_path):
+        (tmp_path / ".nebuko").mkdir()
+        (tmp_path / ".nebuko" / "nebuko.yaml").write_text(
+            "features: [not-a-mapping\n", encoding="utf-8"
+        )
+
+        assert secret_scan_enabled(tmp_path) is False
+
+
 def test_manifest_ignores_unknown_keys():
     from nebuko.engine.models import NebukoManifest
 
-    m = NebukoManifest.model_validate({"default_workflow": "x", "features": {"secret_scan": False}})
+    m = NebukoManifest.model_validate(
+        {"default_workflow": "x", "features": {"secret_scan": False}}
+    )
     assert m.default_workflow == "x"

@@ -90,6 +90,28 @@ When the manifest is absent or does not declare `default_workflow`, the shipped
 
 ---
 
+## Feature flags
+
+Engine features that change what leaves the sandbox are opt-in. They live under
+`features` in the same manifest, and **every flag defaults to `false`**, so an
+engine upgrade never changes what an existing repository does until the flag is
+turned on:
+
+```yaml
+features:
+  # Pre-push git scan + pre-post comment scan, with redaction (issue #1347).
+  secret_scan: false
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `secret_scan` | `false` | Scan unpublished commits and comment bodies for credentials and replace hits with `<REDACTED:{rule}>` before pushing/posting. See [features.md — Secret Scanning and Redaction](./features.md#secret-scanning-and-redaction-issue-1347). |
+
+A missing manifest, a missing `features` block or an unreadable manifest reads
+as *all flags off* (`nebuko.engine.paths.secret_scan_enabled`).
+
+---
+
 ## Provider Schema
 
 | Field | Type | Required | Description |

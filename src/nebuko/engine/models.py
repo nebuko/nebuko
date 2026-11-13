@@ -32,6 +32,7 @@ __all__ = [
     "DeterministicStep",
     "StepResult",
     "WorkflowCallFrame",
+    "NebukoFeatures",
     "NebukoManifest",
     "circuit_breaker_update_notice",
 ]
@@ -40,11 +41,27 @@ log = logging.getLogger(__name__)
 
 
 # @stub-protected
+class NebukoFeatures(BaseModel):
+    """Opt-in engine features from ``.nebuko/nebuko.yaml`` (issue #1347).
+
+    Every flag defaults to ``False``: a feature ships disabled and a repo turns
+    it on explicitly, so an upgraded engine never changes what an existing
+    repository does.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Pre-push and pre-post secret scanning + redaction (issue #1347).
+    secret_scan: bool = False
+
+
+# @stub-protected
 class NebukoManifest(BaseModel):
     """Parsed ``.nebuko/nebuko.yaml``: optional per-repo path overrides.
 
-    Paths are resolved relative to the repo root. Both fields are optional, so an
-    absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+    Paths are resolved relative to the repo root. All fields are optional, so an
+    absent or empty manifest keeps the fixed ``<kind>/`` subfolders and every
+    feature flag off.
 
     Unknown keys are ignored (not rejected): a manifest written for a newer
     engine (e.g. a ``features:`` block) must not abort every run of an older one.
@@ -54,6 +71,7 @@ class NebukoManifest(BaseModel):
 
     skills_dir: str | None = None
     default_workflow: str | None = None
+    features: NebukoFeatures = NebukoFeatures()
 
 
 # @stub-protected

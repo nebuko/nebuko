@@ -18,6 +18,11 @@ from .sub_domains.gate_lock.gate_lock import MAX_CONSULT_ROUNDS, GateLock, GateS
 from .sub_domains.thread_record.thread_record import ThreadRecord, ThreadRecordKind
 from .sub_domains.step_input_record.step_input_record import StepInputRecord
 from .sub_domains.run_prefs.run_prefs import RunPrefs
+from .sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+    SecretScan,
+    SecretScanStatus,
+)
 from .sub_domains.turn_outcome.turn_outcome import (
     Appreciation,
     HoldKind,
@@ -65,6 +70,9 @@ __all__ = [
     # Domain entities
     "HistoryEntry",
     "RunPrefs",
+    "SecretFinding",
+    "SecretScan",
+    "SecretScanStatus",
     "IssueInfo",
     "PullRequestInfo",
     "StateMetrics",

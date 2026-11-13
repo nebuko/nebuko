@@ -1,1 +1,8 @@
+# Nebuko manifest: per-repo overrides for the engine (docs/configuration.md).
+#
+# Every feature flag is opt-in and defaults to false, so an engine upgrade never
+# changes what a repository does until the flag is turned on explicitly.
 default_workflow: default
+features:
+  # Pre-push and pre-post secret scanning + redaction (issue #1347).
+  secret_scan: false
