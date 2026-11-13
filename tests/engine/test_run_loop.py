@@ -1219,12 +1219,17 @@ class TestBenignNoNextAgentExit:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.posted_body is None
         assert "agent" not in outcome.phases
         assert outcome.state is not None
         # The reason is recorded in the state alongside the existing context.
         assert outcome.state.current_context["terminal_reason"] == "No valid task found"
         assert outcome.state.current_context["last_run_status"] == "success"
+        # A human who triggered the run gets an answer (issue #1376).
+        assert outcome.posted_body is not None
+        assert outcome.posted_body.splitlines()[0] == "<!-- bot-workflow-terminal -->"
+        assert "@olivier-norture" in outcome.posted_body
+        assert "No valid task found" in outcome.posted_body
+        assert "<!-- workflow-continue -->" not in outcome.posted_body
 
     def test_a_terminal_step_skip_exits_zero(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1241,7 +1246,53 @@ class TestBenignNoNextAgentExit:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is not None
+        assert "no agent to run" in outcome.posted_body
+
+    def test_a_bot_triggered_terminal_skip_stays_silent(self, tmp_path, monkeypatch):
+        """Loop safety: an engine-posted comment must never re-enter the chain."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body="<!-- bot-workflow-terminal -->\n/nebuko resume", number=1376),
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Terminal step 'review' has no next in workflow 'default'",
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.posted_body is None
+
+    def test_a_failed_terminal_skip_post_is_swallowed(self, tmp_path, monkeypatch):
+        """Best-effort: a failed notice must not mask the (successful) no-op."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Terminal step 'review' has no next in workflow 'default'",
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        def boom(body):
+            raise RuntimeError("github is down")
+
+        monkeypatch.setattr(engine.adapter, "post", boom)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is None
+        assert outcome.process_exit_code() == 0
 
     def test_a_config_error_skip_still_exits_terminal(self, tmp_path, monkeypatch):
         """Regression guard: a real config failure keeps the terminal outcome (20).
@@ -2181,7 +2232,11 @@ class TestHumanActionSinglePing:
         assert "@ " not in outcome.posted_body
 
     def test_the_follow_up_terminal_skip_run_posts_no_notice(self, tmp_path, monkeypatch):
-        """Only the *completing* run announces the end of the workflow (#795)."""
+        """Only the *completing* run announces the end of the workflow (#795).
+
+        An *unclassified* skip keeps the fail-safe silence (issue #1376 only
+        answers the benign, classified terminal-skip branch).
+        """
         engine = _engine(tmp_path)
         _stub_resolved(
             monkeypatch,
