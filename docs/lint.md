@@ -519,6 +519,7 @@ it sees, in rule order (`C1` … `C6`).
 | `C4-prompt-file` | error | `prompt_file` that resolves to no file on disk |
 | `C5-skill-file` | error | `skills` entry with no matching skill file |
 | `C6-unreferenced-entry` | warning | `llms`/`providers` entry nothing references |
+| `C12-claude-credentials` | error | Claude Code credentials (or a `claude-code/*` model) on a non-`claude-code` agent, and the converse |
 
 ### `C1-schema` — schema violations
 
@@ -629,6 +630,30 @@ providers:
 
 ```
 [C6-unreferenced-entry] warning provider 'retired' is never referenced by any agent (providers.retired)
+```
+
+### `C12-claude-credentials` — subscription tokens are binary-only
+
+ADR 0017 rule 1: an Anthropic *subscription* token
+(`api_token_env: CLAUDE_CODE_OAUTH_TOKEN`) or a `claude-code/*` model path may
+only be exercised by the unmodified Claude Code binary. Running it through the
+OpenHands/litellm loop risks an account ban, so the linter rejects the pairing
+(including a `complexity_overrides.<tier>.model` swap) and the run path refuses
+the same config before any provider call. The converse is an error too: a
+`backend: claude-code` agent must use Claude Code credentials.
+
+```yaml
+providers:
+  claude-code:
+    api_url: "https://api.anthropic.com"
+    api_token_env: "CLAUDE_CODE_OAUTH_TOKEN"
+agents:
+  dev:
+    model: "${llms.claude-sonnet}"   # <- backend defaults to openhands
+```
+
+```
+[C12-claude-credentials] error backend 'openhands' must not use Claude Code credentials ... (agents.dev.model)
 ```
 
 ---

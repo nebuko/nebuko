@@ -51,6 +51,7 @@ _RULE_MISSING_ROLE = "C8-missing-role"
 _RULE_UNKNOWN_BACKEND = "C9-unknown-backend"
 _RULE_BACKEND_TOOL = "C10-backend-tool"
 _RULE_SKILLS_DISCOVER = "C11-skills-discover"
+_RULE_CLAUDE_CREDENTIALS = "C12-claude-credentials"
 
 RULE_SEVERITY: dict[str, str] = {
     _RULE_SCHEMA: _SEVERITY_ERROR,
@@ -64,6 +65,7 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_UNKNOWN_BACKEND: _SEVERITY_ERROR,
     _RULE_BACKEND_TOOL: _SEVERITY_ERROR,
     _RULE_SKILLS_DISCOVER: _SEVERITY_ERROR,
+    _RULE_CLAUDE_CREDENTIALS: _SEVERITY_ERROR,
 }
 
 # Canonical tool names accepted at run time. Source of truth:
@@ -167,6 +169,39 @@ def _iter_agents(raw: dict) -> Iterator[tuple[str, dict]]:
     for name, agent in agents.items():
         if isinstance(agent, dict):
             yield str(name), agent
+
+
+def _agent_model_refs(agent: dict) -> Iterator[tuple[str, Any]]:
+    """Yield ``(location, model_ref)`` for the agent's model and tier swaps."""
+    yield "model", agent.get("model")
+    overrides = agent.get("complexity_overrides")
+    if not isinstance(overrides, dict):
+        return
+    for tier, override in overrides.items():
+        if isinstance(override, dict) and override.get("model") is not None:
+            yield f"complexity_overrides.{tier}.model", override["model"]
+
+
+def _llm_credentials(
+    model_ref: Any, root: dict
+) -> tuple[str | None, str | None] | None:
+    """Resolve a model ref to ``(model_path, provider api_token_env)``.
+
+    ``None`` when the ref does not resolve to an llm mapping — a dangling ref is
+    reported by C2 and a malformed one by C1.
+    """
+    resolved = _resolve_for_schema(model_ref, root)
+    if not isinstance(resolved, dict):
+        return None
+    model_path = resolved.get("model_path")
+    provider = resolved.get("provider")
+    api_token_env = (
+        provider.get("api_token_env") if isinstance(provider, dict) else None
+    )
+    return (
+        model_path if isinstance(model_path, str) else None,
+        api_token_env if isinstance(api_token_env, str) else None,
+    )
 
 
 def _mcp_io_issues(entry: dict, location: str) -> list[LintIssue]:
@@ -443,6 +478,7 @@ class ConfigLinter:
         issues.extend(self._check_schema(raw))
         issues.extend(self._check_tools(raw))
         issues.extend(self._check_backends(raw))
+        issues.extend(self._check_credentials(raw))
         issues.extend(self._check_roles(raw))
         issues.extend(self._check_mcp_servers(raw))
         issues.extend(self._check_prompt_files(raw, root, prompt_dirs))
@@ -594,6 +630,56 @@ class ConfigLinter:
                         f"backend '{backend}' cannot serve tool '{tool}'",
                         f"agents.{name}.tools",
                         "Remove the tool or pick a backend that declares it",
+                    )
+                )
+        return issues
+
+    def _check_credentials(self, raw: dict) -> list[LintIssue]:
+        """C12: Claude Code credentials only run through the Claude Code backend.
+
+        ADR 0017 rule 1: an Anthropic subscription token
+        (``CLAUDE_CODE_OAUTH_TOKEN``) or a ``claude-code/*`` model path may only
+        be exercised by the unmodified Claude Code binary — running it through
+        the OpenHands/litellm loop can get the account banned. The converse is
+        an error too: a ``claude-code`` agent needs Claude Code credentials.
+
+        Complexity-tier model swaps are checked as well: a tier that swaps in a
+        Claude Code model on an OpenHands agent is the same violation.
+        """
+        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+            CLAUDE_CODE_BACKEND,
+            DEFAULT_BACKEND,
+            backend_credentials_error,
+        )
+
+        issues: list[LintIssue] = []
+        for name, agent in _iter_agents(raw):
+            backend = agent.get("backend") or DEFAULT_BACKEND
+            for location, model_ref in _agent_model_refs(agent):
+                credentials = _llm_credentials(model_ref, raw)
+                if credentials is None:
+                    # An unresolvable ref is C2/C1's finding, not a credential one.
+                    continue
+                model_path, api_token_env = credentials
+                message = backend_credentials_error(
+                    backend, model_path, api_token_env
+                )
+                if message is None:
+                    continue
+                # A claude-code agent with the wrong model is a backend
+                # declaration problem; the reverse points at the model ref.
+                reported = (
+                    f"agents.{name}.backend"
+                    if backend == CLAUDE_CODE_BACKEND
+                    else f"agents.{name}.{location}"
+                )
+                issues.append(
+                    _make_issue(
+                        _RULE_CLAUDE_CREDENTIALS,
+                        message,
+                        reported,
+                        "Declare backend 'claude-code' for Claude Code models and "
+                        "subscription tokens, or use a metered provider key",
                     )
                 )
         return issues
