@@ -50,7 +50,7 @@ def _drain_captured_telemetry() -> "_CapturedTelemetry":
     if collector is None:
         return _CapturedTelemetry(None, None, 0, 0)
     observations = collector.drain()
-    retries = collector.drain_retries()
+    retries = collector.drain_retry_waits()
     mean_ttft, mean_tps = TokenTelemetry.aggregate(observations)
     return _CapturedTelemetry(
         tokens_per_second=mean_tps,
@@ -97,6 +97,20 @@ def _resolve_price(agent_cfg, price_table):
     if model_ref is None:
         return None
     return resolve_model_rates(model_ref, price_table)
+
+
+def _provider_label(agent_cfg) -> str:
+    """The provider base URL the run's model calls went to (issue #1375).
+
+    Read from the resolved provider config (honoring the active complexity
+    tier, like the price and model lookups) so the metrics of two runs on
+    different providers are comparable. Empty when no provider resolves.
+    """
+    model_ref = _effective_model_ref(agent_cfg)
+    provider = (
+        getattr(model_ref, "provider_ref", None) if model_ref is not None else None
+    )
+    return str(getattr(provider, "api_url", "") or "")
 
 
 def _effective_model_name(agent_cfg, combined_metrics):
@@ -464,6 +478,8 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             llm_max_call_latency_ms=health.max_call_latency_ms,
             llm_stall_count=health.stall_count,
             llm_call_retry_counts=list(health.call_retry_counts),
+            provider=_provider_label(agent_cfg),
+            provider_retry_wait_ms=health.retry_wait_ms,
         )
 
         logger.info(f"Collected LLM metrics for run {metrics.run_id}")

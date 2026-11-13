@@ -6,6 +6,7 @@ import pytest
 
 from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
     RetryEvent,
+    RetryWait,
     TokenTelemetry,
 )
 from nebuko.engine.lib.metrics_schema import Metrics
@@ -144,6 +145,22 @@ class TestCallHealth:
         )
         assert health.retry_count == 2
         assert health.call_retry_counts == (1,)
+
+    def test_sums_the_retry_backoff_windows(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(2.0, retry_count=2)],
+            retries=[
+                RetryWait(RetryEvent(1, 2, "RateLimitError"), wait_ms=8000.0),
+                RetryWait(RetryEvent(2, 2, "RateLimitError"), wait_ms=16000.0),
+            ],
+        )
+
+        assert health.retry_wait_ms == pytest.approx(24000.0)
+
+    def test_retry_wait_defaults_to_zero(self):
+        health = TokenTelemetry.call_health([self._observation(2.0)])
+
+        assert health.retry_wait_ms == 0.0
 
 
 class TestTokenTelemetryAggregate:

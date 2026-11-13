@@ -17,7 +17,8 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -27,6 +28,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
     branch_scaffold,
     evidence_checkout,
@@ -756,6 +758,15 @@ class Engine:
     _ledger_state: dict[str, Any] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # Per-phase wall-clock timer for this run (issue #1375). A mutable object
+    # because ``Engine`` is frozen; reset at the start of every ``run``.
+    _clock: PhaseClock = field(
+        default_factory=PhaseClock, init=False, compare=False, repr=False
+    )
+    # Time ``main`` spent before the pipeline started — logging setup, the SDK
+    # prewarm and the adapter build (issue #1375). ``run`` merges it in front of
+    # the phase timings so a run's wall-clock is complete.
+    init_timings: Mapping[str, float] = field(default_factory=dict)
 
     # @stub-protected
     def _caller_root(self) -> Path:
@@ -1008,7 +1019,26 @@ class Engine:
 
     # @stub-protected
     def run(self) -> RunOutcome:
-        """End-to-end pipeline; always returns an outcome."""
+        """End-to-end pipeline; always returns an outcome.
+
+        Thin timer wrapper: the phases run in :meth:`_run_phases` and the
+        per-phase durations measured on the way are attached here, so every
+        return path (including the skip and provider-failure ones) carries
+        them (issue #1375).
+        """
+        self._clock.reset()
+        try:
+            outcome = self._run_phases()
+        finally:
+            self._clock.stop_current()
+        timings = {**self.init_timings, **self._clock.summary()}
+        if timings:
+            log.info("[timings] %s", _format_timings(timings))
+        self._stage_timings({**timings, **_agent_timings(outcome.state)})
+        return replace(outcome, timings=timings)
+
+    def _run_phases(self) -> RunOutcome:
+        """The phase pipeline behind :meth:`run`; always returns an outcome."""
         phases: list[str] = []
         prompt: str | None = None
         posted_body: str | None = None
@@ -1557,10 +1587,10 @@ class Engine:
             phases=tuple(phases),
         )
 
-    @staticmethod
-    def _enter(phases: list[str], name: str) -> None:
+    def _enter(self, phases: list[str], name: str) -> None:
         phases.append(name)
         log.info("[phase:%s]", name)
+        self._clock.start(name)
 
     # @stub-protected
     def _run_phase(self, name: str, fn: Callable[[], Any]) -> PhaseResult:
@@ -1871,6 +1901,7 @@ class Engine:
             provider=str(failure.provider or ""),
             model=str(failure.model or ""),
             requires_config_fix=bool(failure.requires_config_fix),
+            timings=self._render_failure_timings(state),
         )
         return RunOutcome(
             exit_code=ExitCode.ERROR,
@@ -1882,6 +1913,25 @@ class Engine:
             state=state,
             phases=tuple(phases),
         )
+
+    def _render_failure_timings(self, state: Any = None) -> str:
+        """The failed run's wall-clock breakdown for the failure notice (#1375).
+
+        Engine phases measured so far plus the agent's own LLM/tool split when
+        the run got far enough to persist metrics. Empty when nothing was
+        timed, so the notice keeps its old shape.
+        """
+        timings = {**self.init_timings, **self._clock.snapshot()}
+        if not timings:
+            return ""
+        lines = ["Time spent: " + _format_timings(timings)]
+        agent = _agent_timings(state)
+        if agent:
+            lines.append(
+                "Agent: "
+                + " ".join(f"{key}={value}" for key, value in agent.items())
+            )
+        return "\n".join(lines) + "\n"
 
     def _pending_worktree_paths(self) -> tuple[str, ...]:
         """Uncommitted paths in the caller checkout, best-effort (#1322).
@@ -1928,6 +1978,7 @@ class Engine:
         provider: str = "",
         model: str = "",
         requires_config_fix: bool = False,
+        timings: str = "",
     ) -> None:
         """Post the engine's failure notice and ping the starter (#1288).
 
@@ -1936,7 +1987,8 @@ class Engine:
         selects the honest aftermath wording (issue #1288 round 4): a crash
         after the answer comment was created may re-fire the workflow gate.
         ``provider``/``model``/``requires_config_fix`` name the provider failure
-        the run stopped on (issue #1322).
+        the run stopped on (issue #1322); ``timings`` is its pre-rendered
+        wall-clock breakdown (issue #1375).
         """
         from nebuko.engine.lib.config import EngineFailureNotice
 
@@ -1955,6 +2007,7 @@ class Engine:
                 provider=provider,
                 model=model,
                 requires_config_fix=requires_config_fix,
+                timings=timings,
             )
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure
@@ -3342,6 +3395,17 @@ class Engine:
             return
         log.info("[phase:publish] staged run logs in %s", staged.staging_dir)
 
+    def _stage_timings(self, timings: Mapping[str, float]) -> None:
+        """Stage ``timings.json`` for the CI artifact; never abort the run.
+
+        Best-effort like :meth:`_stage_run_logs`: a run that cannot persist its
+        timings must still report its outcome (issue #1375).
+        """
+        try:
+            self._artifacts().stage_timings(timings)
+        except Exception as exc:  # noqa: BLE001 - log staging is best-effort
+            log.warning("[phase:route] could not stage run timings: %s", exc)
+
     def _handoff_config(self) -> Any:
         """The resolver mapping the run routes on and hands to the agent child.
 
@@ -4627,6 +4691,41 @@ def _render_unverified_records(
     )
 
 
+def _format_timings(timings: Mapping[str, float]) -> str:
+    """One-line ``phase=1.23s`` summary for the ``[timings]`` log marker (#1375)."""
+    return " ".join(
+        f"{name}={duration_ms / 1000.0:.2f}s" for name, duration_ms in timings.items()
+    )
+
+
+def _agent_timings(state: Any) -> dict[str, Any]:
+    """The agent-internal time split from the just-persisted state (#1375).
+
+    The step's ``HistoryEntry.metrics`` is the single metrics authority
+    (issue #792): it already splits LLM generation (``agent_runtime_ms``) from
+    tool execution (``tool_runtime_ms``) and carries the provider label and
+    the retry wait. Absent metrics yield an empty mapping, never an error.
+    """
+    history = getattr(state, "history", None) or []
+    metrics = getattr(history[-1], "metrics", None) if history else None
+    if metrics is None:
+        return {}
+    return {
+        key: value
+        for key, value in {
+            "provider": metrics.provider,
+            "model_name": metrics.model_name,
+            "agent_runtime_ms": metrics.agent_runtime_ms,
+            "tool_runtime_ms": metrics.tool_runtime_ms,
+            "wall_clock_ms": metrics.wall_clock_ms,
+            "provider_retry_wait_ms": metrics.provider_retry_wait_ms,
+            "llm_retry_count": metrics.llm_retry_count,
+            "llm_stall_count": metrics.llm_stall_count,
+        }.items()
+        if value not in ("", None)
+    }
+
+
 def _one_line_preview(text: str, limit: int = 200) -> str:
     collapsed = " ".join(text.split())
     if len(collapsed) <= limit:
@@ -4709,6 +4808,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
 
+    init_started = time.monotonic()
     configure_logging(os.environ)
     # Overlap the agent SDK's ~5s import with the gh/git-bound phases (issue #1266).
     prewarm_agent_sdk(os.environ)
@@ -4726,11 +4826,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     from nebuko.engine.lib.config import HistoryWindowConfig
 
     window = HistoryWindowConfig.from_env(os.environ)
+    init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
     outcome = Engine(
         adapter=adapter,
         repo_root=repo_root(),
         env=dict(os.environ),
         history_limit=window.normalized_count(),
         render_limit=window.render_limit(),
+        init_timings={"engine_init": init_ms},
     ).run()
     return outcome.process_exit_code()
