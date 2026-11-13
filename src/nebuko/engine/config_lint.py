@@ -68,8 +68,8 @@ RULE_SEVERITY: dict[str, str] = {
 
 # Canonical tool names accepted at run time. Source of truth:
 # engine/lib/agent_script/features/run_agent/run_agent.py (sdk_tool_names ∪
-# builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review});
-# duplicated here so the pure linter need not import the SDK runtime.
+# builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review,
+# handoff}); duplicated here so the pure linter need not import the SDK runtime.
 KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         "terminal",
@@ -85,6 +85,7 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
         "report_scaffold_branch",
         "complexity_review",
         "fetch_comment_bodies",
+        "handoff",
     }
 )
 

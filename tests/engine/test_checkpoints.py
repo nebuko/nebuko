@@ -6,16 +6,52 @@ delivery method (queued ``send_message`` — verified against a stub
 conversation whose ``arun()`` is in flight while checkpoints fire).
 """
 
+import re
 import threading
 import time
 import unittest
 
 from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
+    CHECKPOINT_50_PROMPT,
+    CHECKPOINT_50_PROMPT_NO_HANDOFF,
+    CHECKPOINT_75_PROMPT,
+    CHECKPOINT_75_PROMPT_NO_HANDOFF,
+    CHECKPOINT_100_PROMPT,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
     CHECKPOINT_FRACTIONS,
     CheckpointEvent,
     CheckpointScheduler,
     compute_checkpoints,
     count_plan_changes,
+)
+
+# Representative role tool lists (issue #1350): ``dev`` carries ``handoff``,
+# ``context`` does not. ``finalize`` is auto-appended to every role in
+# ``run_agent``, so both sets include it.
+ROLE_TOOLS: dict[str, frozenset[str]] = {
+    "dev": frozenset(
+        {
+            "terminal", "terminal_batch", "read", "edit", "write",
+            "task_tracker", "think", "finish", "finalize",
+            "report_scaffold_branch", "complexity_review", "handoff",
+        }
+    ),
+    "context": frozenset(
+        {
+            "terminal", "terminal_batch", "read", "edit", "write",
+            "task_tracker", "think", "finish", "finalize",
+            "complexity_review",
+        }
+    ),
+}
+
+# Every tool name a prompt could name; prompts are scanned for these.
+TOOL_NAMES = ROLE_TOOLS["dev"]
+
+NO_HANDOFF_PROMPTS = (
+    CHECKPOINT_50_PROMPT_NO_HANDOFF,
+    CHECKPOINT_75_PROMPT_NO_HANDOFF,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
 )
 
 
@@ -44,6 +80,60 @@ class TestComputeCheckpoints(unittest.TestCase):
         for bad in (0, -1, -0.5):
             with self.assertRaises(ValueError):
                 compute_checkpoints(bad)
+
+    def test_has_handoff_defaults_to_the_handoff_prompts(self):
+        self.assertEqual(
+            [e.prompt for e in compute_checkpoints(100.0)],
+            [
+                CHECKPOINT_50_PROMPT,
+                CHECKPOINT_75_PROMPT,
+                CHECKPOINT_100_PROMPT,
+            ],
+        )
+
+    def test_without_handoff_uses_the_finalize_only_prompts(self):
+        self.assertEqual(
+            [e.prompt for e in compute_checkpoints(100.0, has_handoff=False)],
+            list(NO_HANDOFF_PROMPTS),
+        )
+
+
+class TestPromptToolConsistency(unittest.TestCase):
+    """No checkpoint prompt may reference a tool its role does not have.
+
+    Issue #1350: the 50/75% prompts told ``context`` to call the handoff
+    tool, which it does not carry, so both checkpoints were noise.
+    """
+
+    def _referenced_tools(self, prompt: str) -> set[str]:
+        return {
+            name
+            for name in TOOL_NAMES
+            if re.search(rf"\b{re.escape(name)}\b", prompt)
+        }
+
+    def test_every_prompt_only_names_role_available_tools(self):
+        for role, tools in ROLE_TOOLS.items():
+            events = compute_checkpoints(
+                100.0, has_handoff="handoff" in tools
+            )
+            for event in events:
+                with self.subTest(role=role, checkpoint=event.label):
+                    self.assertLessEqual(
+                        self._referenced_tools(event.prompt), tools
+                    )
+
+    def test_handoff_roles_are_asked_for_the_handoff(self):
+        for event in compute_checkpoints(100.0, has_handoff=True):
+            with self.subTest(checkpoint=event.label):
+                self.assertIn("handoff", event.prompt)
+
+    def test_no_handoff_prompts_ask_for_finalize_only(self):
+        for prompt in NO_HANDOFF_PROMPTS:
+            self.assertIn("finalize", prompt)
+            self.assertNotIn("handoff", prompt)
+            self.assertNotIn("plan_changes", prompt)
+            self.assertNotIn("fold", prompt)
 
 
 class TestCheckpointScheduler(unittest.TestCase):

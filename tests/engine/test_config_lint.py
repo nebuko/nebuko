@@ -51,6 +51,7 @@ KNOWN_TOOLS_EXPECTED = frozenset(
         "report_scaffold_branch",
         "complexity_review",
         "fetch_comment_bodies",
+        "handoff",
     }
 )
 
