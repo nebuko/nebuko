@@ -3976,14 +3976,13 @@ class Engine:
         return f"{server}/{repo}/actions/runs/{run_id}"
 
     def _threshold(self) -> int:
-        # The ``run-task`` job exports CIRCUIT_BREAKER_THRESHOLD with a 25
-        # default (``inputs.circuit_breaker_threshold || 25``); match it so a
-        # host that does not export the variable still breaks at the same count.
-        raw = self.env.get("CIRCUIT_BREAKER_THRESHOLD") or "25"
+        # The ``run-task`` job no longer injects a default (issue #1094), so the
+        # built-in fallback keeps the historical workflow default of 15.
+        raw = self.env.get("CIRCUIT_BREAKER_THRESHOLD") or "15"
         try:
             return int(raw)
         except ValueError:
-            return 25
+            return 15
 
     @staticmethod
     def _state_from_history(history: Sequence[CommentEntry]) -> WorkflowState | None:
@@ -4001,10 +4000,10 @@ class Engine:
         """Resolve the breaker limit for this issue (issue #839).
 
         Precedence: persisted per-issue override → ``CIRCUIT_BREAKER_THRESHOLD``
-        workflow parameter → 25. An absent or unparseable state falls back to
-        today's env-only behavior, so hosts without the feature are unchanged;
-        raising the override above the current call count un-trips the issue on
-        the next run because the trip verdict is recomputed fresh.
+        workflow parameter or manifest → 15. An absent or unparseable state falls
+        back to today's env-only behavior, so hosts without the feature are
+        unchanged; raising the override above the current call count un-trips the
+        issue on the next run because the trip verdict is recomputed fresh.
         """
         env_default = self._threshold()
         state = self._state_from_history(history)
@@ -4824,13 +4823,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     adapter = build_adapter(args.adapter, **kwargs)
     from nebuko.engine.lib.config import HistoryWindowConfig
+    from nebuko.engine.paths import ConfigPathAnchor, load_manifest
 
-    window = HistoryWindowConfig.from_env(os.environ)
+    # The manifest fills any setting the workflow left unset (issue #1094):
+    # explicit env / workflow input > .nebuko/nebuko.yaml > built-in default.
+    caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
+    env = load_manifest(caller_root / ".nebuko" / "nebuko.yaml").overlay_env(
+        os.environ
+    )
+    window = HistoryWindowConfig.from_env(env)
     init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
     outcome = Engine(
         adapter=adapter,
         repo_root=repo_root(),
-        env=dict(os.environ),
+        env=env,
         history_limit=window.normalized_count(),
         render_limit=window.render_limit(),
         init_timings={"engine_init": init_ms},

@@ -16,7 +16,7 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
@@ -41,8 +41,11 @@ log = logging.getLogger(__name__)
 
 # @stub-protected
 class NebukoManifest(BaseModel):
-    """Parsed ``.nebuko/nebuko.yaml``: optional per-repo path overrides.
+    """Parsed ``.nebuko/nebuko.yaml``: the caller's non-secret engine settings.
 
+    Paths are resolved relative to the repo root. Every field is optional, so an
+    absent or empty manifest keeps the fixed ``<kind>/`` subfolders and the
+    built-in defaults. Secrets never live here — they stay in the workflow.
     Paths are resolved relative to the repo root. Both fields are optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
 
@@ -54,6 +57,65 @@ class NebukoManifest(BaseModel):
 
     skills_dir: str | None = None
     default_workflow: str | None = None
+    agent_config: str | None = None
+    circuit_breaker_threshold: int | None = Field(None, ge=1)
+    history_comment_count: int | None = None
+    pin_comment: bool | None = None
+
+    def env_defaults(self) -> dict[str, str]:
+        """The env vars this manifest sets, as the workflow would export them."""
+        values: dict[str, str] = {}
+        if self.agent_config is not None:
+            values["AGENT_CONFIG_PATH"] = self.agent_config
+        if self.circuit_breaker_threshold is not None:
+            values["CIRCUIT_BREAKER_THRESHOLD"] = str(self.circuit_breaker_threshold)
+        if self.history_comment_count is not None:
+            values["HISTORY_COMMENT_COUNT"] = str(self.history_comment_count)
+        if self.pin_comment is not None:
+            values["PIN_COMMENT"] = _render_bool(self.pin_comment)
+        return values
+
+    def overlay_env(self, env: Mapping[str, str]) -> dict[str, str]:
+        """``env`` with the manifest filling every unset (missing or blank) key.
+
+        Precedence is explicit env/workflow input > manifest > built-in default,
+        so an existing caller that passes an input keeps its value. ``PIN_COMMENT``
+        is OR-ed instead: a boolean workflow input cannot express "unset", so a
+        true value from either source wins.
+        """
+        merged = dict(env)
+        for key, value in self.env_defaults().items():
+            if key == "PIN_COMMENT":
+                merged[key] = _render_bool(
+                    _is_true(merged.get(key)) or _is_true(value)
+                )
+                continue
+            if not (merged.get(key) or "").strip():
+                merged[key] = value
+        # A managed key that ends up blank is dropped rather than left empty: the
+        # workflow now exports the inputs as ``''`` when unset, and readers using
+        # ``os.environ.get(key, default)`` would take the empty string as a value
+        # instead of applying their own default.
+        for key in _MANAGED_ENV_KEYS:
+            if key != "PIN_COMMENT" and not (merged.get(key) or "").strip():
+                merged.pop(key, None)
+        return merged
+
+
+_MANAGED_ENV_KEYS = (
+    "AGENT_CONFIG_PATH",
+    "CIRCUIT_BREAKER_THRESHOLD",
+    "HISTORY_COMMENT_COUNT",
+    "PIN_COMMENT",
+)
+
+
+def _render_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _is_true(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("true", "1", "yes")
 
 
 # @stub-protected
