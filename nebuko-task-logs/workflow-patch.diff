@@ -1,0 +1,112 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index b200ae9..5afbb10 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -4,25 +4,25 @@ on:
+   workflow_call:
+     inputs:
+       agent_config_path:
+-        description: 'Path to the layered YAML config file (providers → llms → agents). Leave empty to use .nebuko/nebuko.yaml (agent_config), else agent-config.yaml'
++        description: 'Path to the layered YAML config file (providers → llms → agents)'
+         required: false
+         type: string
+-        default: ''
++        default: 'agent-config.yaml'
+       circuit_breaker_threshold:
+-        description: 'Circuit breaker threshold. Leave 0 to use .nebuko/nebuko.yaml (circuit_breaker_threshold), else 15'
++        description: 'Circuit breaker threshold'
+         required: false
+         type: number
+-        default: 0
++        default: 15
+       pin_comment:
+         description: 'When true, pin every agent step output comment for verbatim context injection (issue #617)'
+         required: false
+         type: boolean
+         default: false
+       history_comment_count:
+-        description: 'Number of most recent issue comments injected into each agent call (pinned comments are always added on top). Leave 0 to use .nebuko/nebuko.yaml (history_comment_count), else 5'
++        description: 'Number of most recent issue comments injected into each agent call (pinned comments are always added on top)'
+         required: false
+         type: number
+-        default: 0
++        default: 5
+       python_version:
+         description: 'Python version'
+         required: false
+@@ -122,6 +122,9 @@ on:
+       LOCAL_VLLM_API_TOKEN:
+         description: 'API key for vLLM (optional — only needed if using local vLLM provider)'
+         required: false
++      CLAUDE_CODE_OAUTH_TOKEN:
++        description: 'Long-lived Claude Code token from `claude setup-token` (optional — only for the claude-code backend; a self-hosted runner can provide it in its own environment instead)'
++        required: false
+       BRAVE_API_KEY:
+         description: 'Brave Search API key (optional — only needed for the Brave Search MCP web-search tool)'
+         required: false
+@@ -231,10 +234,10 @@ jobs:
+           )
+         env:
+             BOT_MARKER: "<!-- bot-workflow-terminal -->"
+-            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || '' }}
++            CIRCUIT_BREAKER_THRESHOLD: ${{ inputs.circuit_breaker_threshold || 25 }}
+             PYTHON_VERSION: ${{ inputs.python_version || '3.13' }}
+             ENABLE_UV_CACHE: ${{ inputs.enable_uv_cache != false }}
+-            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || '' }}
++            AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+             OPENHANDS_SUPPRESS_BANNER: "1"
+ 
+             BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+@@ -371,6 +374,18 @@ jobs:
+                   [ "$VENV_CACHE_HIT" = "true" ] && COMPILE=
+                   uv sync --project "$NEBUKO_ROOT" --extra runtime --locked --no-dev $COMPILE
+ 
++            - name: Export Claude Code token
++              env:
++                CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
++              run: |
++                  # Export only a token the caller passed: an empty step-level value
++                  # would shadow one the runner already provides in its own
++                  # environment.
++                  if [ -n "$CLAUDE_CODE_OAUTH_TOKEN_SECRET" ]; then
++                    echo "::add-mask::$CLAUDE_CODE_OAUTH_TOKEN_SECRET"
++                    echo "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN_SECRET" >> "$GITHUB_ENV"
++                  fi
++
+             - name: "Materialize extra secret slots as env vars"
+               env:
+                 EXTRA_SECRET_1_NAME: ${{ inputs.EXTRA_SECRET_1_NAME }}
+@@ -400,7 +415,7 @@ jobs:
+                 GFA_SOURCE: github
+                 GH_TOKEN: ${{ env.GH_TOKEN }}
+                 GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-                AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || '' }}
++                AGENT_CONFIG_PATH: ${{ inputs.agent_config_path || 'agent-config.yaml' }}
+                 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+                 CHEAPERINFERENCE_API_KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
+                 MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+@@ -408,7 +423,7 @@ jobs:
+                 COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+                 OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+                 PIN_COMMENT: ${{ inputs.pin_comment }}
+-                HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count || '' }}
++                HISTORY_COMMENT_COUNT: ${{ inputs.history_comment_count }}
+                 PROMPT_BODY: ${{ inputs.prompt_body }}
+                 LOG_TO_FILE: "true"
+                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
+@@ -441,6 +456,15 @@ jobs:
+                 if-no-files-found: ignore
+                 retention-days: 7
+ 
++            - name: Upload timings.json artifact
++              uses: actions/upload-artifact@v7
++              if: always()
++              with:
++                path: ${{ runner.temp }}/nebuko-task-logs/timings.json
++                archive: false
++                if-no-files-found: ignore
++                retention-days: 7
++
+     agent-metrics:
+         runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+         if: |
