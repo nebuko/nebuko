@@ -1116,13 +1116,22 @@ class Engine:
                     # reason in the workflow state and exit 0 so the host run
                     # stays green (issue #853).
                     log.info("[phase:guards] no next agent — %s", reason)
+                    # A human who triggered the run (a ``/nebuko resume`` on an
+                    # already-terminal workflow, issue #1376) must still get an
+                    # answer on the thread; a bot trigger stays silent so the
+                    # chain cannot re-enter itself.
+                    posted = (
+                        None
+                        if _is_bot_trigger(trigger)
+                        else self._post_terminal_skip_notice(reason)
+                    )
                     return RunOutcome(
                         exit_code=skip.exit_code,
                         turn_outcome=TurnOutcome.for_incomplete(
                             IncompleteReason.NO_OUTCOME, note=reason
                         ),
                         prompt=None,
-                        posted_body=None,
+                        posted_body=posted,
                         state=self._record_terminal_skip(skip),
                         phases=tuple(phases),
                     )
@@ -1959,6 +1968,26 @@ class Engine:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure
             log.warning("[phase:error] failure notice failed: %s", exc)
+
+    # @stub-protected
+    def _post_terminal_skip_notice(self, reason: str) -> str | None:
+        """Acknowledge a benign terminal skip to the human who asked (#1376).
+
+        A ``/nebuko resume`` on an already-terminal workflow ends the run with no
+        agent and — before this notice — no comment either, leaving the human
+        with silence. Marker-led and trigger-safe like the other guards notices;
+        the trigger author is pinged when one resolves. Best-effort: a failed
+        post returns ``None`` and never masks the (successful) no-op outcome.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        body = f"{marker}\n{self._human_ping()}no agent to run — {reason}"
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:guards] terminal skip notice failed: %s", exc)
+            return None
+        return notice
 
     # @stub-protected
     def _post_gate_noop_notice(self, reason: str) -> str:

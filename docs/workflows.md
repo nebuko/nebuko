@@ -286,7 +286,7 @@ validation. The notice is classified from the run outcome:
 | `hold`, any other reason (incl. a rudderless no-action default, §5 of [handoff-and-callback.md](./handoff-and-callback.md)) | *awaiting input* |
 | terminal step, on the run that produced its output | *workflow complete* |
 | `soft_kill` while the soft-retry budget remains | none (transient retry) |
-| terminal `SKIP_AGENT` on a follow-up run | none (nothing new to act on) |
+| terminal `SKIP_AGENT` on a follow-up run | none on bot triggers; a human trigger gets a *terminal skip* notice (`no agent to run — <reason>`, issue #1376) |
 | gate command with nothing it may decide (issue #1012) | none — the engine posts the skip reason (`skipping agent — <reason>`) and exits 0 |
 
 The recipient is the **workflow starter** (`WorkflowState.started_by`, captured
