@@ -145,6 +145,7 @@ inherited from whatever Nebuko ships. Either write one (section 5,
 | [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) | CommandCode | `COMMANDCODE_API_KEY` |
 | [`agent-config-opencode.yaml`](../defaults/agents/agent-config-opencode.yaml) | OpenCode Go | `OPENCODE_GO_API_KEY` |
 | [`agent-config-mistral.yaml`](../defaults/agents/agent-config-mistral.yaml) | Mistral | `MISTRAL_API_KEY` |
+| [`agent-config-anthropic.yaml`](../.nebuko/agents/agent-config-anthropic.yaml) | Claude Code (see [claude-code.md](./claude-code.md)) | `CLAUDE_CODE_OAUTH_TOKEN` |
 
 ```bash
 mkdir -p .nebuko/agents
@@ -257,6 +258,7 @@ pin (it is resolved before the manifest can be read), secrets and
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |
 | `MISTRAL_API_KEY` | optional | Mistral provider. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | optional | Claude Code subscription token from `claude setup-token` (or an API key for the same env var) — see [claude-code.md](./claude-code.md). Exported only when set, and `::add-mask::`ed. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |
 | `BRAVE_API_KEY` | optional | Brave Search MCP token (the named alias of the slot pattern in section 3.1). |
 | `EXTRA_SECRET_1_VALUE` … `EXTRA_SECRET_9_VALUE` | optional | Values materialized into the env vars named by the `EXTRA_SECRET_n_NAME` inputs (section 3.1). |
@@ -455,6 +457,11 @@ actually present on the runner, so inline the URL unless your runner sets it.
 > **CommandCode / subscription providers.** See
 > [subscription-plans.md](./subscription-plans.md) for the provider stanza and
 > a working `agent-config-commandcode.yaml` example.
+>
+> **Claude Code.** The `claude-code` harness is a runtime switch, not an
+> OpenAI-compatible endpoint: set `backend: "claude-code"` per role and read
+> [claude-code.md](./claude-code.md). Billing a subscription is governed by
+> [ADR-0017](./adr/0017-claude-code-subscription-credential-strategies.md).
 
 ---
 
@@ -551,3 +558,4 @@ installed on), use the PAT fallback in
 - [configuration.md](./configuration.md) — the full `agent-config.yaml` schema.
 - [features.md](./features.md) — human commands, safety mechanisms, metrics.
 - [subscription-plans.md](./subscription-plans.md) — run on a subscription plan.
+- [claude-code.md](./claude-code.md) — run roles through Claude Code.
