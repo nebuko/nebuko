@@ -1,0 +1,15 @@
+providers:
+  claude-code:
+    api_url: "https://api.anthropic.com"
+    api_token_env: "CLAUDE_CODE_OAUTH_TOKEN"
+llms:
+  claude-sonnet:
+    model_path: "anthropic/claude-sonnet"
+    provider: "${providers.claude-code}"
+agents:
+  a:
+    model: "${llms.claude-sonnet}"
+    role: "Test agent role."
+    prompt_file: ".agents/prompts/a.md"
+    skills: ["skill-a"]
+    tools: ["think"]

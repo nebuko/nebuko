@@ -225,8 +225,10 @@ independent axes meet there:
 `backend` in `agent-config.yaml` is registry-resolved (`resolve_harness`), not a
 `Literal`: a third harness is one adapter module, no schema change. An unknown
 backend raises `EngineAgentUnavailable` naming the registered set, and
-`lint-config` rejects it before a run starts (rules C9–C11: unknown backend, a
-tool the backend cannot serve, discover-mode skills without `skills_discover`).
+`lint-config` rejects it before a run starts (rules C9–C12: unknown backend, a
+tool the backend cannot serve, discover-mode skills without `skills_discover`,
+and Claude Code credentials on another backend — ADR 0017 rule 1, which the run
+path also enforces with a terminal `ClaudeCredentialError`).
 
 **Engine tools: sink vs query.** `finalize` is a write-only *sink* — it needs no
 engine state mid-turn, so it records into a `FinalizeSink` and returns. The
