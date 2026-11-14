@@ -261,6 +261,8 @@ class WorkflowState(BaseModel):
     # gated agent can end its turn with a real verdict and still delegate.
     # ``None`` on legacy blobs (and once released), which load unchanged.
     gate: Optional[GateLock] = None
+    # Refused hand-offs are facts for the active gate, not executable calls.
+    gate_refused_calls: list[FunctionCall] = Field(default_factory=list)
     # Engine-owned git actions (issue #1153): branch, PR and the per-run action
     # history, for audit. ``None`` on legacy blobs, which load unchanged.
     git: Optional[GitInfo] = None

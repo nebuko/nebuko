@@ -303,6 +303,7 @@ def _run_pipeline(
     """
     args = SimpleNamespace(prompt_location=None)
     llm_config, resolved_prompt, agent_cfg = pipeline.resolve_llm_config(args, prompt)
+    prev_state = pipeline.load_prev_state_or_recover()
     conversation = pipeline.run_agent(
         llm_config,
         resolved_prompt,
@@ -310,12 +311,13 @@ def _run_pipeline(
         agent_cfg=agent_cfg,
         workspace=workspace,
         context_bodies=_parse_context_bodies_env(),
+        prev_state=prev_state,
     )
     if host is not None:
         host._elicit_report(conversation)
     metrics = pipeline.collect_and_save_metrics(conversation, agent_cfg)
     pipeline.build_output(
-        conversation, metrics, args, prev_state=pipeline.load_prev_state_or_recover()
+        conversation, metrics, args, prev_state=prev_state
     )
     return conversation
 

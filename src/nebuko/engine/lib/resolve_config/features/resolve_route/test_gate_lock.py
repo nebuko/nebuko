@@ -274,13 +274,18 @@ class TestGateConsultRouting(unittest.TestCase):
         spent = GateLock(
             step="plan", consult_rounds=MAX_CONSULT_ROUNDS, last_handoff="context"
         )
-        state = _gated_state(gate=spent, function_call=_consult_call("context"))
+        call = _consult_call("context")
+        call.task = "verify the contract"
+        state = _gated_state(gate=spent, function_call=call)
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_workflow(tmpdir)
             cfg = _resolve_outcome_path(state, tmpdir)
         self.assertEqual(cfg["SKIP_AGENT"], "true")
         self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
         self.assertIn("consult budget", cfg["REASON"])
+        self.assertIn("context", cfg["REASON"])
+        self.assertIn("did not run", cfg["REASON"])
+        self.assertIn("verify the contract", cfg["REASON"])
 
     def test_malformed_handoff_stays_a_config_error(self):
         """A hand-off with no callee is a real error, not a benign gate hold."""
@@ -449,6 +454,20 @@ class TestGateConsultEndToEnd(unittest.TestCase):
         self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
         self.assertIn("consult budget", cfg["REASON"])
         self.assertIs(SkipOutcome.from_verdict(cfg).exit_code, ExitCode.HOLD)
+
+    def test_refused_call_without_pending_command_appears_in_hold(self):
+        call = FunctionCall(agent_name="context", task="verify the contract")
+        gate = GateLock(step="plan", consult_rounds=MAX_CONSULT_ROUNDS)
+        state = _gated_state(gate=gate, function_call=None)
+        state = state.model_copy(update={"gate_refused_calls": [call]})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_base, workflows_dir = self._dirs(tmpdir)
+            cfg = resolve_config(
+                self._state_body(state), prompt_base, workflows_dir, is_bot=True
+            )
+        self.assertEqual(cfg["SKIP_KIND"], "human_gate_hold")
+        self.assertIn("context", cfg["REASON"])
+        self.assertIn("verify the contract", cfg["REASON"])
 
     def test_forward_edge_stays_suppressed_while_armed(self):
         """``plan -> implement`` must never fire on an armed gate."""

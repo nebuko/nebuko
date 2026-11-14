@@ -148,6 +148,67 @@ class TestRunAgentIntegration(unittest.TestCase):
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
+    def test_gate_budget_reaches_finalize_tool(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        from openhands.sdk.tool.registry import resolve_tool
+
+        from nebuko.engine.lib.agent_script.features.call_agent_tool.call_agent_tool import (
+            clear_run as clear_call,
+        )
+        from nebuko.engine.lib.agent_script.features.dispatch_next_tool.dispatch_next_tool import (
+            clear_run as clear_outcome,
+        )
+        from nebuko.engine.lib.workflow_state import GateLock, WorkflowState
+
+        self.addCleanup(clear_call, "budget-test")
+        self.addCleanup(clear_outcome, "budget-test")
+
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+        cases = (
+            (None, "plan", "", "", False),
+            (GateLock(step="plan", consult_rounds=3), "plan", "", "", True),
+            (GateLock(step="plan", consult_rounds=2), "plan", "", "", False),
+            (GateLock(step="plan", consult_rounds=2), "plan", "", "context", True),
+            (GateLock(step="plan", consult_rounds=2), "other", "", "context", True),
+            (GateLock(step="", consult_rounds=3), "plan", "", "", False),
+            (GateLock(step="", consult_rounds=3), "plan", "", "context", True),
+            (GateLock(step="plan", consult_rounds=3), "", "", "", False),
+            (GateLock(step="plan", consult_rounds=3), "other", "", "", False),
+            (GateLock(step="plan", consult_rounds=3), "plan", "true", "", False),
+        )
+        for gate, step, released, consult, expected in cases:
+            with self.subTest(gate=gate, step=step, released=released), patch.dict(
+                "os.environ",
+                {"WORKFLOW_STEP": step, "GATE_RELEASED": released, "GATE_CONSULT": consult},
+            ), patch(
+                "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
+                return_value=None,
+            ):
+                state = (
+                    WorkflowState(workflow="default", step="plan", gate=gate)
+                    if gate else None
+                )
+                run_agent(llm_config={}, prompt="do the thing", prev_state=state)
+                tools = mock_agent.call_args.kwargs["tools"]
+                finalize = next(tool for tool in tools if tool.name == "FinalizeTool")
+                self.assertEqual(finalize.params["consult_budget_exhausted"], expected)
+                definition = resolve_tool(finalize, SimpleNamespace(id="budget-test"))[0]
+                action = definition.action_from_arguments({
+                    "turn_outcome": {
+                        "appreciation": "approved",
+                        "agent_call": {"agent_name": "context", "task": "verify"},
+                    }
+                })
+                self.assertEqual(definition.executor(action).is_error, expected)
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget")
     def test_success_path_no_wind_down(
         self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
     ):

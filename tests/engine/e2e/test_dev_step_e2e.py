@@ -200,7 +200,7 @@ def _install_scripted_pipeline(
         )
 
     def _run_agent(
-        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None
+        llm_config, prompt, args, agent_cfg=None, workspace=None, context_bodies=None, prev_state=None
     ):
         return conversation
 

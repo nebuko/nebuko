@@ -91,10 +91,13 @@ def main():
 
     # 4. Resolve LLM config
     llm_config, prompt, agent_cfg = resolve_llm_config(args, prompt)
+    prev_state = load_prev_state_or_recover()
 
     # 5. Run agent
     try:
-        conversation = run_agent(llm_config, prompt, args, agent_cfg=agent_cfg)
+        conversation = run_agent(
+            llm_config, prompt, args, agent_cfg=agent_cfg, prev_state=prev_state
+        )
     except ProviderFailure as error:
         # A provider failure is terminal (issue #1322): stop before the metrics
         # and output steps, which would otherwise synthesize a wrong cause.
@@ -114,7 +117,7 @@ def main():
         conversation,
         metrics,
         args,
-        prev_state=load_prev_state_or_recover(),
+        prev_state=prev_state,
     )
 
     logger.info("Task completed successfully")
