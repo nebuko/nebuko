@@ -48,6 +48,9 @@ _RULE_SKILL_FILE = "C5-skill-file"
 _RULE_UNREFERENCED = "C6-unreferenced-entry"
 _RULE_MCP_SERVERS = "C7-mcp-servers"
 _RULE_MISSING_ROLE = "C8-missing-role"
+_RULE_UNKNOWN_BACKEND = "C9-unknown-backend"
+_RULE_BACKEND_TOOL = "C10-backend-tool"
+_RULE_SKILLS_DISCOVER = "C11-skills-discover"
 
 RULE_SEVERITY: dict[str, str] = {
     _RULE_SCHEMA: _SEVERITY_ERROR,
@@ -58,12 +61,15 @@ RULE_SEVERITY: dict[str, str] = {
     _RULE_UNREFERENCED: _SEVERITY_WARNING,
     _RULE_MCP_SERVERS: _SEVERITY_ERROR,
     _RULE_MISSING_ROLE: _SEVERITY_WARNING,
+    _RULE_UNKNOWN_BACKEND: _SEVERITY_ERROR,
+    _RULE_BACKEND_TOOL: _SEVERITY_ERROR,
+    _RULE_SKILLS_DISCOVER: _SEVERITY_ERROR,
 }
 
 # Canonical tool names accepted at run time. Source of truth:
 # engine/lib/agent_script/features/run_agent/run_agent.py (sdk_tool_names ∪
-# builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review});
-# duplicated here so the pure linter need not import the SDK runtime.
+# builtin_tool_map ∪ {finalize, report_scaffold_branch, complexity_review,
+# handoff}); duplicated here so the pure linter need not import the SDK runtime.
 KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         "terminal",
@@ -75,6 +81,18 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
         "write",
         "think",
         "finish",
+        "finalize",
+        "report_scaffold_branch",
+        "complexity_review",
+        "fetch_comment_bodies",
+        "handoff",
+    }
+)
+
+# The engine's control-plane tools: a backend that declares no engine-tool
+# channel cannot serve them (issue #1368).
+ENGINE_TOOLS: frozenset[str] = frozenset(
+    {
         "finalize",
         "report_scaffold_branch",
         "complexity_review",
@@ -234,6 +252,15 @@ def _mcp_server_issues(entry: Any, location: str) -> list[LintIssue]:
             )
         )
     return issues
+
+
+def _skill_specs(agent: dict) -> list:
+    """The agent's declared skill specs, tolerating a malformed entry."""
+    raw_skills = agent.get("skills") or []
+    try:
+        return [_SKILL_SPEC.model_validate(entry) for entry in raw_skills]
+    except Exception:  # noqa: BLE001 - C1 already reports a malformed shape
+        return []
 
 
 def _catalog_ref_name(value: Any) -> str | None:
@@ -416,6 +443,7 @@ class ConfigLinter:
         issues.extend(self._check_refs(raw))
         issues.extend(self._check_schema(raw))
         issues.extend(self._check_tools(raw))
+        issues.extend(self._check_backends(raw))
         issues.extend(self._check_roles(raw))
         issues.extend(self._check_mcp_servers(raw))
         issues.extend(self._check_prompt_files(raw, root, prompt_dirs))
@@ -501,6 +529,74 @@ class ConfigLinter:
                             f"Use one of: {known}",
                         )
                     )
+        return issues
+
+    def _check_backends(self, raw: dict) -> list[LintIssue]:
+        """C9-C11: the declared backend must exist and be able to serve the role.
+
+        A ``backend`` the registry does not know, a ``tools`` entry the
+        backend's declared capabilities cannot serve, and discover-mode skills
+        on a backend without ``skills_discover`` are all errors: they would
+        otherwise be silently dropped at run time (issue #1368).
+        """
+        from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
+        from nebuko.engine.agent_runner import EngineAgentUnavailable  # noqa: PLC0415
+
+        issues: list[LintIssue] = []
+        for name, agent in _iter_agents(raw):
+            backend = agent.get("backend") or "openhands"
+            try:
+                capabilities = resolve_harness(backend).capabilities()
+            except EngineAgentUnavailable as exc:
+                issues.append(
+                    _make_issue(
+                        _RULE_UNKNOWN_BACKEND,
+                        str(exc),
+                        f"agents.{name}.backend",
+                        "Use a registered backend or add its harness adapter",
+                    )
+                )
+                continue
+            issues.extend(
+                self._backend_tool_issues(name, agent, backend, capabilities)
+            )
+            if capabilities.skills_discover:
+                continue
+            if any(spec.mode == "discover" for spec in _skill_specs(agent)):
+                issues.append(
+                    _make_issue(
+                        _RULE_SKILLS_DISCOVER,
+                        f"backend '{backend}' cannot serve discover-mode skills",
+                        f"agents.{name}.skills",
+                        "Use inject mode, or pick a backend with skills_discover",
+                    )
+                )
+        return issues
+
+    def _backend_tool_issues(
+        self, name: str, agent: dict, backend: str, capabilities: Any
+    ) -> list[LintIssue]:
+        """C10: every declared tool must be servable by the backend."""
+        servable = set(KNOWN_TOOLS)
+        if capabilities.engine_tools == "none":
+            servable -= ENGINE_TOOLS
+        if capabilities.mcp == "none":
+            servable -= {"fetch_comment_bodies"}
+        if not capabilities.native_tools:
+            # ``file_editor`` is the OpenHands SDK's own tool; a harness with
+            # no in-process tool registry cannot serve it.
+            servable -= {"file_editor"}
+        issues: list[LintIssue] = []
+        for tool in agent.get("tools") or []:
+            if tool in KNOWN_TOOLS and tool not in servable:
+                issues.append(
+                    _make_issue(
+                        _RULE_BACKEND_TOOL,
+                        f"backend '{backend}' cannot serve tool '{tool}'",
+                        f"agents.{name}.tools",
+                        "Remove the tool or pick a backend that declares it",
+                    )
+                )
         return issues
 
     def _check_roles(self, raw: dict) -> list[LintIssue]:

@@ -121,6 +121,7 @@ graph-level invariants below are checked offline by
 | `steps[].script.working_dir` | script | string | no | Repo-relative working directory for the command; defaults to the checkout root. Absolute paths and `..` segments are rejected. |
 | `steps[].script.env` | script | map<string,string> | no | Extra environment variables for the command; these override inherited variables with the same key. |
 | `steps[].script.timeout_minutes` | script | int | no | Execution timeout in minutes (≥ 1; default 30, capped at 60). |
+| `steps[].script.checkout` | script | `session`\|`workflow` | no | Which checkout the command runs on (issue #1327). `session` (default) checks out the pushed dev branch at its SHA, read-only, so the command sees the code under review; `workflow` keeps the workflow's own ref (the opt-out). |
 | `steps[].pre_hook` | step | object | no | Deterministic command run **in the session workspace immediately before the agent** (issue #884). Fail-closed: a non-zero exit or timeout skips the agent and fails the step. Agent steps only. |
 | `steps[].post_hook` | step | object | no | Deterministic command run **in the session workspace immediately after the agent attempt** (issue #884), even when the agent fails. Fail-open: its failure is recorded but never changes the step outcome or routing. Agent steps only. |
 | `steps[].pre_hook\|post_hook.path` | hook | string | yes (with the hook) | Repo-relative path of the script to run. Absolute paths and `..` segments are rejected. |
@@ -449,13 +450,17 @@ Variables the orchestrator sets/consumes per run:
 | `SCRIPT_ARGS` | `resolve_config` | JSON array of the step's `script.args` argv entries (empty array when none); decoded with `json.loads` at spawn. |
 | `SCRIPT_WORKING_DIR` | `resolve_config` | Repo-relative working directory for the script (from `script.working_dir`; empty → checkout root). |
 | `SCRIPT_ENV` | `resolve_config` | JSON object of extra environment variables (from `script.env`; empty object when none), overlaid on the engine environment. |
+| `SCRIPT_CHECKOUT` | `resolve_config` / `resolve_workflow` | Checkout the script runs on (from `script.checkout`): `session` (default) or `workflow` (issue #1327). |
 | `SCRIPT_TIMEOUT_MINUTES` | `resolve_config` | Script timeout in minutes (empty → default 30). |
 | `PARENT_WORKFLOW` | `resolve_config` / `resolve_workflow` | Parent workflow name when the run is nested in a sub-workflow mount; empty at top level. Derived from the second-to-last `position` frame. |
 | `PARENT_WORKFLOW_STEP` | `resolve_config` | Step in the parent workflow that mounted a sub-workflow. |
 | `WORKFLOW_POSITION` | `resolve_config` / `resolve_workflow` | Single-line JSON of the run's full mount stack (`WorkflowState.position`). |
 | `WORKFLOW_POSITION_PATH` | `resolve_config` / `resolve_workflow` | Human-readable `wf/step\|wf/step\|...` rendering of `WORKFLOW_POSITION`. |
 | `STEP_INPUTS` | `resolve_config` | Single-line JSON of a resolved step's typed-input wiring (issue #813): the consumer step's own bindings plus the call-frame chain (each frame's callee, call step and frozen bindings) derived from the carried-forward `WORKFLOW_POSITION`. Emitted only when the run actually wires something. Empty/absent otherwise. |
-| `HISTORY_COMMENT_COUNT` | reusable workflow (`history_comment_count`) | Thread-context bound (ADR-0003, issues #844/#872). Unset or non-positive → the prompt's `## Recent thread` renders the **full relevant flow** classified from the thread ledger; a positive N caps it to the last N relevant records (pinned comments always added on top). The shipped reusable workflow defaults to `5`, so a CI run tail-caps the ledger unless the input is set to `0`. The loop guard's raw-history fallback still uses a positive default (5). |
+| `HISTORY_COMMENT_COUNT` | reusable workflow (`history_comment_count`) / `.nebuko/nebuko.yaml` | Thread-context bound (ADR-0003, issues #844/#872). Unset or non-positive → the prompt's `## Recent thread` renders the **full relevant flow** classified from the thread ledger; a positive N caps it to the last N relevant records (pinned comments always added on top). Precedence: workflow input > manifest `history_comment_count` > built-in default (5 for the loop guard's raw-history fallback). |
+| `AGENT_CONFIG_PATH` | reusable workflow (`agent_config_path`) / `.nebuko/nebuko.yaml` | Path to the layered agent config. Precedence: workflow input > manifest `agent_config` > `agent-config.yaml`. |
+| `CIRCUIT_BREAKER_THRESHOLD` | reusable workflow (`circuit_breaker_threshold`) / `.nebuko/nebuko.yaml` | Bot-marker count that trips the circuit breaker. Precedence: workflow input > manifest `circuit_breaker_threshold` > `15`. |
+| `PIN_COMMENT` | reusable workflow (`pin_comment`) / `.nebuko/nebuko.yaml` | Pin every agent step output comment. OR-ed: `true` from the input or the manifest's `pin_comment` wins. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |

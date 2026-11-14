@@ -2036,6 +2036,7 @@ def _script_step_entry(step: "WorkflowStep") -> dict:
             "args": step.script.to_process_env()["SCRIPT_ARGS"],
             "working_dir": step.script.working_dir or "",
             "env": step.script.to_process_env()["SCRIPT_ENV"],
+            "checkout": step.script.to_process_env()["SCRIPT_CHECKOUT"],
             "timeout_minutes": step.script.timeout_minutes,
         },
         "skip_reason": None,
@@ -2164,17 +2165,12 @@ def _default_workflow_name() -> str:
     bare run command never crashes resolution.
     """
     from nebuko.engine.lib.default_paths import user_dir
+    from nebuko.engine.paths import load_manifest
 
     try:
-        import yaml
-
-        manifest_path = user_dir() / "nebuko.yaml"
-        if manifest_path.is_file():
-            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-            if isinstance(raw, dict):
-                name = raw.get("default_workflow")
-                if isinstance(name, str) and name.strip():
-                    return name.strip()
+        name = load_manifest(user_dir() / "nebuko.yaml").default_workflow
+        if name and name.strip():
+            return name.strip()
     except Exception as e:  # noqa: BLE001 - routing must not crash on a bad manifest
         print(f"Warning: unreadable .nebuko/nebuko.yaml ({e}); using default", file=sys.stderr)
     return "default"

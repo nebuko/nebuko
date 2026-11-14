@@ -28,6 +28,7 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
 )
+from nebuko.engine.harness.engine_tools import FinalizeSink
 from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
 
@@ -54,6 +55,35 @@ def _make_conversation(status_after="finished"):
     convo.interrupt = MagicMock()
     convo.send_message = MagicMock()
     return convo
+
+
+class _FakeHarnessSession:
+    """Minimal ``HarnessSession``: records turns, can fail chosen turns."""
+
+    def __init__(self, *, sink=None, fail_on=()) -> None:
+        from nebuko.engine.harness.engine_tools import FinalizeSink
+
+        self.sink = sink if sink is not None else FinalizeSink()
+        self.messages: list[str] = []
+        self.runs: list[float | None] = []
+        self.on_run = None
+        self._fail_on = set(fail_on)
+
+    def send_message(self, text: str) -> None:
+        self.messages.append(text)
+
+    def run(self, timeout_s: float | None = None) -> None:
+        self.runs.append(timeout_s)
+        if len(self.runs) in self._fail_on:
+            raise TimeoutError("turn budget")
+        if self.on_run is not None:
+            self.on_run(len(self.runs))
+
+    def close(self) -> None:
+        pass
+
+    def on_event(self, callback) -> None:
+        pass
 
 
 class TestRunSupervised(unittest.TestCase):
@@ -228,6 +258,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertEqual(len(callbacks), 2)
         self.assertIs(callbacks[0], _discard_token)
         self.assertEqual(callbacks[1].__name__, "on_token")
+        # The same collector receives the SDK's retry attempts (#1352).
+        listener = mock_llm.call_args.kwargs["retry_listener"]
+        self.assertEqual(listener.__name__, "on_retry")
+        self.assertIs(listener.__self__, callbacks[1].__self__)
 
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
@@ -627,6 +661,113 @@ class TestMCPServerWiring(unittest.TestCase):
             mcp_config["brave-search"].env["BRAVE_API_KEY"].get_secret_value(),
             "secret-value",
         )
+
+
+class TestHarnessRunPath(unittest.TestCase):
+    """The non-OpenHands run path keeps the timeout and recall guarantees."""
+
+    def _run(self, session, capabilities=None):
+        from types import SimpleNamespace
+
+        from nebuko.engine.harness.claude_code import ClaudeCodeHarness
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _run_harness_agent,
+        )
+
+        harness = ClaudeCodeHarness()
+        conversation = SimpleNamespace(
+            harness_session=session, state=SimpleNamespace(events=[])
+        )
+        harness.build_conversation = lambda **kwargs: conversation
+        if capabilities is not None:
+            harness.capabilities = lambda: capabilities
+        with patch(
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget",
+            return_value=SimpleNamespace(
+                soft_timeout_s=60.0, wind_down_timeout_s=30.0
+            ),
+        ):
+            return _run_harness_agent(
+                harness,
+                role_name="dev",
+                agent_cfg=None,
+                prompt="do the thing",
+                cwd="/tmp/repo",
+            )
+
+    def test_soft_timeout_runs_a_wind_down_turn(self):
+        session = _FakeHarnessSession(fail_on={1})
+        conversation = self._run(session)
+
+        self.assertEqual(
+            conversation.run_outcome.status, OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        self.assertTrue(conversation.run_outcome.soft_timeout_fired)
+        self.assertTrue(conversation.run_outcome.wind_down_completed)
+        # The wind-down prompt is the second message; the remaining runs are
+        # the bounded recall passes (parity with the OpenHands path).
+        self.assertIn("WIND-DOWN", session.messages[1])
+        self.assertEqual(session.runs[1], 30.0)
+
+    def test_wind_down_failure_keeps_the_timeout_outcome(self):
+        session = _FakeHarnessSession(fail_on={1, 2})
+        conversation = self._run(session)
+
+        self.assertEqual(
+            conversation.run_outcome.status, OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        self.assertFalse(conversation.run_outcome.wind_down_completed)
+
+    def test_missing_sink_outcome_triggers_bounded_recall(self):
+        sink = FinalizeSink()
+        session = _FakeHarnessSession(sink=sink)
+
+        def _record(turn: int) -> None:
+            # The work turn records nothing; the recall turn supplies it.
+            if turn > 1:
+                sink.record(
+                    {"report": "r", "turn_outcome": {"appreciation": "approved"}}
+                )
+
+        session.on_run = _record
+        conversation = self._run(session)
+
+        self.assertEqual(conversation.run_outcome.dispatch_recall_count, 1)
+        self.assertEqual(conversation.run_outcome.dispatch_recall_event_offset, 0)
+
+    def test_recorded_outcome_skips_recall(self):
+        sink = FinalizeSink()
+        sink.record({"report": "r", "turn_outcome": {"appreciation": "approved"}})
+        conversation = self._run(_FakeHarnessSession(sink=sink))
+
+        self.assertEqual(conversation.run_outcome.dispatch_recall_count, 0)
+        self.assertIsNone(conversation.run_outcome.dispatch_recall_event_offset)
+
+    def test_watchdog_interrupts_rather_than_closing_the_session(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _interrupt_hook,
+        )
+
+        session = _FakeHarnessSession()
+        session.interrupt = MagicMock()
+        session.close = MagicMock()
+
+        _interrupt_hook(session)()
+
+        session.interrupt.assert_called_once_with()
+        session.close.assert_not_called()
+
+    def test_watchdog_falls_back_to_close_without_interrupt(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _interrupt_hook,
+        )
+
+        session = _FakeHarnessSession()
+        session.close = MagicMock()
+
+        _interrupt_hook(session)()
+
+        session.close.assert_called_once_with()
 
 
 class TestParseContextBodiesEnv(unittest.TestCase):

@@ -96,7 +96,7 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 
     Fields:
         limit: Per-issue override. ``None`` means "inherit the workflow
-            parameter" (``CIRCUIT_BREAKER_THRESHOLD``, effective default 25),
+            parameter" (``CIRCUIT_BREAKER_THRESHOLD``, effective default 15),
             so a state blob predating this feature never silently regresses a
             host running with a custom parameter.
     """
@@ -108,7 +108,7 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 
         Args:
             env_default: The workflow-parameter threshold (the untouched
-                ``CIRCUIT_BREAKER_THRESHOLD`` value, default 25).
+                ``CIRCUIT_BREAKER_THRESHOLD`` value, default 15).
 
         Returns:
             The override when set, otherwise ``env_default``.

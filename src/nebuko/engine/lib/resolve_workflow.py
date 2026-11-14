@@ -415,6 +415,7 @@ def _marker_to_resolution(marker: Optional[dict]) -> Optional[RouteResolution]:
                 "args": marker.get("script_args", "[]"),
                 "working_dir": marker.get("script_working_dir", ""),
                 "env": marker.get("script_env", "{}"),
+                "checkout": marker.get("script_checkout", "session"),
                 "timeout_minutes": marker.get("timeout_minutes"),
             },
         )
@@ -1334,6 +1335,8 @@ class SubWorkflowLeaf:
         script_args: JSON array of the script's argv (issue #974).
         script_working_dir: Repo-relative working directory (issue #974).
         script_env: JSON object of extra environment variables (issue #974).
+        script_checkout: Checkout the script runs on, ``session``/``workflow``
+            (issue #1327).
         script_timeout: Script timeout in minutes for a ``"script"`` leaf.
         complexity: Declared complexity tier of the leaf step ("" when unset).
     """
@@ -1351,6 +1354,7 @@ class SubWorkflowLeaf:
     script_args: str = "[]"  # @stub-protected
     script_working_dir: str = ""  # @stub-protected
     script_env: str = "{}"  # @stub-protected
+    script_checkout: str = "session"  # @stub-protected
     script_timeout: Optional[float] = None  # @stub-protected
     # Declared complexity tier of the leaf step (issue #787); "" when unset.
     complexity: str = ""  # @stub-protected
@@ -1544,6 +1548,7 @@ def _resolve_sub_workflow_leaf(
             script_args=leaf.script.to_process_env()["SCRIPT_ARGS"],
             script_working_dir=leaf.script.working_dir or "",
             script_env=leaf.script.to_process_env()["SCRIPT_ENV"],
+            script_checkout=leaf.script.to_process_env()["SCRIPT_CHECKOUT"],
             script_timeout=leaf.script.timeout_minutes,
             complexity=leaf.complexity or "",
         )
@@ -1685,6 +1690,7 @@ def _resolve_sub_workflow_entry(
             "SCRIPT_ARGS": leaf.script_args,
             "SCRIPT_WORKING_DIR": leaf.script_working_dir,
             "SCRIPT_ENV": leaf.script_env,
+            "SCRIPT_CHECKOUT": leaf.script_checkout,
             "SCRIPT_TIMEOUT_MINUTES": str(leaf.script_timeout or ""),
             "WORKFLOW_NAME": leaf.workflow,
             "WORKFLOW_STEP": leaf.step,
@@ -2630,6 +2636,7 @@ def _marker_for_target_step(
             "script_args": target_step.script.to_process_env()["SCRIPT_ARGS"],
             "script_working_dir": target_step.script.working_dir or "",
             "script_env": target_step.script.to_process_env()["SCRIPT_ENV"],
+            "script_checkout": target_step.script.to_process_env()["SCRIPT_CHECKOUT"],
             "timeout_minutes": target_step.script.timeout_minutes,
             "step": target_step.name,
         }
