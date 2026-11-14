@@ -1,1 +1,0 @@
-"""Configuration sub-domains package."""

@@ -1,1 +1,0 @@
-"""Result building feature."""

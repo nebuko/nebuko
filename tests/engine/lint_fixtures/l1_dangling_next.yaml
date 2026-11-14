@@ -1,9 +1,0 @@
-name: l1-dangling-next
-description: "L1: 'analyze' points at a step that does not exist"
-steps:
-  - name: analyze
-    agent: architect
-    next: ghost
-  - name: review
-    agent: review
-    next: null

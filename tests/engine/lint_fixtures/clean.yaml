@@ -1,9 +1,0 @@
-name: clean
-description: "A minimal, fully valid two-step workflow"
-steps:
-  - name: analyze
-    agent: architect
-    next: review
-  - name: review
-    agent: review
-    next: null

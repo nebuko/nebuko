@@ -11,16 +11,12 @@ import asyncio
 import dataclasses
 import json
 import os
-<<<<<<< a92b07ec3fd2e3ac58b41ccfe28a5d2560320742
+import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from nebuko.engine.lib.workflow_state import WorkflowState
-=======
-import uuid
-from types import SimpleNamespace
-from typing import Any, Sequence
->>>>>>> e841da85dd92b60a0fd6281dbff5e1ef7c51a39c
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
@@ -637,6 +633,7 @@ def run_agent(
         )
         and not gate_released
     )
+
     resolved = resolve_toolset(
         agent_tools,
         role_name,
