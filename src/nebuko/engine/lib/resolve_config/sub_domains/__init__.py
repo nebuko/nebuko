@@ -1,0 +1,1 @@
+"""Resolve config sub-domains package."""

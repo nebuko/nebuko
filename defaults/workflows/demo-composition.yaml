@@ -1,0 +1,13 @@
+name: demo-composition
+description: "Demonstrates sub-workflow composition"
+steps:
+  - name: analyze
+    agent: architect
+    next: subtask
+
+  - name: subtask
+    workflow: review-only
+    next: finalize
+
+  - name: finalize
+    agent: architect

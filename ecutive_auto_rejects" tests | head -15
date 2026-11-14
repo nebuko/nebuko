@@ -1,0 +1,239 @@
+[1mdiff --git a/docs/workflows.md b/docs/workflows.md[m
+[1mindex 7887b8d..05ac38e 100644[m
+[1m--- a/docs/workflows.md[m
+[1m+++ b/docs/workflows.md[m
+[36m@@ -218,7 +218,7 @@[m [mMechanics:[m
+         next: context[m
+ ```[m
+ [m
+[31m-(This is the shape `defaults/workflows/default.yaml` ships: a rejected plan[m
+[32m+[m[32m(This is the shape shipped by [`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml): a rejected plan[m
+ sends the run back to `context` for fresh facts.)[m
+ [m
+ **How it works — verdict routing.** When a gated step's agent ends its turn[m
+[36m@@ -234,9 +234,19 @@[m [mNotes:[m
+ [m
+ - The consult budget (`call_agent` rounds while armed) does not apply to the[m
+   rejected route; it stays bound to the hold path.[m
+[32m+[m[32m- The reject route is still bounded: after `MAX_CONSECUTIVE_AUTO_REJECTS = 3`[m
+[32m+[m[32m  consecutive auto-routed rejects on the same gated step (constant in[m
+[32m+[m[32m  `src/nebuko/lib/resolve_config/features/resolve_route/resolve_route.py`),[m
+[32m+[m[32m  the run falls back to the human hold with the reason in the hold note. The[m
+[32m+[m[32m  counter resets on any human gate decision or on an `approved` verdict for[m
+[32m+[m[32m  the gated step.[m
+ - Human gate **command** semantics are untouched: a rejected-with-feedback[m
+   command still re-runs the gated step with the feedback injected.[m
+ [m
+[32m+[m[32mThe example above mirrors the shape shipped in[m
+[32m+[m[32m[`defaults/workflows/default.yaml`](../defaults/workflows/default.yaml)[m
+[32m+[m[32m(the `plan` step).[m
+[32m+[m
+ 4. Decisions are **single-shot**: a `GateDecision` binds to exactly one[m
+    `(workflow, step, position)` hold instance and is consumed on routing, so[m
+    replaying an old command is a no-op.[m
+[1mdiff --git a/src/nebuko/engine/lib/agent_script/features/build_output/build_output.py b/src/nebuko/engine/lib/agent_script/features/build_output/build_output.py[m
+[1mindex cd83bde..d61ac4f 100644[m
+[1m--- a/src/nebuko/engine/lib/agent_script/features/build_output/build_output.py[m
+[1m+++ b/src/nebuko/engine/lib/agent_script/features/build_output/build_output.py[m
+[36m@@ -330,6 +330,11 @@[m [mdef resolve_post_decision_gate(  # @stub-protected: signature defined by archite[m
+       and the re-run's completion raises a new one.[m
+     - gate_released and gate is not None -> gate.model_copy(update={"status": GateStatus.RELEASED}).[m
+     - otherwise -> gate unchanged.[m
+[32m+[m
+[32m+[m[32m    When no gate command rode along but ``gate_released`` is set (the auto[m
+[32m+[m[32m    reject-verdict route of issue #1274), the armed lock is consumed on the[m
+[32m+[m[32m    routed edge so the dispatched run is not re-parked; the gate re-arms[m
+[32m+[m[32m    naturally when the gated step completes again (``apply_gate_lock``).[m
+     """[m
+     if decision is not None:[m
+         if ([m
+[36m@@ -340,6 +345,9 @@[m [mdef resolve_post_decision_gate(  # @stub-protected: signature defined by archite[m
+             return GateLock(step=workflow_step)[m
+         if gate_released and gate is not None:[m
+             return gate.model_copy(update={"status": GateStatus.RELEASED})[m
+[32m+[m[32m        return gate[m
+[32m+[m[32m    if gate_released and gate is not None:[m
+[32m+[m[32m        return gate.model_copy(update={"status": GateStatus.RELEASED})[m
+     return gate[m
+ [m
+ [m
+[1mdiff --git a/src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py b/src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py[m
+[1mindex 7d8cd43..56ec0f1 100644[m
+[1m--- a/src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py[m
+[1m+++ b/src/nebuko/engine/lib/resolve_config/features/resolve_route/resolve_route.py[m
+[36m@@ -37,6 +37,7 @@[m [mfrom nebuko.engine.lib.workflow_state import ([m
+     FunctionCall,[m
+     GateDecision,[m
+     GateLock,[m
+[32m+[m[32m    GateStatus,[m
+     HoldKind,[m
+     IncompleteReason,[m
+     MAX_CONSULT_ROUNDS,[m
+[36m@@ -79,9 +80,53 @@[m [m__all__ = [[m
+ # Regex for safe workflow names: alphanumeric, hyphens, underscores only[m
+ _SAFE_WF_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")[m
+ [m
+[31m-# Maximum consecutive same-agent loops before blocking (loop safeguard)[m
+[32m+[m[32m# Maximum consecutive same-agent loops before blocking (loop safeguard).[m
+ MAX_LOOP_COUNT = 5[m
+ [m
+[32m+[m[32m# Maximum consecutive agent-declared ``rejected`` verdicts a gated step may[m
+[32m+[m[32m# route automatically (issue #1274). Exceeding the cap falls back to the human[m
+[32m+[m[32m# hold so a backward reject cycle cannot spin at full LLM cost without a human[m
+[32m+[m[32m# ping. The counter is derived from the persisted history (see[m
+[32m+[m[32m# ``_consecutive_auto_rejects``) so a crash mid-route cannot reset it.[m
+[32m+[m[32mMAX_CONSECUTIVE_AUTO_REJECTS = 3[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _consecutive_auto_rejects(state, step_name):[m
+[32m+[m[32m    """Consecutive auto-reject routes for ``step_name`` (issue #1274).[m
+[32m+[m
+[32m+[m[32m    Counted from the persisted history:[m
+[32m+[m
+[32m+[m[32m    - each completed run of ``step_name`` ending ``rejected`` counts;[m
+[32m+[m[32m    - an ``approved`` verdict on the same step resets the count;[m
+[32m+[m[32m    - a human gate decision on the step also resets it: GitHub comment ids are[m
+[32m+[m[32m      monotonic, so history entries older than the latest recorded decision[m
+[32m+[m[32m      (from an identity-verified human command) stop the backward scan.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    if state is None or not step_name:[m
+[32m+[m[32m        return 0[m
+[32m+[m[32m    decision_ids = [[m
+[32m+[m[32m        d.comment_id[m
+[32m+[m[32m        for d in (state.gate_history or [])[m
+[32m+[m[32m        if d.target_step == step_name and d.comment_id[m
+[32m+[m[32m    ][m
+[32m+[m[32m    latest_decision_id = max(decision_ids) if decision_ids else None[m
+[32m+[m[32m    count = 0[m
+[32m+[m[32m    for entry in reversed(state.history or []):[m
+[32m+[m[32m        if entry.step != step_name:[m
+[32m+[m[32m            continue[m
+[32m+[m[32m        if ([m
+[32m+[m[32m            latest_decision_id is not None[m
+[32m+[m[32m            and entry.comment_ids[m
+[32m+[m[32m            and max(entry.comment_ids) < latest_decision_id[m
+[32m+[m[32m        ):[m
+[32m+[m[32m            break[m
+[32m+[m[32m        appreciation = getattr(entry.turn_outcome, "appreciation", None)[m
+[32m+[m[32m        if appreciation == Appreciation.REJECTED:[m
+[32m+[m[32m            count += 1[m
+[32m+[m[32m        elif appreciation == Appreciation.APPROVED:[m
+[32m+[m[32m            break[m
+[32m+[m[32m    return count[m
+[32m+[m
+ [m
+ def resolve_next_agent_from_workflow([m
+     task_hint: Optional[str],[m
+[36m@@ -379,7 +424,6 @@[m [mdef _human_gate_hold_result(step: str, note: str = "") -> dict:[m
+     }[m
+ [m
+ [m
+[31m-# @stub-protected: signature defined by architect — do not modify[m
+ def _gate_step_has_rejected_edge([m
+     step_name: str,[m
+     wf_name: str,[m
+[36m@@ -387,13 +431,48 @@[m [mdef _gate_step_has_rejected_edge([m
+     local_workflows_dir: Optional[str],[m
+ ) -> bool:[m
+     """True when the workflow declares an ``on_result: rejected`` edge."""[m
+[31m-    raise NotImplementedError[m
+[32m+[m[32m    if not wf_name or not step_name:[m
+[32m+[m[32m        return False[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        wf_def = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)[m
+[32m+[m[32m    except Exception:[m
+[32m+[m[32m        return False[m
+[32m+[m[32m    step = _find_step(wf_def, step_name)[m
+[32m+[m[32m    if step is None:[m
+[32m+[m[32m        return False[m
+[32m+[m[32m    for condition in getattr(step, "conditions", None) or []:[m
+[32m+[m[32m        if getattr(condition, "on_result", "") == "rejected":[m
+[32m+[m[32m            return True[m
+[32m+[m[32m    return False[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _reject_edge_target([m
+[32m+[m[32m    step_name: str,[m
+[32m+[m[32m    wf_name: str,[m
+[32m+[m[32m    workflows_dir: str,[m
+[32m+[m[32m    local_workflows_dir: Optional[str],[m
+[32m+[m[32m) -> Optional[str]:[m
+[32m+[m[32m    """Target step of the declared ``on_result: rejected`` edge, or None."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        wf_def = _load_workflow_by_reference(wf_name, workflows_dir, local_workflows_dir)[m
+[32m+[m[32m    except Exception:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    step = _find_step(wf_def, step_name)[m
+[32m+[m[32m    if step is None:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    for condition in getattr(step, "conditions", None) or []:[m
+[32m+[m[32m        if getattr(condition, "on_result", "") == "rejected":[m
+[32m+[m[32m            return condition.next[m
+[32m+[m[32m    return None[m
+ [m
+ [m
+[31m-# @stub-protected: signature defined by architect — do not modify[m
+ def _release_armed_gate(prev_state: "WorkflowState", armed: "GateLock") -> None:[m
+     """Consume the armed gate lock and persist the released state."""[m
+[31m-    raise NotImplementedError[m
+[32m+[m[32m    # Mutate in place: the state is the persisted document, so the release[m
+[32m+[m[32m    # must survive it (the state model is not frozen). The caller serializes[m
+[32m+[m[32m    # this state, which persists the released lock.[m
+[32m+[m[32m    prev_state.gate = armed.model_copy(update={"status": GateStatus.RELEASED})[m
+[32m+[m
+ [m
+ [m
+ # @stub-protected: signature defined by architect — do not modify[m
+[36m@@ -405,7 +484,51 @@[m [mdef _gate_reject_verdict_route([m
+     local_workflows_dir: Optional[str],[m
+ ) -> Optional[dict]:[m
+     """Route a rejected verdict via the conditional reject edge, lock released."""[m
+[31m-    raise NotImplementedError[m
+[32m+[m[32m    if outcome is None or outcome.appreciation is not Appreciation.REJECTED:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    wf_name = prev_state.workflow or ""[m
+[32m+[m[32m    step_name = prev_state.step or ""[m
+[32m+[m[32m    if not wf_name or not step_name:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    if armed.step and armed.step != step_name:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    if not _gate_step_has_rejected_edge(step_name, wf_name, workflows_dir, local_workflows_dir):[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    if _consecutive_auto_rejects(prev_state, step_name) >= MAX_CONSECUTIVE_AUTO_REJECTS:[m
+[32m+[m[32m        print([m
+[32m+[m[32m            f"Auto-reject cap reached ({MAX_CONSECUTIVE_AUTO_REJECTS} consecutive); "[m
+[32m+[m[32m            f"holding gated step '{step_name}' for a human decision",[m
+[32m+[m[32m            file=sys.stderr,[m
+[32m+[m[32m        )[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    target = _reject_edge_target(step_name, wf_name, workflows_dir, local_workflows_dir)[m
+[32m+[m[32m    if not target:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    wf_result = resolve_next_from_workflow([m
+[32m+[m[32m        wf_name,[m
+[32m+[m[32m        step_name,[m
+[32m+[m[32m        workflows_dir,[m
+[32m+[m[32m        branch_result="rejected",[m
+[32m+[m[32m        parent_workflow=prev_state.parent_workflow or "",[m
+[32m+[m[32m        parent_workflow_step=prev_state.parent_workflow_step or "",[m
+[32m+[m[32m        local_workflows_dir=local_workflows_dir,[m
+[32m+[m[32m        scaffold_branch=prev_state.scaffold_branch,[m
+[32m+[m[32m        history=prev_state.history,[m
+[32m+[m[32m    )[m
+[32m+[m[32m    if wf_result is None or wf_result.kind in ([m
+[32m+[m[32m        RouteKind.DECLARED_FINISH,[m
+[32m+[m[32m        RouteKind.UNRESOLVED,[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    if wf_result.skip_agent:[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    config = _gate_base_config(prev_state)[m
+[32m+[m[32m    _apply_route_resolution(config, wf_result, prev_state)[m
+[32m+[m[32m    if not config.get("task") and not config.get("run_script"):[m
+[32m+[m[32m        return None[m
+[32m+[m[32m    if armed.step and armed.step == step_name:[m
+[32m+[m[32m        config["config_gate_released"] = "true"[m
+[32m+[m[32m    return config[m
+ [m
+ [m
+ def _armed_gate(prev_state: Optional["WorkflowState"]) -> Optional[GateLock]:[m

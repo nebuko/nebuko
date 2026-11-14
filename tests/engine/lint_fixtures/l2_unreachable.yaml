@@ -1,0 +1,12 @@
+name: l2-unreachable
+description: "L2: 'orphan' is never routed to from the entry step"
+steps:
+  - name: analyze
+    agent: architect
+    next: review
+  - name: review
+    agent: review
+    next: null
+  - name: orphan
+    agent: dev
+    next: null

@@ -1,0 +1,97 @@
+name: plan-dev-review-cmd
+description: "Standard development workflow: analyze → context → plan → implement → review"
+
+steps:
+  - name: analyze
+    agent: architect
+    complexity: low
+    prompt: |
+      Analysis turn: a human issue or request just arrived.
+      - Decide what context @@context must collect (files, docs, facts).
+      - Estimate complexity: `high` for architectural changes or many subsystems, `low` for a narrow change, otherwise omit it (@@context defaults to medium).
+      - Delegate to @@context in the SAME turn, and end with the typed hand-off:
+        finalize(
+          report="…this step's report…",
+          turn_outcome={
+            "appreciation": "approved",
+            "complexity": "low",            # optional: omit to inherit the step's
+            "agent_call": {"agent_name": "context", "task": "…exact files/facts to collect…"},
+          },
+        )
+        Without turn_outcome.agent_call the hand-off is lost: the engine routes typed calls only.
+      - Do not plan yet. The engine's closing turn asks only for this step's report (the context request): the delegate has not run yet, so there is nothing to plan from.
+      - A rejected tool call is a call-shape error, not the delegate's answer — fix the call and retry it.
+    # The full Planning skill is injected on the role prompt's agent config; on
+    # this analysis step it is demoted to a catalog entry so the plan template
+    # cannot be mistaken for this step's artifact (issue #1054).
+    skill:
+      - discover: ["planning"]
+    next: context
+
+  - name: context
+    agent: context
+    inputs: [analyze]
+    next: plan
+
+  - name: plan
+    agent: architect
+    prompt: |
+      Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn. Never `hold` on this gated step.
+    inputs: [context]
+    next: implement
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: implement
+      - on_result: rejected
+        next: context
+
+  - name: implement
+    agent: dev
+    inputs: [plan]
+    next: git_diff
+
+  # The engine checks the session branch out for script steps (issue #1327,
+  # `checkout: session` by default) with enough base history for a three-dot
+  # diff, so the fetch this step used to do is gone.
+  - name: git_diff
+    script:
+      command: "sh"
+      args:
+        - "-c"
+        - >-
+          git --no-pager diff --stat origin/main...HEAD &&
+          git --no-pager diff origin/main...HEAD
+    next: run_tests
+
+  - name: run_tests
+    script:
+      command: "uv"
+      args: ["run", "pytest", "-q", "--tb=no", "-rf"]
+    next: review
+
+  - name: review
+    agent: review
+    inputs: [plan, implement, git_diff, run_tests]
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: implement
+
+  # Session handoff cleanup (issue #965). Must run AFTER the reviewer agent: a
+  # send-back to dev still needs the document. Only the approved path passes
+  # here, and the deletion is a plain commit, so the handoff stays recoverable
+  # from the branch history.
+  # - name: handoff_cleanup
+  #   script:
+  #     command: "bash"
+  #     args: ["scripts/handoff_cleanup.sh"]
+  #   next: handoff_gate_check
+
+  # # The gate check fails the workflow if the handoff is somehow still present.
+  # - name: handoff_gate_check
+  #   script:
+  #     command: "bash"
+  #     args: ["scripts/handoff_check.sh"]
+  #   next: null

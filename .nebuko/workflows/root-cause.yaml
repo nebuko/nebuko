@@ -1,0 +1,209 @@
+# Root-Cause Workflow (issue #1348)
+#
+# For "find why X differs from Y" issues: identify the root cause and leave an
+# executable ORACLE (a repro script judged per delta by the engine) instead of
+# a plan, tests and a PR. The oracle is run by the engine, never reported by an
+# agent, and is meant to be reused after a fix: present before, absent after.
+#
+# investigate -> oracle_present -> confirm (human gate) -> seal -> handoff
+#                      ^               |
+#                      +--- rejected --+
+#
+# Evidence lives in .nebuko/evidence/issue-<n>/v<k>/ (see
+# docs/root-cause-workflow.md). Revisions are append-only: a rejected diagnosis
+# is followed by v<k+1>, never by an edit of v<k>.
+
+name: root-cause
+description: "Find the root cause of a discrepancy and leave an engine-run, per-delta reproducible oracle; then hand off a fix proposal"
+
+steps:
+  - name: investigate
+    agent: dev
+    prompt_replace: true
+    prompt: |
+      You are in INVESTIGATION mode. Find the root cause of the discrepancy in
+      the issue and leave behind an executable oracle that proves it. You do
+      NOT fix anything: do not edit, add or delete any file outside
+      `.nebuko/evidence/issue-<n>/`, and do not open a PR.
+
+      Method, in order:
+      1. LIST THE DELTAS. Every difference the issue reports is one delta
+         (counts, versions, timings, SHAs, ...). Name each with a short id.
+      2. MEASURE, CHEAPEST FIRST. Compare identifiers before running anything
+         heavy: tested SHAs, tool versions, collected test IDs, config. Then
+         targeted runs (the specific failing IDs). A full suite is the last
+         resort; run each long job at most once and launch independent ones in
+         one batch. Read only what a measurement needs.
+      3. STOP RULE. Once ONE measured reproduction matches the reported
+         numbers, stop investigating. Keep going only for a delta that still
+         has no explanation.
+      4. COUNTERFACTUAL. Change only the suspected cause and show the symptom
+         disappears (e.g. test the merged tree instead of the branch head).
+         A cause that merely coincides with the symptom is not a root cause.
+         If you cannot run the counterfactual, say so under `not_explained`.
+      5. LEAVE THE ORACLE in `.nebuko/evidence/issue-<n>/v<k>/` (k = 1, or
+         one more than the highest existing version; NEVER edit an earlier
+         version):
+         - `repro.sh`      POSIX sh. Reads only files in its own directory or
+                           pinned git objects (SHAs), never "latest" or live
+                           network state. Prints ONE JSON object on its last
+                           stdout line: `{"<delta id>": <observed value>}`.
+         - `expected.json` `{"deltas": {"<id>": {"symptom": V, "healthy": W}}}`
+                           `healthy` is optional (default: any value other
+                           than `symptom`). Use it only when the healthy value
+                           is stable, never for a number that drifts with main.
+         - frozen inputs   log excerpts, command output, SHAs that `repro.sh`
+                           reads. Fetch remote data ONCE, save it here, and
+                           have `repro.sh` read the saved copy. Never save
+                           credentials or full environment dumps.
+         Then run it yourself, it must print `EVIDENCE_VERDICT=present`:
+           python3 .nebuko/scripts/evidence.py run .nebuko/evidence/issue-<n>/v<k>
+         Then write the manifest, commit and push:
+           python3 .nebuko/scripts/evidence.py manifest .nebuko/evidence/issue-<n>/v<k>
+      6. REPORT with the output fields. Every claim carries its evidence type
+         (`measured` with the command and output, `read` with path:line, or
+         `inferred`); only `measured` supports "this is the cause".
+
+      If the issue cannot be reproduced (intermittent, design question), do
+      not fake an oracle: finalize with appreciation 'hold' and say why, so a
+      human decides.
+    next: oracle_present
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One line - the root cause, or "no root cause found".
+        - name: root_cause
+          description: The cause, in two or three sentences, with the evidence type of each claim.
+        - name: deltas
+          type: table
+          columns: [delta, reported, explained_by, status]
+          description: One row per reported difference. `status` is explained / unexplained.
+        - name: counterfactual
+          description: What was changed to remove the symptom, the command, and the output.
+        - name: ruled_out
+          type: table
+          collapsed: true
+          required: false
+          columns: [hypothesis, how_ruled_out, evidence_type]
+          description: Hypotheses that were tested and rejected.
+        - name: evidence_dir
+          description: Path of the v<k> directory and the one command that re-runs the oracle.
+        - name: not_explained
+          required: false
+          description: Deltas or aspects with no explanation yet, and what would explain them.
+
+  # Engine-run, not agent-reported: the oracle must show the symptom.
+  - name: oracle_present
+    script:
+      command: "sh"
+      args:
+        - "-c"
+        - >-
+          python3 .nebuko/scripts/evidence.py verify --issue auto &&
+          python3 .nebuko/scripts/evidence.py run --issue auto --expect present
+      timeout_minutes: 20
+    # A failing oracle is evidence for the confirmer, not a stop.
+    conditions:
+      - on_result: default
+        next: confirm
+
+  - name: confirm
+    agent: review
+    inputs: [investigate, oracle_present]
+    prompt_replace: true
+    prompt: |
+      You CONFIRM a root-cause diagnosis. You did not write it and you have not
+      seen the investigator's reasoning, only the report and the engine-run
+      `oracle_present`. Your job is to find out whether the evidence supports
+      the claimed cause, not to agree.
+
+      `oracle_present` was run by the engine on the pushed branch: trust it
+      over the report. If it did not end with `EVIDENCE_VERDICT=present`, or
+      the manifest did not verify, reject.
+
+      Check, in order:
+      1. ORACLE QUALITY. Read `repro.sh` and `expected.json` in full. Reject a
+         repro that hard-codes its output, ignores what it measures, reads
+         "latest"/live state instead of pinned SHAs or frozen files, or whose
+         `healthy` values are numbers that drift with main.
+      2. DELTA COVERAGE. Every difference in the issue must be a delta in
+         `expected.json` and either explained or listed under `not_explained`.
+         An omitted delta is a finding.
+      3. CAUSALITY. The counterfactual must change only the suspected cause.
+         Re-run it yourself, or run one other discriminating check the
+         investigator did not (a different pair of SHAs, a targeted ID).
+         Report the command and its output under `checks_run`.
+      4. SECRETS. The evidence directory must hold no token, key or
+         environment dump.
+      5. EXHAUSTIVENESS. Is there a simpler explanation the report does not
+         rule out?
+
+      Do not edit the evidence. Approve only if the oracle shows the symptom,
+      covers every delta, and the counterfactual holds; otherwise reject with
+      the exact defects (the next round writes a new v<k+1>).
+    human_gate: true
+    conditions:
+      - on_result: approved
+        next: seal
+      - on_result: rejected
+        next: investigate
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line verdict, e.g. "approved - cause reproduced, 3/3 deltas" or "rejected - repro reads latest main".
+        - name: oracle_review
+          description: Result of each check (quality, coverage, causality, secrets, alternatives).
+        - name: blocking
+          required: false
+          description: Defects that forced a rejection, each with location and the decision required.
+        - name: checks_run
+          collapsed: true
+          description: Commands you ran yourself and their key output.
+
+  # After the human released the gate. The engine posts this output; the
+  # tree id is what a later step compares the evidence directory against.
+  - name: seal
+    script:
+      command: "sh"
+      args:
+        - "-c"
+        - >-
+          python3 .nebuko/scripts/evidence.py verify --issue auto
+    conditions:
+      - on_result: default
+        next: handoff
+
+  - name: handoff
+    agent: architect
+    complexity: low
+    inputs: [investigate, confirm, seal]
+    prompt: |
+      Hand-off turn: the root cause is confirmed and sealed. Do not
+      re-investigate. Turn it into a fix proposal for a build workflow.
+
+      1. State the fix direction in terms of the root cause, and which delta
+         each part of the fix is expected to remove.
+      2. Write the oracle expectation: after the fix the engine runs
+         `python3 .nebuko/scripts/evidence.py run --issue auto --expect absent`
+         and every delta must read `healthy`. If you expect only some deltas
+         to move, say which; `partial` is then the honest outcome, not a failure.
+      3. Name the next workflow (`spec-tdd` for a design change,
+         `dev-review-loop` for a small fix) and write the exact command and
+         the issue text to start it with.
+      4. Note the evidence directory is sealed (`seal` tree id) and must not
+         be edited by the fix; a wrong diagnosis becomes v<k+1>.
+      End with finalize(turn_outcome={appreciation:'approved'}).
+    next: null
+    output:
+      fields:
+        - name: headline
+          title: true
+          description: One-line summary of the fix proposal.
+        - name: fix_direction
+          description: The proposed fix and which delta each part removes.
+        - name: oracle_expectation
+          description: Expected per-delta result after the fix (absent / partial) and the exact command.
+        - name: next_workflow
+          description: Workflow to run next, the command, and the issue text to start it with.

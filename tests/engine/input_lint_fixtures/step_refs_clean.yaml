@@ -1,0 +1,15 @@
+name: step-ref-clean
+description: "Step-name refs and a prompt ref all resolve"
+steps:
+  - name: plan
+    agent: architect
+    next: implement
+  - name: implement
+    agent: dev
+    inputs: [plan]
+    next: review
+  - name: review
+    agent: review
+    inputs: [plan, implement]
+    prompt: "Plan: {{ plan }}"
+    next: null

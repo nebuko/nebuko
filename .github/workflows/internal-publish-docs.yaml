@@ -1,0 +1,78 @@
+name: internal-publish-docs
+
+# Packages `docs/` + `logo/final/` so the website can pin a revision instead of
+# cloning this repo. Artifacts are bounded (30 days); release assets are durable.
+# `sync-docs` on the website downloads the artifact named `docs-<full-sha>`.
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.names.outputs.artifact-name }}
+      tarball: ${{ steps.names.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Name the artifact and tarball
+        id: names
+        run: |
+          sha="${GITHUB_SHA}"
+          echo "tarball=docs-${sha:0:7}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "artifact-name=docs-${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify docs/ and logo/final/ are not empty
+        run: |
+          if [ ! -d docs ] \
+            || [ -z "$(find docs -type f ! -name .gitkeep -print -quit)" ]; then
+            echo "::error::docs/ is missing or has no documentation files"
+            exit 1
+          fi
+          if [ ! -d logo/final ] \
+            || [ -z "$(find logo/final -type f ! -name .gitkeep -print -quit)" ]; then
+            echo "::error::logo/final/ is missing or has no files"
+            exit 1
+          fi
+
+      - name: Build the tarball
+        env:
+          TARBALL: ${{ steps.names.outputs.tarball }}
+        run: |
+          mtime="$(git log -1 --format=%ct)"
+          tar -czf "$TARBALL" --sort=name --owner=0 --group=0 \
+            --numeric-owner --mtime="@$mtime" docs logo/final
+          # awk keeps the listing short without breaking the pipe under pipefail.
+          tar -tzf "$TARBALL" | awk -F/ 'NF <= 2' | head -20
+
+      # `archive: false` would upload a bare file, which ignores `name`; keep it.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.names.outputs.artifact-name }}
+          path: ${{ steps.names.outputs.tarball }}
+          retention-days: 30
+          if-no-files-found: error
+
+  release-asset:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: dist
+
+      - name: Attach the tarball to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: gh release upload "$GITHUB_REF_NAME" "dist/$TARBALL" --clobber

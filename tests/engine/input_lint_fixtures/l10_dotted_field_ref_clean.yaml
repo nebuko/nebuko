@@ -1,0 +1,17 @@
+name: dotted-field-ref-clean
+description: "A dotted ref names a field the upstream step declares in output:"
+steps:
+  - name: plan
+    agent: architect
+    next: implement
+    output:
+      fields:
+        - name: headline
+          title: true
+        - name: decision
+  - name: implement
+    agent: dev
+    inputs:
+      summary: plan.headline
+    prompt: "Decision: {{ plan.decision }}"
+    next: null

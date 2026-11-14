@@ -1,0 +1,27 @@
+providers:
+  p1:
+    api_url: "http://example.test/v1"
+    api_token_env: "P1_TOKEN"
+llms:
+  l1:
+    model_path: "hosted_vllm/l1"
+    provider: "${providers.p1}"
+mcp_servers:
+  brave-search:
+    name: "wrong-name"
+    command: ""
+    args: "not-a-list"
+    env:
+      BRAVE_API_KEY: "sk-literal-secret"
+  malformed: "not-a-mapping"
+agents:
+  a:
+    model: "${llms.l1}"
+    role: "Test agent role."
+    prompt_file: ".agents/prompts/a.md"
+    skills: ["skill-a"]
+    tools: ["think", "finish"]
+    mcp_servers:
+      - "${mcp_servers.brave-search}"
+      - "${mcp_servers.malformed}"
+      - "${mcp_servers.dangling}"

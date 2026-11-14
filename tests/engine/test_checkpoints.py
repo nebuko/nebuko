@@ -1,0 +1,220 @@
+"""Tests for the checkpoint schedule (issue #966).
+
+Covers the acceptance criteria: schedule computation (50/75/100% fractions,
+``ValueError`` on a non-positive budget), skip-when-finished, and the
+delivery method (queued ``send_message`` — verified against a stub
+conversation whose ``arun()`` is in flight while checkpoints fire).
+"""
+
+import re
+import threading
+import time
+import unittest
+
+from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
+    CHECKPOINT_50_PROMPT,
+    CHECKPOINT_50_PROMPT_NO_HANDOFF,
+    CHECKPOINT_75_PROMPT,
+    CHECKPOINT_75_PROMPT_NO_HANDOFF,
+    CHECKPOINT_100_PROMPT,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
+    CHECKPOINT_FRACTIONS,
+    CheckpointEvent,
+    CheckpointScheduler,
+    compute_checkpoints,
+    count_plan_changes,
+)
+
+# Representative role tool lists (issue #1350): ``dev`` carries ``handoff``,
+# ``context`` does not. ``finalize`` is auto-appended to every role in
+# ``run_agent``, so both sets include it.
+ROLE_TOOLS: dict[str, frozenset[str]] = {
+    "dev": frozenset(
+        {
+            "terminal", "terminal_batch", "read", "edit", "write",
+            "task_tracker", "think", "finish", "finalize",
+            "report_scaffold_branch", "complexity_review", "handoff",
+        }
+    ),
+    "context": frozenset(
+        {
+            "terminal", "terminal_batch", "read", "edit", "write",
+            "task_tracker", "think", "finish", "finalize",
+            "complexity_review",
+        }
+    ),
+}
+
+# Every tool name a prompt could name; prompts are scanned for these.
+TOOL_NAMES = ROLE_TOOLS["dev"]
+
+NO_HANDOFF_PROMPTS = (
+    CHECKPOINT_50_PROMPT_NO_HANDOFF,
+    CHECKPOINT_75_PROMPT_NO_HANDOFF,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
+)
+
+
+class TestComputeCheckpoints(unittest.TestCase):
+    def test_fractions_of_default_budget(self):
+        events = compute_checkpoints(20 * 60)
+        self.assertEqual([e.offset_s for e in events], [600.0, 900.0, 1200.0])
+
+    def test_labels_follow_fractions(self):
+        events = compute_checkpoints(100.0)
+        self.assertEqual(
+            [e.label for e in events],
+            [label for label, _ in CHECKPOINT_FRACTIONS],
+        )
+        for event in events:
+            self.assertIsInstance(event, CheckpointEvent)
+            self.assertTrue(event.prompt.strip())
+
+    def test_scales_with_budget(self):
+        for events in (compute_checkpoints(40.0), compute_checkpoints(40.0)):
+            self.assertEqual(
+                [e.offset_s for e in events], [20.0, 30.0, 40.0]
+            )
+
+    def test_non_positive_budget_raises(self):
+        for bad in (0, -1, -0.5):
+            with self.assertRaises(ValueError):
+                compute_checkpoints(bad)
+
+    def test_has_handoff_defaults_to_the_handoff_prompts(self):
+        self.assertEqual(
+            [e.prompt for e in compute_checkpoints(100.0)],
+            [
+                CHECKPOINT_50_PROMPT,
+                CHECKPOINT_75_PROMPT,
+                CHECKPOINT_100_PROMPT,
+            ],
+        )
+
+    def test_without_handoff_uses_the_finalize_only_prompts(self):
+        self.assertEqual(
+            [e.prompt for e in compute_checkpoints(100.0, has_handoff=False)],
+            list(NO_HANDOFF_PROMPTS),
+        )
+
+
+class TestPromptToolConsistency(unittest.TestCase):
+    """No checkpoint prompt may reference a tool its role does not have.
+
+    Issue #1350: the 50/75% prompts told ``context`` to call the handoff
+    tool, which it does not carry, so both checkpoints were noise.
+    """
+
+    def _referenced_tools(self, prompt: str) -> set[str]:
+        return {
+            name
+            for name in TOOL_NAMES
+            if re.search(rf"\b{re.escape(name)}\b", prompt)
+        }
+
+    def test_every_prompt_only_names_role_available_tools(self):
+        for role, tools in ROLE_TOOLS.items():
+            events = compute_checkpoints(
+                100.0, has_handoff="handoff" in tools
+            )
+            for event in events:
+                with self.subTest(role=role, checkpoint=event.label):
+                    self.assertLessEqual(
+                        self._referenced_tools(event.prompt), tools
+                    )
+
+    def test_handoff_roles_are_asked_for_the_handoff(self):
+        for event in compute_checkpoints(100.0, has_handoff=True):
+            with self.subTest(checkpoint=event.label):
+                self.assertIn("handoff", event.prompt)
+
+    def test_no_handoff_prompts_ask_for_finalize_only(self):
+        for prompt in NO_HANDOFF_PROMPTS:
+            self.assertIn("finalize", prompt)
+            self.assertNotIn("handoff", prompt)
+            self.assertNotIn("plan_changes", prompt)
+            self.assertNotIn("fold", prompt)
+
+
+class TestCheckpointScheduler(unittest.TestCase):
+    def _events(self) -> tuple:
+        return compute_checkpoints(0.3)  # 0.15s / 0.225s / 0.3s
+
+    def test_fires_in_order_while_running(self):
+        delivered = []
+        scheduler = CheckpointScheduler(
+            self._events(), delivered.append, lambda: False
+        ).arm()
+        time.sleep(0.45)
+        scheduler.cancel()
+        self.assertEqual(delivered[0].label, "checkpoint_50")
+        self.assertEqual(len(delivered), 3)
+
+    def test_skips_when_finished(self):
+        delivered = []
+        scheduler = CheckpointScheduler(
+            self._events(), delivered.append, lambda: True
+        ).arm()
+        time.sleep(0.45)
+        scheduler.cancel()
+        self.assertEqual(delivered, [])
+
+    def test_cancel_skips_pending(self):
+        delivered = []
+        scheduler = CheckpointScheduler(
+            self._events(), delivered.append, lambda: False
+        ).arm()
+        scheduler.cancel()
+        time.sleep(0.4)
+        self.assertEqual(delivered, [])
+
+    def test_delivery_is_queued_not_interrupting(self):
+        """Delivery runs on the timer thread while arun() is in flight.
+
+        The queued send_message path must not cancel the running arun():
+        the stub run keeps a flag set that only an interrupt would clear.
+        """
+        delivered = []
+        interrupted = threading.Event()
+
+        class StubConversation:
+            def send_message(self, message):
+                delivered.append(message)
+
+            def interrupt(self):
+                interrupted.set()
+
+        conversation = StubConversation()
+        scheduler = CheckpointScheduler(
+            self._events(),
+            lambda event: conversation.send_message(event.prompt),
+            lambda: False,
+        ).arm()
+        time.sleep(0.45)
+        scheduler.cancel()
+        self.assertFalse(interrupted.is_set())
+        self.assertEqual(len(delivered), 3)
+        self.assertIn("checkpoint", delivered[0].lower())
+
+
+class TestCountPlanChanges(unittest.TestCase):
+    def test_counts_bullets_in_section(self):
+        text = (
+            "# Session handoff\n"
+            "## State\n\nbusy\n"
+            "## Plan changes\n\n"
+            "- dropped the cache layer\n"
+            "- narrowed scope to parser\n"
+            "\n## Next steps\n\n1. run tests\n"
+        )
+        self.assertEqual(count_plan_changes(text), 2)
+
+    def test_empty_section_counts_zero(self):
+        self.assertEqual(count_plan_changes("## Plan changes\n\n## Next steps"), 0)
+
+    def test_no_section_counts_zero(self):
+        self.assertEqual(count_plan_changes("# Session handoff\nnothing"), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

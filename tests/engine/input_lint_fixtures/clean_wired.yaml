@@ -1,0 +1,11 @@
+name: clean-wired
+description: "Every declared input bound with a matching kind"
+steps:
+  - name: call_callee
+    workflow: callee
+    inputs:
+      diff:
+        exec: ["git", "diff"]
+      project:
+        str: nebuko
+    next: null

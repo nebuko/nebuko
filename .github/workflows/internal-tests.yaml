@@ -1,0 +1,43 @@
+name: internal-tests
+
+# Runs the documented full test command (AGENTS.md) on every pull request.
+# Before this job existed nothing ran pytest, so regressions landed on `main`
+# unnoticed (issue #1311). Setup is the documented one — `uv sync --extra
+# runtime` into the repo's `.venv` — never `.nebuko-engine/.venv`, which is the
+# engine's own checkout and goes stale against this tree.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.6"
+          enable-cache: true
+
+      # The runtime extra installs the OpenHands SDK + litellm; without it most
+      # engine tests fail collection with `ModuleNotFoundError: openhands`.
+      - name: Sync dependencies
+        run: uv sync --extra runtime
+
+      - name: Run pytest
+        run: uv run pytest tests src/nebuko/engine/lib -q

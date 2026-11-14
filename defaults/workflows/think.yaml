@@ -1,0 +1,25 @@
+# Default workflow: the standard dev chain
+# architect → context → architect (plan) → dev → review
+
+name: think
+description: "Simple workflow to think about a subject and help user to define and understand something"
+
+steps:
+  - name: analyze
+    agent: architect
+    next: context
+
+  - name: context
+    agent: context
+    next: plan
+
+  - name: plan
+    agent: architect
+    next: null
+    conditions:
+      - on_result: approved
+        next: null
+      - on_result: rejected
+        next: context
+      - on_result: default
+        next: null
