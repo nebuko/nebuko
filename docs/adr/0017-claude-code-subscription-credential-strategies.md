@@ -93,9 +93,12 @@ involvement, no credential handling at all.
 `CLAUDE_CODE_OAUTH_TOKEN` as a repository secret, GitHub-hosted runner —
 Anthropic's own `claude-code-action` pattern, unchanged. The reusable workflow
 declares the secret and exports it into the job environment only when it is
-non-empty. **Scoped to single-user semantics**: valid because the repo has
-exactly one triggerer. In a multi-user repo this lane degenerates into the
-first rejected alternative below and must be refused (guard 1).
+non-empty; the trigger workflow forwards it (#1402), and the run path drops it
+from the environment of every backend except `claude-code` (see A3), so an
+OpenHands run in the same workflow never sees it. **Scoped to single-user
+semantics**: valid because the repo has exactly one triggerer. In a multi-user
+repo this lane degenerates into the first rejected alternative below and must
+be refused (guard 1).
 
 **Lane R — actor-bound self-hosted runners (decided, implementation parked).**
 Each org member registers their own org-level runner(s) with
@@ -217,6 +220,14 @@ selector is a convention, not a boundary, since members can reference any
 `secrets.*` directly. Dominated by R (no co-location) and D (real ACL).
 Rejected.
 
+The exfiltration surface also exists in Lane S, one token deep: the job
+exports the token into the environment of *every* comment-triggered run, and
+the OpenHands `terminal` tool inherits `os.environ`. `run_agent` therefore
+removes `CLAUDE_CODE_OAUTH_TOKEN` from the environment of every backend except
+`claude-code` (`harness/credentials.py::scrub_subscription_tokens`) before the
+agent is built, so only the Claude Code binary — whose own tool surface is the
+credential's intended consumer — ever holds it.
+
 **A4 — Nebuko as credential custodian** (hosted vault, "connect your Claude
 account" login-proxy, "login with Anthropic via Nebuko" OAuth flow, hosted
 runners accepting user tokens). Makes Nebuko the "third party collecting or
@@ -238,7 +249,8 @@ side-calls or provider routing). Rule 1 violation; also technically fragile
 ### Implementation roadmap
 
 1. ✅ `nebuko-workflow.yaml`: the `CLAUDE_CODE_OAUTH_TOKEN` secret input and
-   its conditional, masked export (Lane S).
+   its conditional, masked export (Lane S); the trigger workflow forwards it
+   and the run path scrubs it from every non-`claude-code` backend (#1402).
 2. `nebuko-workflow.yaml`: `runner_strategy` input (`static` | `per-user`),
    computed `runs-on`, bot rejection, guards 1–2 (shadowing + static label).
    *Parked with Lane R.*

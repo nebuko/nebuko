@@ -13,6 +13,8 @@ implementation.
 
 from __future__ import annotations
 
+from typing import MutableMapping
+
 __all__ = [
     "CLAUDE_CODE_BACKEND",
     "CLAUDE_CODE_MODEL_PREFIX",
@@ -23,6 +25,7 @@ __all__ = [
     "enforce_backend_credentials",
     "is_claude_code_model",
     "is_subscription_token",
+    "scrub_subscription_tokens",
     "uses_claude_code_credentials",
 ]
 
@@ -49,6 +52,26 @@ class ClaudeCredentialError(RuntimeError):
 def is_subscription_token(api_token_env: str | None) -> bool:
     """True when ``api_token_env`` names an Anthropic subscription token."""
     return bool(api_token_env) and api_token_env in SUBSCRIPTION_TOKEN_ENVS
+
+
+def scrub_subscription_tokens(env: MutableMapping[str, str]) -> tuple[str, ...]:
+    """Remove every subscription token from a process environment.
+
+    ADR 0017 A3: the token is exported into the job environment of *every*
+    comment-triggered run, and a backend whose tools spawn subprocesses (the
+    OpenHands ``terminal``) hands the engine's own ``os.environ`` to them. A
+    prompt-injected agent on such a backend could therefore read and exfiltrate
+    the token — masking covers logs, not exfiltration. Only the Claude Code
+    binary needs the credential, so every other backend drops it first.
+
+    Returns:
+        The names that were present and removed (for one log line).
+    """
+    removed: list[str] = []
+    for name in sorted(SUBSCRIPTION_TOKEN_ENVS):
+        if env.pop(name, None):
+            removed.append(name)
+    return tuple(removed)
 
 
 def is_claude_code_model(model_path: str | None) -> bool:

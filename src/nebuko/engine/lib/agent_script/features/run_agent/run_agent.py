@@ -367,6 +367,30 @@ def build_openhands_agent(
     )
 
 
+def _drop_subscription_tokens_for(backend: str) -> None:
+    """Remove Anthropic subscription tokens from the env of any other backend.
+
+    ADR 0017 A3: the workflow exports ``CLAUDE_CODE_OAUTH_TOKEN`` into the job
+    environment of every trigger, and a backend whose tools spawn subprocesses
+    (OpenHands' ``terminal`` inherits ``os.environ``) would hand a
+    prompt-injected agent the token. Only the Claude Code binary needs it, so
+    the other backends never see it.
+    """
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        CLAUDE_CODE_BACKEND,
+        scrub_subscription_tokens,
+    )
+
+    if backend == CLAUDE_CODE_BACKEND:
+        return
+    removed = scrub_subscription_tokens(os.environ)
+    if removed:
+        logger.info(
+            f"Dropped subscription credential(s) from the {backend} environment: "
+            f"{', '.join(removed)}"
+        )
+
+
 def _run_harness_agent(
     harness: Any,
     *,
@@ -632,6 +656,7 @@ def run_agent(
 
     _enforce_harness_credentials(agent_cfg, llm_config)
     harness = resolve_harness(getattr(agent_cfg, "backend", None))
+    _drop_subscription_tokens_for(harness.name)
     if harness.name != "openhands":
         return _run_harness_agent(
             harness,

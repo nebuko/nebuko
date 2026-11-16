@@ -10,6 +10,7 @@ from nebuko.engine.harness.credentials import (
     enforce_backend_credentials,
     is_claude_code_model,
     is_subscription_token,
+    scrub_subscription_tokens,
     uses_claude_code_credentials,
 )
 
@@ -73,3 +74,15 @@ def test_converse_message_points_at_the_model_path_not_the_key():
     assert message is not None
     assert "claude-code/*" in message
     assert "ANTHROPIC_API_KEY" in message
+
+
+def test_scrub_removes_the_subscription_token_and_reports_it():
+    env = {"CLAUDE_CODE_OAUTH_TOKEN": "tok", "PATH": "/bin"}
+    assert scrub_subscription_tokens(env) == ("CLAUDE_CODE_OAUTH_TOKEN",)
+    assert env == {"PATH": "/bin"}
+
+
+def test_scrub_leaves_metered_keys_and_an_absent_token_alone():
+    env = {"ANTHROPIC_API_KEY": "key"}
+    assert scrub_subscription_tokens(env) == ()
+    assert env == {"ANTHROPIC_API_KEY": "key"}
