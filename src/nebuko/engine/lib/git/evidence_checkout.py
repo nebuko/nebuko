@@ -66,6 +66,49 @@ def current_checkout(repo_root) -> EvidenceCheckout:
     )
 
 
+def discover_issue_branch(
+    repo_root, env: Mapping[str, str] | None, issue_number: int
+) -> list[str]:
+    """Remote branches named ``feature/issue-<n>-*`` (issue #1397).
+
+    The evidence checkout reads the session branch from the state, but a state
+    written before the branch was recorded (a standalone ``--step git_diff``
+    run, or a comment posted by an older engine) carries none — and the run
+    then silently reported ``branch: none`` while the branch existed on the
+    remote. This is the read-only recovery probe: it never moves the checkout
+    and returns ``[]`` when the remote cannot be listed.
+    """
+    if not issue_number:
+        return []
+    result = subprocess.run(
+        [
+            "git",
+            "ls-remote",
+            "--heads",
+            "origin",
+            f"refs/heads/feature/issue-{issue_number}-*",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        env=git_subprocess_env(env),
+    )
+    if result.returncode != 0:
+        logger.warning(
+            "evidence checkout: could not list the remote branches for issue "
+            "#%s: %s",
+            issue_number,
+            (result.stderr or result.stdout).strip(),
+        )
+        return []
+    branches = []
+    for line in result.stdout.splitlines():
+        ref = line.split("\t")[-1].strip()
+        if ref.startswith("refs/heads/"):
+            branches.append(ref.removeprefix("refs/heads/"))
+    return sorted(branches)
+
+
 def resolve_evidence_checkout(
     repo_root,
     env: Mapping[str, str] | None,
@@ -96,7 +139,8 @@ class EvidenceCheckoutResolver:
         repo_root: The session checkout the command runs in.
         env: The run's environment, read for the base-ref override and the
             git token (the same handling as :class:`GitSessionGuard`).
-        branch: The session branch recorded by ``_record_scaffold_branch``.
+        branch: The session branch recorded by ``_record_scaffold_branch`` in
+            ``GitInfo.branch_name``.
     """
 
     def __init__(self, repo_root, env: Mapping[str, str] | None = None, branch: str = "") -> None:

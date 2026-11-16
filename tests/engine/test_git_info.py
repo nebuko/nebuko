@@ -1,8 +1,8 @@
 """The state's ``git`` sub-domain (issue #1153).
 
-One structured block holding the single dev branch, the PR opened for it, and
-one history entry per engine git action — the issue's suggested YAML sketch,
-typed.
+One structured block holding the single dev branch, its base/head and one
+history entry per engine git action — the issue's suggested YAML sketch,
+typed. The PR itself is ``WorkflowState.pull_request`` (issue #1397).
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ class TestGitInfoModel:
         info = GitInfo()
 
         assert info.branch_name is None
-        assert info.pr_number is None
+        assert info.base_branch is None
+        assert info.head_sha is None
+        assert info.created_at is None
         assert info.history == []
 
     def test_history_entry_defaults(self):
