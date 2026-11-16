@@ -29,6 +29,7 @@ read [architecture.md](./architecture.md) and
    | `OPENROUTER_API_KEY` | one of | LLM provider token (OpenRouter). |
    | `LOCAL_VLLM_API_TOKEN` | one of | Local vLLM provider token. |
    | `COMMANDCODE_API_KEY` | one of | CommandCode subscription ([subscription-plans.md](./subscription-plans.md)). |
+   | `CLAUDE_CODE_OAUTH_TOKEN` | one of | Claude Code subscription token ([claude-code.md](./claude-code.md)). |
 
 5. **A configuration file** — `agent-config.yaml` (see step 2 below) and,
    optionally, prompt overrides (step 3), committed to your repository.
@@ -111,7 +112,9 @@ reference.
 
 Using a subscription plan instead of a metered API key? See
 [subscription-plans.md](./subscription-plans.md) for the provider stanza, the
-`COMMANDCODE_API_KEY` secret, and a working example config.
+`COMMANDCODE_API_KEY` secret, and a working example config. To run roles
+through Claude Code instead of the OpenHands model loop, see
+[claude-code.md](./claude-code.md).
 
 ---
 
