@@ -22,11 +22,34 @@ from tests.engine.test_run_loop import (
 )
 
 
-def _stub_flow(monkeypatch, root, *, scaffold=None, pr=None, finalize=None):
+def _issue_trigger(number: int = 590, title: str = "Fix it"):
+    """An ``issue_comment`` trigger carrying the issue and repository payload."""
+    from nebuko.engine.models import Trigger
+
+    login = "olivier-norture"
+    return Trigger(
+        author=login,
+        body="@@dev fix it",
+        type="issue_comment",
+        number=number,
+        payload={
+            "issue": {
+                "number": number,
+                "html_url": f"https://github.com/o/r/issues/{number}",
+                "title": title,
+                "user": {"login": login},
+            },
+            "repository": {"full_name": "o/r"},
+            "comment": {"body": "@@dev fix it", "user": {"login": login}},
+        },
+    )
+
+
+def _stub_flow(monkeypatch, root, *, scaffold=None, pr=None, finalize=None, trigger=None):
     """A full engine.run() pass with the git machinery stubbed at the seams."""
     from nebuko.engine.run_loop import Engine
 
-    engine = _engine_at_root(root.parent, root)
+    engine = _engine_at_root(root.parent, root, trigger=trigger)
     _stub_resolved(monkeypatch, _resolved_with_hooks())
 
     def _scaffold_stub(self):
@@ -156,21 +179,27 @@ class TestScaffoldBranchRecorded:
         assert state.git.branch_name == "feature/590-fix-it"
         assert GitActionStatus.CONFLICT in [e.status for e in state.git.history]
 
-    def test_the_legacy_dev_branch_context_is_still_written(
+    def test_the_branch_is_recorded_in_the_git_block_only(
         self, tmp_path, monkeypatch, root
     ):
+        # Issue #1397: ``git.branch_name`` is the single authority; the legacy
+        # ``current_context["dev_branch"]`` duplicate is gone.
         engine = _stub_flow(monkeypatch, root)
 
         state = engine.adapter.load_state()
-        assert state.current_context.get("dev_branch") == "feature/590-fix-it"
+        assert state.git.branch_name == "feature/590-fix-it"
+        assert "dev_branch" not in state.current_context
+        assert state.git.base_branch == "main"
+        assert state.git.created_at
 
 
 class TestPullRequestRecorded:
-    def test_the_pr_number_lands_in_the_git_block(self, tmp_path, monkeypatch, root):
+    def test_the_pr_lands_in_the_pull_request_block(self, tmp_path, monkeypatch, root):
         engine = _stub_flow(monkeypatch, root)
 
         state = engine.adapter.load_state()
-        assert state.git.pr_number == 42
+        assert state.pull_request is not None
+        assert state.pull_request.number == 42
         assert GitActionStatus.PR in [e.status for e in state.git.history]
 
 
@@ -198,6 +227,53 @@ class TestDirtyFinalizeRecorded:
         assert not [e for e in state.git.history if e.status is GitActionStatus.DIRTY]
 
 
+class TestPostedCommentCarriesEngineRecords:
+    """The posted state comment is the next run's only state source (#1397).
+
+    The agent child frames its artifact before the engine records the branch,
+    the PR and the issue metadata, so the comment must be framed from the
+    recorded state — otherwise everything below is invisible to the next run.
+    """
+
+    def _posted_state(self, engine):
+        from nebuko.engine.lib.workflow_state import extract_state_from_body
+
+        bodies = [entry.body for entry in engine.adapter.load_history()]
+        for body in reversed(bodies):
+            state = extract_state_from_body(body)
+            if state is not None:
+                return state
+        raise AssertionError("no state-bearing comment was posted")
+
+    def test_the_comment_carries_the_branch_the_pr_and_the_issue(
+        self, tmp_path, monkeypatch, root
+    ):
+        engine = _stub_flow(monkeypatch, root, trigger=_issue_trigger())
+
+        state = self._posted_state(engine)
+
+        assert state.git is not None
+        assert state.git.branch_name == "feature/590-fix-it"
+        assert state.git.head_sha
+        assert state.pull_request is not None and state.pull_request.number == 42
+        assert state.issue is not None
+        assert state.issue.number == 590
+        assert state.issue.url == "https://github.com/o/r/issues/590"
+        assert state.issue.title == "Fix it"
+        assert state.issue.author == "olivier-norture"
+        assert state.issue.repo == "o/r"
+
+    def test_a_trigger_without_an_issue_payload_records_no_issue(
+        self, tmp_path, monkeypatch, root
+    ):
+        engine = _stub_flow(monkeypatch, root)
+
+        state = self._posted_state(engine)
+
+        assert state.issue is None
+        assert state.git.branch_name == "feature/590-fix-it"
+
+
 class TestGitStatePersists:
     def test_the_next_state_keeps_the_history(self):
         from nebuko.engine.lib.workflow_state import WorkflowState
@@ -206,7 +282,7 @@ class TestGitStatePersists:
         )
         from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitInfo
 
-        git = GitInfo(branch_name="feature/590-fix-it", pr_number=42)
+        git = GitInfo(branch_name="feature/590-fix-it", base_branch="main")
         git.record(GitActionStatus.PR)
         prev = WorkflowState(run_id=1, workflow="wf", step="plan", agent="dev", git=git)
 

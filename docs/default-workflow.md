@@ -183,7 +183,7 @@ Two guards prevent unwanted re-execution:
 
 ### Step 10: Check Circuit Breaker
 
-**Input:** `TARGET_NUMBER`, `CIRCUIT_BREAKER_THRESHOLD` (default 25).  
+**Input:** `TARGET_NUMBER`, `CIRCUIT_BREAKER_THRESHOLD` (default 15, or the manifest's `circuit_breaker_threshold`).  
 **Output:** `CIRCUIT_BREAKER_TRIPPED=true/false`, `SKIP_AGENT=true` if tripped. A comment posted to the issue if tripped.
 
 Counts historical `<!-- bot-agent- -->` markers across all comments on the issue. If the count divided by 2 exceeds the threshold, the circuit breaker trips: execution halts and a comment is posted notifying the issue author.
@@ -458,9 +458,9 @@ GitHub Event
 
 | Variable | Source | Default | Purpose |
 |----------|--------|---------|---------|
-| `AGENT_CONFIG_PATH` | `inputs.agent_config_path` | `agent-config.yaml` | Path to agent configuration YAML |
-| `CIRCUIT_BREAKER_THRESHOLD` | `inputs.circuit_breaker_threshold` | `25` | Max agent calls before circuit breaker trips |
-| `PIN_COMMENT` | `inputs.pin_comment` | `false` | Pin every agent step output comment for verbatim context injection |
+| `AGENT_CONFIG_PATH` | `inputs.agent_config_path` / manifest `agent_config` | `agent-config.yaml` | Path to agent configuration YAML |
+| `CIRCUIT_BREAKER_THRESHOLD` | `inputs.circuit_breaker_threshold` / manifest `circuit_breaker_threshold` | `15` | Max agent calls before circuit breaker trips |
+| `PIN_COMMENT` | `inputs.pin_comment` / manifest `pin_comment` | `false` | Pin every agent step output comment for verbatim context injection |
 | `PYTHON_VERSION` | `inputs.python_version` | `3.13` | Python runtime version |
 | `ENABLE_UV_CACHE` | `inputs.enable_uv_cache` | `true` | Enable uv dependency caching |
 | `OPENROUTER_API_KEY` | `secrets.OPENROUTER_API_KEY` | (required) | Default LLM API key |

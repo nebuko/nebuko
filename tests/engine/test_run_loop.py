@@ -5272,7 +5272,7 @@ class TestBranchScaffoldWiring:
 
         state = engine.adapter.load_state()
         assert state is not None
-        assert state.current_context.get("dev_branch") == "feature/issue-590-x"
+        assert state.git.branch_name == "feature/issue-590-x"
 
 
 class TestPrFinalizerWiring:

@@ -49,16 +49,24 @@ to repeat:
 
 ## What the engine records
 
-Branch-scaffold outcomes land in the persisted state's
-`current_context` (`dev_branch`, plus `dev_branch_up_to_date` and
-`dev_branch_note` when the branch already contained the base) and in the
-`git` block (`workflow_state/sub_domains/git_info`). Its history has one
+Branch-scaffold outcomes land in the persisted state's `git` block
+(`workflow_state/sub_domains/git_info`): `branch_name` is the single authority
+for the session branch (issue #1397 removed the duplicate
+`current_context["dev_branch"]`), with `base_branch`, `head_sha` and
+`created_at` alongside it. Its history has one
 entry per engine action, with the status `create`, `continue`, `conflict`,
 `dirty`, `pr` or `already_applied`, and the commit where one applies. For
 scaffold entries that's the branch HEAD before the agent ran, and for `dirty`
 it's the automatic commit. An entry with status `already_applied` or a detail of
 "`<branch>` already contains `origin/<base>`" means the engine verified the
-work was present and deliberately did nothing.
+work was present and deliberately did nothing. The PR itself is
+`pull_request` (number, URL, title, author, repo), and `issue` carries the same
+metadata for the triggering issue — both populated by the engine from the
+trigger payload, so the posted state comment carries them.
+
+`current_context` still carries `dev_branch_up_to_date` and `dev_branch_note`
+when the branch already contained the base (issue #1194), so the prompt can say
+so instead of letting the agent re-apply the work.
 
 ## Troubleshooting
 

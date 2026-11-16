@@ -29,10 +29,20 @@ class GitHistoryEntry(BaseModel):
 
 
 class GitInfo(BaseModel):
-    """Persisted git state: branch name plus the per-turn action history."""
+    """Persisted git state: the session branch plus the per-turn action history.
+
+    ``branch_name`` is the single authority for the session branch: the
+    evidence checkout (issue #1397) and the failure facts read it instead of a
+    duplicate ``current_context`` key. ``base_branch``/``head_sha`` describe
+    the branch the engine prepared, and ``created_at`` is when it was first
+    recorded — audit data for future stats. The PR itself is
+    ``WorkflowState.pull_request``; a second number here would drift.
+    """
 
     branch_name: str | None = None
-    pr_number: int | None = None
+    base_branch: str | None = None
+    head_sha: str | None = None
+    created_at: str | None = None
     history: list[GitHistoryEntry] = Field(default_factory=list)
 
     # @stub-protected

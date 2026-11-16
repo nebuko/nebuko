@@ -50,6 +50,7 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
 )
 from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
     CHECKPOINT_100_PROMPT,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
     CheckpointScheduler,
     compute_checkpoints,
     count_plan_changes,
@@ -222,6 +223,7 @@ def _raise_if_provider_failure(failure: RunFailure, llm_config: dict) -> None:
 def _perform_wind_down(
     conversation: Conversation,
     budget: TimeoutBudget,
+    has_handoff: bool = True,
 ) -> bool:
     """Inject the wind-down prompt and run one bounded second pass.
 
@@ -229,13 +231,21 @@ def _perform_wind_down(
     consume the GitHub Actions hard timeout), but there is no recursion —
     if it trips we rely on the deterministic PR fallback instead.
 
+    Args:
+        conversation: The live conversation to wind down.
+        budget: The run's timeout budget.
+        has_handoff: Whether the role carries the ``handoff`` tool; roles
+            without it get the ``finalize``-only checkpoint 3 variant.
+
     Returns:
         True if the wind-down completed without tripping its own budget.
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
     # CHECKPOINT_100_PROMPT wraps WIND_DOWN_PROMPT and asks for the handoff
     # update first (issue #966, scope item 3).
-    conversation.send_message(CHECKPOINT_100_PROMPT)
+    conversation.send_message(
+        CHECKPOINT_100_PROMPT if has_handoff else CHECKPOINT_100_PROMPT_NO_HANDOFF
+    )
     wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
@@ -355,6 +365,30 @@ def build_openhands_agent(
         # chunks rather than to the whole reasoning turn (issue #775).
         token_callbacks=[_discard_token, collector.on_token],
     )
+
+
+def _drop_subscription_tokens_for(backend: str) -> None:
+    """Remove Anthropic subscription tokens from the env of any other backend.
+
+    ADR 0017 A3: the workflow exports ``CLAUDE_CODE_OAUTH_TOKEN`` into the job
+    environment of every trigger, and a backend whose tools spawn subprocesses
+    (OpenHands' ``terminal`` inherits ``os.environ``) would hand a
+    prompt-injected agent the token. Only the Claude Code binary needs it, so
+    the other backends never see it.
+    """
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        CLAUDE_CODE_BACKEND,
+        scrub_subscription_tokens,
+    )
+
+    if backend == CLAUDE_CODE_BACKEND:
+        return
+    removed = scrub_subscription_tokens(os.environ)
+    if removed:
+        logger.info(
+            f"Dropped subscription credential(s) from the {backend} environment: "
+            f"{', '.join(removed)}"
+        )
 
 
 def _run_harness_agent(
@@ -520,6 +554,57 @@ def _harness_system_prompt(role_name: str) -> str:
     return f"{_SYSTEM_PROMPT}\n\n{context}" if context else _SYSTEM_PROMPT
 
 
+def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None) -> None:
+    """Refuse a backend/credential pairing the linter would reject (ADR 0017).
+
+    An Anthropic subscription token (``CLAUDE_CODE_OAUTH_TOKEN``) or a
+    ``claude-code/*`` model may only run through the Claude Code binary, and
+    that backend needs those credentials. A config that bypasses ``lint-config``
+    still fails here, before any provider call.
+
+    Every model ref is checked, so a complexity-tier swap cannot smuggle one
+    past the gate — and so are the two model strings the run actually builds:
+    the effective ``llm_config['model']`` (a ``CONFIG_MODEL`` override replaces
+    the config ref) and the condenser's summarizer model.
+    """
+    if agent_cfg is None:
+        return
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        enforce_backend_credentials,
+        is_subscription_token,
+    )
+
+    backend = getattr(agent_cfg, "backend", None)
+    refs = [getattr(agent_cfg, "model_ref", None)]
+    overrides = getattr(agent_cfg, "complexity_overrides", None) or {}
+    refs.extend(
+        override.model_ref
+        for override in overrides.values()
+        if getattr(override, "model_ref", None) is not None
+    )
+    subscription_token = None
+    for ref in refs:
+        provider = getattr(ref, "provider_ref", None)
+        api_token_env = getattr(provider, "api_token_env", None)
+        if is_subscription_token(api_token_env):
+            subscription_token = api_token_env
+        enforce_backend_credentials(
+            backend, getattr(ref, "model_path", None), api_token_env
+        )
+
+    effective_model = (llm_config or {}).get("model")
+    if isinstance(effective_model, str) and effective_model:
+        enforce_backend_credentials(backend, effective_model, subscription_token)
+        # The condenser summarizer is a second LLM on the same credentials.
+        enforce_backend_credentials(
+            backend,
+            resolve_token_budget_policy(agent_cfg).resolved_compaction_model(
+                effective_model
+            ),
+            subscription_token,
+        )
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -569,7 +654,9 @@ def run_agent(
     # fails loud here instead of silently running OpenHands.
     from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
 
+    _enforce_harness_credentials(agent_cfg, llm_config)
     harness = resolve_harness(getattr(agent_cfg, "backend", None))
+    _drop_subscription_tokens_for(harness.name)
     if harness.name != "openhands":
         return _run_harness_agent(
             harness,
@@ -685,7 +772,9 @@ def run_agent(
         return count_plan_changes(text)
 
     checkpoint_scheduler = CheckpointScheduler(
-        compute_checkpoints(budget.soft_timeout_s)[:2],
+        compute_checkpoints(
+            budget.soft_timeout_s, has_handoff=resolved.has("handoff")
+        )[:2],
         deliver=lambda event: conversation.send_message(event.prompt),
         is_finished=lambda: status_value(conversation) == _STATUS_FINISHED,
     ).arm()
@@ -714,7 +803,9 @@ def run_agent(
         # The overall outcome stays "gracefully_timed_out" whether or not
         # the wind-down itself completed; the engine's publisher commits
         # and pushes whatever the agent left after the run.
-        wind_down_completed = _perform_wind_down(conversation, budget)
+        wind_down_completed = _perform_wind_down(
+            conversation, budget, has_handoff=resolved.has("handoff")
+        )
         outcome = OutcomeStatus.GRACEFULLY_TIMED_OUT
     elif main_error is not None:
         # A non-cancellation crash escaped arun(): whatever status the

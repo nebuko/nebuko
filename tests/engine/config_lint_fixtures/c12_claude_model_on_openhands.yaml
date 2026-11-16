@@ -1,0 +1,15 @@
+providers:
+  metered:
+    api_url: "https://api.anthropic.com"
+    api_token_env: "ANTHROPIC_API_KEY"
+llms:
+  claude-sonnet:
+    model_path: "claude-code/sonnet"
+    provider: "${providers.metered}"
+agents:
+  a:
+    model: "${llms.claude-sonnet}"
+    role: "Test agent role."
+    prompt_file: ".agents/prompts/a.md"
+    skills: ["skill-a"]
+    tools: ["think"]

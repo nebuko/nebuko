@@ -145,6 +145,7 @@ inherited from whatever Nebuko ships. Either write one (section 5,
 | [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) | CommandCode | `COMMANDCODE_API_KEY` |
 | [`agent-config-opencode.yaml`](../defaults/agents/agent-config-opencode.yaml) | OpenCode Go | `OPENCODE_GO_API_KEY` |
 | [`agent-config-mistral.yaml`](../defaults/agents/agent-config-mistral.yaml) | Mistral | `MISTRAL_API_KEY` |
+| [`agent-config-anthropic.yaml`](../.nebuko/agents/agent-config-anthropic.yaml) | Claude Code (see [claude-code.md](./claude-code.md)) | `CLAUDE_CODE_OAUTH_TOKEN` |
 
 ```bash
 mkdir -p .nebuko/agents
@@ -223,21 +224,30 @@ No GitHub token is needed in App mode. `GH_PAT` is a **PAT fallback only**
 
 ### Inputs
 
-Every input is optional; defaults are shown. Pass them under `with:`.
+Every input is optional; defaults are shown. Pass them under `with:`. The
+non-secret settings also live in `.nebuko/nebuko.yaml` (see
+[configuration.md](./configuration.md#the-nebuko-manifest-nebukonebukoyaml));
+an input you pass explicitly wins over the manifest.
 
 | Input | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `agent_config_path` | string | `agent-config.yaml` | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
+| `agent_config_path` | string | unset (manifest `agent_config`, else `agent-config.yaml`) | Path to your agent config — set it to `.nebuko/agents/agent-config.yaml` (step 1, section 5). A bare file name is looked up in `.nebuko/agents/`. |
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
-| `circuit_breaker_threshold` | number | `25` | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
-| `pin_comment` | boolean | `false` | Pin every agent-step comment for verbatim context injection. |
-| `history_comment_count` | number | `5` | Most recent comments injected into each agent call. |
+| `circuit_breaker_threshold` | number | unset (manifest `circuit_breaker_threshold`, else `15`) | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
+| `pin_comment` | boolean | `false` (OR-ed with the manifest's `pin_comment`) | Pin every agent-step comment for verbatim context injection. |
+| `history_comment_count` | number | unset (manifest `history_comment_count`, else `5`) | Most recent comments injected into each agent call. |
 | `python_version` | string | `3.13` | Python version installed on the runner. |
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
 | `prompt_body` | string | `""` | Prompt/body text for programmatic (`workflow_call`) callers. |
 | `checkout_ref` | string | `""` | Explicit ref (SHA, tag, or branch) for the workspace checkout. When empty, the checkout follows the workflow's own commit if the workflow is checking out its own repo (issue #862), else the event default. |
 | `CALLER_AUTH` | string | `on` | When `on` (default), only OWNER/MEMBER/COLLABORATOR authors may trigger from issues/comments; set to `off` to allow anyone. |
 | `EXTRA_SECRET_1_NAME` … `EXTRA_SECRET_9_NAME` | string | `""` | Env var name materialized from the matching `EXTRA_SECRET_n_VALUE` secret — use for MCP tokens (section 3.1). |
+
+What stays in the workflow, never in the manifest: the `uses: …@<tag>` version
+pin (it is resolved before the manifest can be read), secrets and
+`EXTRA_SECRET_n_NAME`, and the runner/bootstrap inputs (`runs_on`,
+`python_version`, `enable_uv_cache`, `checkout_ref`, `CALLER_AUTH`,
+`TRUSTED_BOTS`, `prompt_body`).
 
 ### Secrets
 
@@ -248,6 +258,7 @@ Every input is optional; defaults are shown. Pass them under `with:`.
 | `COMMANDCODE_API_KEY` | optional | CommandCode subscription provider. |
 | `OPENCODE_GO_API_KEY` | optional | OpenCode Go provider. |
 | `MISTRAL_API_KEY` | optional | Mistral provider. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | optional | Claude Code subscription token from `claude setup-token` (or an API key for the same env var) — see [claude-code.md](./claude-code.md). Exported only when set, and `::add-mask::`ed. |
 | `LOCAL_VLLM_API_TOKEN` | optional | Local vLLM provider. |
 | `BRAVE_API_KEY` | optional | Brave Search MCP token (the named alias of the slot pattern in section 3.1). |
 | `EXTRA_SECRET_1_VALUE` … `EXTRA_SECRET_9_VALUE` | optional | Values materialized into the env vars named by the `EXTRA_SECRET_n_NAME` inputs (section 3.1). |
@@ -446,6 +457,11 @@ actually present on the runner, so inline the URL unless your runner sets it.
 > **CommandCode / subscription providers.** See
 > [subscription-plans.md](./subscription-plans.md) for the provider stanza and
 > a working `agent-config-commandcode.yaml` example.
+>
+> **Claude Code.** The `claude-code` harness is a runtime switch, not an
+> OpenAI-compatible endpoint: set `backend: "claude-code"` per role and read
+> [claude-code.md](./claude-code.md). Billing a subscription is governed by
+> [ADR-0017](./adr/0017-claude-code-subscription-credential-strategies.md).
 
 ---
 
@@ -542,3 +558,4 @@ installed on), use the PAT fallback in
 - [configuration.md](./configuration.md) — the full `agent-config.yaml` schema.
 - [features.md](./features.md) — human commands, safety mechanisms, metrics.
 - [subscription-plans.md](./subscription-plans.md) — run on a subscription plan.
+- [claude-code.md](./claude-code.md) — run roles through Claude Code.

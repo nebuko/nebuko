@@ -339,13 +339,17 @@ default the engine checks the session branch out itself (issue #1327):
 
 | Value | Behaviour |
 |---|---|
-| `session` (default) | Check out the branch recorded in `current_context.dev_branch` (written by the branch scaffold) at the pushed SHA, detached, with enough history for `git diff origin/main...HEAD`. Read-only: it never creates a branch, merges the base or pushes. |
+| `session` (default) | Check out the branch recorded in `git.branch_name` (written by the branch scaffold) at the pushed SHA, detached, with enough history for `git diff origin/main...HEAD`. Read-only: it never creates a branch, merges the base or pushes. |
 | `workflow` | Run on the workflow's own ref, exactly as before issue #1327. |
 
 Edge cases:
 
 - **No session branch yet** (a script before any agent has scaffolded one): the
   command runs on the workflow ref and the report says `branch: none`.
+- **No branch recorded but one exists** (a standalone `--step git_diff` on an
+  issue whose branch is already pushed): the single
+  `origin/feature/issue-<n>-*` branch is used, with a warning. Several
+  candidates fail the run rather than guessing (issue #1397).
 - **Branch expected but unreachable**: the run fails with an engine error and
   the command does not run. There is no silent fallback to the workflow ref.
 - **The base moved on**: it is not merged. The evidence must test exactly what

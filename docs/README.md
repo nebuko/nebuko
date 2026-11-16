@@ -25,6 +25,7 @@ For the high-level pitch and quick overview, see the root
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 5 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
 | [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
+| [claude-code.md](./claude-code.md) | Operators | Run roles through Claude Code (`backend: "claude-code"`): hosted quick start, per-role switch, what the harness does and does not support. |
 | [features.md](./features.md) | Contributors | Deep dives: human commands, task decomposition, safety, metrics, execution layer, zero-copy. |
 | [reference.md](./reference.md) | Contributors | Machine contracts: dispatch sentinel, workflow grammar, state schema, env vars, markers. |
 | [handoff-and-callback.md](./handoff-and-callback.md) | Contributors | The `AGENT_RUN_CONFIG` contract: dispatch vs function_call, the callback return address, routing precedence, the no-action default. |
@@ -35,6 +36,7 @@ For the high-level pitch and quick overview, see the root
 | [adr/0012-complexity-governance.md](./adr/0012-complexity-governance.md) | Operators | Layered per-repo `ComplexityPolicy`, evidence bundles, and the `ComplexityGovernor` tier adjudicator. |
 | [adr/0013-step-outputs-are-step-comments.md](./adr/0013-step-outputs-are-step-comments.md) | Contributors | A step's output is its posted comment: step-name references, `{{ <step> }}` prompt syntax, locator storage, no truncation. |
 | [adr/0014-cache-aware-cost-and-default-price-service.md](./adr/0014-cache-aware-cost-and-default-price-service.md) | Contributors | Cost precedence chain, four-rate cache-aware session cost, the OpenRouter-backed default price service, and the removal of SDK price forwarding. |
+| [adr/0017-claude-code-subscription-credential-strategies.md](./adr/0017-claude-code-subscription-credential-strategies.md) | Operators | Anthropic-compliant lanes for billing runs to a user's Claude subscription: single-user secret, actor-bound runners, per-user credential repo + App bridge, org API-key/WIF automation; guards and rejected alternatives. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
 study, in French), and the root `landscape.md` (product positioning — "what
