@@ -63,3 +63,13 @@ def test_enforce_raises_a_terminal_error():
         enforce_backend_credentials(
             None, "anthropic/claude-sonnet", "CLAUDE_CODE_OAUTH_TOKEN"
         )
+
+
+def test_converse_message_points_at_the_model_path_not_the_key():
+    """A metered key is a legal Claude Code credential (ADR 0017 Lane K)."""
+    message = backend_credentials_error(
+        "claude-code", "anthropic/claude-sonnet", "ANTHROPIC_API_KEY"
+    )
+    assert message is not None
+    assert "claude-code/*" in message
+    assert "ANTHROPIC_API_KEY" in message

@@ -678,8 +678,14 @@ class ConfigLinter:
                         _RULE_CLAUDE_CREDENTIALS,
                         message,
                         reported,
-                        "Declare backend 'claude-code' for Claude Code models and "
-                        "subscription tokens, or use a metered provider key",
+                        (
+                            "Use a 'claude-code/*' model path on this backend "
+                            "(a subscription token or a metered key both work)"
+                            if backend == CLAUDE_CODE_BACKEND
+                            else "Declare backend 'claude-code' for Claude Code "
+                            "models and subscription tokens, or use a metered "
+                            "provider key with a non-Claude-Code model"
+                        ),
                     )
                 )
         return issues

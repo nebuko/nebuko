@@ -76,12 +76,16 @@ def backend_credentials_error(
     name = backend or DEFAULT_BACKEND
     claude_credentials = uses_claude_code_credentials(model_path, api_token_env)
     if name == CLAUDE_CODE_BACKEND and not claude_credentials:
+        # A metered Anthropic key is a legal Claude Code credential (ADR 0017
+        # Lane K), so the fix is always the model path, never the key name.
         return (
             f"backend '{CLAUDE_CODE_BACKEND}' needs a Claude Code model "
-            f"(model_path '{CLAUDE_CODE_MODEL_PREFIX}*') served by a provider "
-            f"whose api_token_env is "
-            f"{sorted(SUBSCRIPTION_TOKEN_ENVS)[0]}; got model_path "
-            f"'{model_path or ''}' with api_token_env '{api_token_env or ''}'"
+            f"(model_path '{CLAUDE_CODE_MODEL_PREFIX}*'); a subscription token "
+            f"(api_token_env '{sorted(SUBSCRIPTION_TOKEN_ENVS)[0]}') also "
+            f"implies it, and a metered key such as 'ANTHROPIC_API_KEY' is fine "
+            f"as long as the model path is '{CLAUDE_CODE_MODEL_PREFIX}*'; got "
+            f"model_path '{model_path or ''}' with api_token_env "
+            f"'{api_token_env or ''}'"
         )
     if name != CLAUDE_CODE_BACKEND and claude_credentials:
         return (

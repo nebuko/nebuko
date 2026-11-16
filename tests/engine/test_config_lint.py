@@ -230,9 +230,16 @@ class TestRuleScenarios:
 
         assert [issue.location for issue in issues] == ["agents.a.backend"]
         assert "ANTHROPIC_API_KEY" in issues[0].message
+        # The message must not claim the token env is the only legal credential:
+        # a metered key is accepted as long as the model path is claude-code/*.
+        assert "claude-code/*" in issues[0].hint
 
     def test_c12_accepts_a_claude_code_backend_with_claude_credentials(self):
         assert _lint("clean_claude_code.yaml") == []
+
+    def test_c12_accepts_a_metered_key_on_the_claude_code_backend(self):
+        """ADR 0017 Lane K runs the binary with ANTHROPIC_API_KEY too."""
+        assert _lint("clean_claude_code_api_key.yaml") == []
 
     def test_c6_warns_on_an_unreferenced_mcp_catalog_entry(self):
         issues = _by_rule(_lint("c6_mcp_unreferenced.yaml"), "C6-unreferenced-entry")

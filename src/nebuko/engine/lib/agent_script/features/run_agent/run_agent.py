@@ -520,19 +520,24 @@ def _harness_system_prompt(role_name: str) -> str:
     return f"{_SYSTEM_PROMPT}\n\n{context}" if context else _SYSTEM_PROMPT
 
 
-def _enforce_harness_credentials(agent_cfg: Any) -> None:
+def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None) -> None:
     """Refuse a backend/credential pairing the linter would reject (ADR 0017).
 
     An Anthropic subscription token (``CLAUDE_CODE_OAUTH_TOKEN``) or a
     ``claude-code/*`` model may only run through the Claude Code binary, and
     that backend needs those credentials. A config that bypasses ``lint-config``
-    still fails here, before any provider call. Every model ref is checked, so a
-    complexity-tier swap cannot smuggle one past the gate.
+    still fails here, before any provider call.
+
+    Every model ref is checked, so a complexity-tier swap cannot smuggle one
+    past the gate — and so are the two model strings the run actually builds:
+    the effective ``llm_config['model']`` (a ``CONFIG_MODEL`` override replaces
+    the config ref) and the condenser's summarizer model.
     """
     if agent_cfg is None:
         return
     from nebuko.engine.harness.credentials import (  # noqa: PLC0415
         enforce_backend_credentials,
+        is_subscription_token,
     )
 
     backend = getattr(agent_cfg, "backend", None)
@@ -543,12 +548,26 @@ def _enforce_harness_credentials(agent_cfg: Any) -> None:
         for override in overrides.values()
         if getattr(override, "model_ref", None) is not None
     )
+    subscription_token = None
     for ref in refs:
         provider = getattr(ref, "provider_ref", None)
+        api_token_env = getattr(provider, "api_token_env", None)
+        if is_subscription_token(api_token_env):
+            subscription_token = api_token_env
+        enforce_backend_credentials(
+            backend, getattr(ref, "model_path", None), api_token_env
+        )
+
+    effective_model = (llm_config or {}).get("model")
+    if isinstance(effective_model, str) and effective_model:
+        enforce_backend_credentials(backend, effective_model, subscription_token)
+        # The condenser summarizer is a second LLM on the same credentials.
         enforce_backend_credentials(
             backend,
-            getattr(ref, "model_path", None),
-            getattr(provider, "api_token_env", None),
+            resolve_token_budget_policy(agent_cfg).resolved_compaction_model(
+                effective_model
+            ),
+            subscription_token,
         )
 
 
@@ -601,7 +620,7 @@ def run_agent(
     # fails loud here instead of silently running OpenHands.
     from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
 
-    _enforce_harness_credentials(agent_cfg)
+    _enforce_harness_credentials(agent_cfg, llm_config)
     harness = resolve_harness(getattr(agent_cfg, "backend", None))
     if harness.name != "openhands":
         return _run_harness_agent(

@@ -639,8 +639,11 @@ ADR 0017 rule 1: an Anthropic *subscription* token
 only be exercised by the unmodified Claude Code binary. Running it through the
 OpenHands/litellm loop risks an account ban, so the linter rejects the pairing
 (including a `complexity_overrides.<tier>.model` swap) and the run path refuses
-the same config before any provider call. The converse is an error too: a
-`backend: claude-code` agent must use Claude Code credentials.
+the same config before any provider call (the gate checks every model ref,
+the effective `llm_config` model and the condenser summarizer). The converse
+is an error too: a `backend: claude-code` agent needs a `claude-code/*` model
+path Ñ a subscription token or a metered key such as `ANTHROPIC_API_KEY`
+both work (ADR 0017 Lane K).
 
 ```yaml
 providers:
