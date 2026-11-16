@@ -1987,7 +1987,7 @@ class Engine:
             provider=str(failure.provider or ""),
             model=str(failure.model or ""),
             requires_config_fix=bool(failure.requires_config_fix),
-            timings=self._render_failure_timings(state),
+            timings=self._render_failure_timings(),
         )
         return RunOutcome(
             exit_code=ExitCode.ERROR,
@@ -2000,24 +2000,23 @@ class Engine:
             phases=tuple(phases),
         )
 
-    def _render_failure_timings(self, state: Any = None) -> str:
+    def _render_failure_timings(self) -> str:
         """The failed run's wall-clock breakdown for the failure notice (#1375).
 
-        Engine phases measured so far plus the agent's own LLM/tool split when
-        the run got far enough to persist metrics. Empty when nothing was
-        timed, so the notice keeps its old shape.
+        Engine phases measured so far. Empty when nothing was timed, so the
+        notice keeps its old shape.
+
+        Deliberately no agent-metrics line: a failed run never appends its own
+        history entry, so ``state.history[-1]`` is the *previous* step's record.
+        Reading it showed another agent's model, tokens and runtimes on every
+        failure (issue #1389: five plan failures all reported the ``context``
+        step's numbers). The provider and model are already in the notice header
+        and the failed agent's own wall-clock is the ``agent=`` phase above.
         """
         timings = {**self.init_timings, **self._clock.snapshot()}
         if not timings:
             return ""
-        lines = ["Time spent: " + _format_timings(timings)]
-        agent = _agent_timings(state)
-        if agent:
-            lines.append(
-                "Agent: "
-                + " ".join(f"{key}={value}" for key, value in agent.items())
-            )
-        return "\n".join(lines) + "\n"
+        return "Time spent: " + _format_timings(timings) + "\n"
 
     def _pending_worktree_paths(self) -> tuple[str, ...]:
         """Uncommitted paths in the caller checkout, best-effort (#1322).

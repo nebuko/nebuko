@@ -25,8 +25,39 @@ _REASONING_ALIASES = {"high": "xhigh"}
 # same bound between chunks.
 LLM_TIMEOUT_S = 90
 
+# The high complexity tier runs the heaviest model with the most reasoning on the
+# largest context, so a single call can legitimately stay silent (no streamed
+# chunk) for well over 90s before its first token. Run 43894806251 (issue #1389)
+# cut the *first* plan call of five identical attempts at exactly 90s each - the
+# retries could never succeed - and burned ~9.5 min per attempt. The measured
+# worst case is ~315s, so the high tier gets 300s; every other tier keeps 90s.
+LLM_TIMEOUT_HIGH_TIER_S = 300
+
 # Five retries (the SDK default) so transient 429 / capacity errors are absorbed.
 LLM_NUM_RETRIES = 5
+
+
+def resolve_llm_timeout(complexity: str, override: str | None = None) -> int:
+    """The per-attempt request bound for ``complexity`` (whole seconds).
+
+    ``override`` is the per-invocation ``CONFIG_LLM_TIMEOUT`` value: a positive
+    whole number of seconds wins over the tier default; anything else (empty,
+    non-numeric, fractional, zero, negative) is ignored with a warning so a typo
+    can never disable the bound that keeps a stalled provider call from blocking
+    the step. The SDK's ``LLM.timeout`` is an ``int``, hence no fractions.
+    """
+    if override:
+        try:
+            value = int(override.strip())
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+        logger.warning(
+            f"Ignoring invalid CONFIG_LLM_TIMEOUT={override!r}: expected a positive "
+            "whole number of seconds"
+        )
+    return LLM_TIMEOUT_HIGH_TIER_S if complexity == "high" else LLM_TIMEOUT_S
 
 
 def normalize_reasoning_effort(raw: str | None) -> str | None:
@@ -343,7 +374,9 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
         "api_key": api_key,
         "usage_id": "agent_script",
         "drop_params": True,
-        "timeout": LLM_TIMEOUT_S,
+        "timeout": resolve_llm_timeout(
+            config_complexity, os.getenv("CONFIG_LLM_TIMEOUT")
+        ),
         "num_retries": LLM_NUM_RETRIES,
         # Streaming keeps the connection warm across a long reasoning phase:
         # the SDK only keeps it on when an ``on_token`` sink is wired, which

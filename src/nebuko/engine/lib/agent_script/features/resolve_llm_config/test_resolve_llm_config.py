@@ -12,6 +12,7 @@ import litellm
 
 from resolve_llm_config import (
     LLM_NUM_RETRIES,
+    LLM_TIMEOUT_HIGH_TIER_S,
     LLM_TIMEOUT_S,
     LLMConfigError,
     normalize_base_url,
@@ -162,6 +163,7 @@ agents:
             "LLM_REASONING",
             "TEST_LLM_API_KEY",
             "CONFIG_COMPLEXITY",
+            "CONFIG_LLM_TIMEOUT",
             "CONFIG_TEMPERATURE",
             "CONFIG_TOP_P",
             "CONFIG_TOP_K",
@@ -262,6 +264,39 @@ agents:
         cfg = self._resolve(reasoning="xhigh")
         self.assertEqual(cfg["timeout"], LLM_TIMEOUT_S)
         self.assertEqual(LLM_TIMEOUT_S, 90)
+
+    def test_high_tier_gets_a_longer_request_bound(self):
+        """The high tier's first call can stay silent past 90s (issue #1389)."""
+        os.environ["CONFIG_COMPLEXITY"] = "high"
+        cfg = self._resolve(reasoning="xhigh")
+        self.assertEqual(cfg["timeout"], LLM_TIMEOUT_HIGH_TIER_S)
+        self.assertEqual(LLM_TIMEOUT_HIGH_TIER_S, 300)
+
+    def test_lower_tiers_keep_the_90s_bound(self):
+        for tier in ("low", "medium", ""):
+            with self.subTest(tier=tier):
+                os.environ["CONFIG_COMPLEXITY"] = tier
+                self.assertEqual(self._resolve()["timeout"], LLM_TIMEOUT_S)
+
+    def test_stream_idle_timeout_follows_the_high_tier_bound(self):
+        from openhands.sdk import LLM
+
+        os.environ["CONFIG_COMPLEXITY"] = "high"
+        llm = LLM(**self._resolve())
+
+        self.assertEqual(llm.timeout, LLM_TIMEOUT_HIGH_TIER_S)
+        self.assertEqual(llm.stream_idle_timeout, float(LLM_TIMEOUT_HIGH_TIER_S))
+
+    def test_config_llm_timeout_overrides_the_tier_default(self):
+        os.environ["CONFIG_COMPLEXITY"] = "high"
+        os.environ["CONFIG_LLM_TIMEOUT"] = "45"
+        self.assertEqual(self._resolve()["timeout"], 45)
+
+    def test_invalid_config_llm_timeout_never_disables_the_bound(self):
+        for bad in ("0", "-5", "abc", "12.5", "inf", "  "):
+            with self.subTest(value=bad):
+                os.environ["CONFIG_LLM_TIMEOUT"] = bad
+                self.assertEqual(self._resolve()["timeout"], LLM_TIMEOUT_S)
 
     def test_llm_retries_bounded_to_one(self):
         """One retry keeps the worst case near 2x the timeout (#1352)."""
