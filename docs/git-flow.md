@@ -78,7 +78,10 @@ The guard is a regex on each submitted statement, same as the `git push`
 rule: obfuscated invocations (a script or alias that itself switches
 branch) are not caught. Finalize's branch check remains the last line of
 defense and still fails the session loudly if the working branch was
-somehow changed.
+somehow changed — except for a HEAD detached at the branch tip (for example
+`use-session-branch.sh`'s `git checkout --detach origin/<branch>`), which
+finalize re-attaches to the branch; a HEAD detached anywhere else still
+fails.
 
 The engine holds up its own end before the agent starts (issue #1268): the
 scaffold checks out the feature branch on every path — created, merged, or

@@ -9,11 +9,11 @@ were unreachable (linter ``L2-unreachable-step``), never executed, and
 ``review``'s required inputs had nothing to bind to.
 
 These guards keep the chain structural: ``implement → git_diff → run_tests →
-review``. Since #957 the diff needs the remote-tracking ``origin/main`` a
-shallow, ref-pinned checkout never creates, so the step fetches it first; since
-#965 (issue #972) fetch and diff are one ``sh -c`` step, so the base ref can
-never be separated from the diff. Each step runs in its own engine invocation
-(issue #994), so cross-step workspace state is not relied upon at all.
+review``. Since #1327 the engine checks the session branch out for script steps
+(``checkout: session``, the default) with enough base history for the diff, so
+the step no longer fetches ``origin/main`` itself. Each step runs in its own
+engine invocation (issue #994), so cross-step workspace state is not relied
+upon at all.
 """
 
 from __future__ import annotations
@@ -38,22 +38,17 @@ class TestExecChainIsReachable:
     def test_implement_hands_off_to_git_diff(self):
         assert _steps()["implement"].next == "git_diff"
 
-    def test_git_diff_fetches_the_base_ref_then_diffs_in_one_step(self):
-        """The checkout is shallow: ``origin/main`` must be fetched, not assumed.
-
-        Fetch and diff are one ``sh -c`` step (issue #972), so the base ref can
-        never be separated from the diff by a chain break.
-        """
+    def test_git_diff_diffs_the_session_branch(self):
+        """The engine's checkout supplies ``origin/main``; the step just diffs."""
         git_diff = _steps()["git_diff"]
         assert git_diff.script is not None
+        assert git_diff.script.checkout == "session"
         assert git_diff.script.command == "sh"
         args = git_diff.script.args
         assert args[0] == "-c"
         script = args[1]
-        assert "main:refs/remotes/origin/main" in script
-        assert script.index("main:refs/remotes/origin/main") < script.index(
-            "git diff origin/main HEAD"
-        )
+        assert "diff --stat origin/main...HEAD" in script
+        assert "diff origin/main...HEAD" in script
         assert git_diff.next == "run_tests"
 
     def test_run_tests_is_a_script_step_that_continues_to_review(self):

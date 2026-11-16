@@ -75,7 +75,6 @@ Add a script step to the build workflow (this is not wired into
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           python3 .nebuko/scripts/evidence.py verify --issue auto --sealed-tree <seal tree id> &&
           python3 .nebuko/scripts/evidence.py run --issue auto --expect absent
 ```

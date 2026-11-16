@@ -19,13 +19,14 @@ For the high-level pitch and quick overview, see the root
 | [getting-started.md](./getting-started.md) | New users | Prerequisites, setup, first workflow run, troubleshooting. |
 | [architecture.md](./architecture.md) | Everyone | System overview: agents, orchestration loop, state model, routing cascade. |
 | [workflows.md](./workflows.md) | Users & contributors | Declarative workflow engine + all built-in workflows with step graphs. |
-| [workflows/red-test-review-loop.md](./workflows/red-test-review-loop.md) | Contributors | Which tree the red-test loop's `run_tests` executes: the `merge_main` merge of `origin/main`, conflicts, and the `tested:` line. |
+| [workflows/red-test-review-loop.md](./workflows/red-test-review-loop.md) | Contributors | Which tree the red-test loop's `run_tests` executes: the `merge_main` merge of `origin/main`, conflicts, and the `branch:` line. |
 | [root-cause-workflow.md](./root-cause-workflow.md) | Users & contributors | The `root-cause` workflow: investigate, engine-run per-delta oracle, confirm, seal, hand off. |
 | [lint.md](./lint.md) | Contributors | Offline graph-level linter for workflow YAML: rules L1–L11, CLI usage, exit codes, CI integration. |
 | [replay.md](./replay.md) | Contributors | Deterministic, no-LLM replay of per-invocation routing and complexity decisions from a workflow state (issue or state file). |
 | [agents-and-skills.md](./agents-and-skills.md) | Users & contributors | The 5 agents, the 5 skills, and the tool permission model. |
 | [configuration.md](./configuration.md) | Operators | Layered `agent-config.yaml`: providers → llms → agents, `${ref}` resolution. |
 | [subscription-plans.md](./subscription-plans.md) | Operators | Run agents on a subscription plan (CommandCode today; OpenCode Go planned). |
+| [claude-code.md](./claude-code.md) | Operators | Run roles through Claude Code (`backend: "claude-code"`): hosted quick start, per-role switch, what the harness does and does not support. |
 | [features.md](./features.md) | Contributors | Deep dives: human commands, task decomposition, safety, metrics, execution layer, zero-copy. |
 | [reference.md](./reference.md) | Contributors | Machine contracts: dispatch sentinel, workflow grammar, state schema, env vars, markers. |
 | [handoff-and-callback.md](./handoff-and-callback.md) | Contributors | The `AGENT_RUN_CONFIG` contract: dispatch vs function_call, the callback return address, routing precedence, the no-action default. |
@@ -36,6 +37,7 @@ For the high-level pitch and quick overview, see the root
 | [adr/0012-complexity-governance.md](./adr/0012-complexity-governance.md) | Operators | Layered per-repo `ComplexityPolicy`, evidence bundles, and the `ComplexityGovernor` tier adjudicator. |
 | [adr/0013-step-outputs-are-step-comments.md](./adr/0013-step-outputs-are-step-comments.md) | Contributors | A step's output is its posted comment: step-name references, `{{ <step> }}` prompt syntax, locator storage, no truncation. |
 | [adr/0014-cache-aware-cost-and-default-price-service.md](./adr/0014-cache-aware-cost-and-default-price-service.md) | Contributors | Cost precedence chain, four-rate cache-aware session cost, the OpenRouter-backed default price service, and the removal of SDK price forwarding. |
+| [adr/0017-claude-code-subscription-credential-strategies.md](./adr/0017-claude-code-subscription-credential-strategies.md) | Operators | Anthropic-compliant lanes for billing runs to a user's Claude subscription: single-user secret, actor-bound runners, per-user credential repo + App bridge, org API-key/WIF automation; guards and rejected alternatives. |
 
 Business documents (not user documentation): `etude-de-marche.md` (market
 study, in French), and the root `landscape.md` (product positioning — "what

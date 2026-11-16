@@ -4,7 +4,11 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import TokenTelemetry
+from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry import (
+    RetryEvent,
+    RetryWait,
+    TokenTelemetry,
+)
 from nebuko.engine.lib.metrics_schema import Metrics
 
 
@@ -73,6 +77,90 @@ class TestTokenTelemetryDerivation:
         )
         with pytest.raises(FrozenInstanceError):
             telemetry.first_token_at = 1.0
+
+    def test_duration_is_the_full_call_window(self):
+        telemetry = TokenTelemetry(
+            request_started_at=10.0,
+            first_token_at=11.0,
+            request_finished_at=14.5,
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+        assert telemetry.duration_s() == pytest.approx(4.5)
+
+    def test_duration_is_none_when_unordered(self):
+        telemetry = TokenTelemetry(
+            request_started_at=5.0,
+            first_token_at=None,
+            request_finished_at=5.0,
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+        assert telemetry.duration_s() is None
+
+
+class TestCallHealth:
+    """Stall and retry indicators derived from a run's calls (issue #1352)."""
+
+    @staticmethod
+    def _observation(duration, retry_count=0):
+        return TokenTelemetry(
+            request_started_at=0.0,
+            first_token_at=None,
+            request_finished_at=duration,
+            prompt_tokens=1,
+            completion_tokens=1,
+            retry_count=retry_count,
+        )
+
+    def test_empty_run_reports_no_latency(self):
+        health = TokenTelemetry.call_health([])
+        assert health.max_call_latency_ms is None
+        assert health.stall_count == 0
+        assert health.retry_count == 0
+        assert health.call_retry_counts == ()
+
+    def test_reports_max_latency_in_milliseconds(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(2.0), self._observation(12.5)]
+        )
+        assert health.max_call_latency_ms == pytest.approx(12500.0)
+
+    def test_counts_calls_over_the_stall_threshold(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(59.0), self._observation(61.0), self._observation(300.0)]
+        )
+        assert health.stall_count == 2
+
+    def test_threshold_is_configurable(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(30.0)], stall_threshold_s=10.0
+        )
+        assert health.stall_count == 1
+
+    def test_counts_every_retry_event_even_when_the_attempt_failed(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(2.0, retry_count=1)],
+            retries=[RetryEvent(1, 1, "Timeout"), RetryEvent(2, 1, "Timeout")],
+        )
+        assert health.retry_count == 2
+        assert health.call_retry_counts == (1,)
+
+    def test_sums_the_retry_backoff_windows(self):
+        health = TokenTelemetry.call_health(
+            [self._observation(2.0, retry_count=2)],
+            retries=[
+                RetryWait(RetryEvent(1, 2, "RateLimitError"), wait_ms=8000.0),
+                RetryWait(RetryEvent(2, 2, "RateLimitError"), wait_ms=16000.0),
+            ],
+        )
+
+        assert health.retry_wait_ms == pytest.approx(24000.0)
+
+    def test_retry_wait_defaults_to_zero(self):
+        health = TokenTelemetry.call_health([self._observation(2.0)])
+
+        assert health.retry_wait_ms == 0.0
 
 
 class TestTokenTelemetryAggregate:
@@ -155,3 +243,40 @@ class TestMetricsProviderHealthFields:
 
         assert decoded.tokens_per_second == pytest.approx(42.5)
         assert decoded.time_to_first_token == pytest.approx(0.75)
+
+
+class TestMetricsStallAndRetryFields:
+    """Metrics: stall/retry counters stay backward compatible (issue #1352)."""
+
+    def test_defaults_are_empty_and_omitted_when_unset(self):
+        metrics = Metrics(run_id="run-1")
+
+        assert metrics.llm_retry_count == 0
+        assert metrics.llm_max_call_latency_ms is None
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_call_retry_counts == []
+        serialized = metrics.to_dict()
+        assert "llm_max_call_latency_ms" not in serialized
+
+    def test_loads_legacy_payload_without_the_new_fields(self):
+        metrics = Metrics.from_json('{"run_id": "run-1", "input_tokens": 10}')
+
+        assert metrics.llm_retry_count == 0
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_call_retry_counts == []
+
+    def test_round_trips_the_new_fields(self):
+        metrics = Metrics(
+            run_id="run-1",
+            llm_retry_count=2,
+            llm_max_call_latency_ms=315000.0,
+            llm_stall_count=1,
+            llm_call_retry_counts=[1, 0, 1],
+        )
+
+        decoded = Metrics.from_json(metrics.to_json())
+
+        assert decoded.llm_retry_count == 2
+        assert decoded.llm_max_call_latency_ms == pytest.approx(315000.0)
+        assert decoded.llm_stall_count == 1
+        assert decoded.llm_call_retry_counts == [1, 0, 1]

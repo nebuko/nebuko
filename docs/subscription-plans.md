@@ -13,6 +13,12 @@ This page documents:
 - **OpenCode Go** — **not wired yet**; documented so the same pattern is ready
   when it lands.
 
+> **Claude Code is different.** It is a harness (`backend: "claude-code"`),
+> not an OpenAI-compatible endpoint: Claude Code brings its own tools and model
+> calls, and a subscription token bills the seat that minted it. See
+> [claude-code.md](./claude-code.md) and
+> [ADR-0017](./adr/0017-claude-code-subscription-credential-strategies.md).
+
 > **Scope:** documentation only. No runtime or schema changes — a subscription
 > reaches the agents through the same `providers → llms → agents` config as any
 > other backend.
@@ -182,5 +188,7 @@ Once a subscription's limits are reached, the metered **OpenCode Zen** provider
 
 - [configuration.md](./configuration.md) — provider / LLM / agent schema.
 - [getting-started.md](./getting-started.md) — secrets and first run.
+- [claude-code.md](./claude-code.md) — the Claude Code harness and its
+  subscription credential rules.
 - [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) — the
   working CommandCode example.

@@ -1,0 +1,22 @@
+providers:
+  claude-code:
+    api_url: "https://api.anthropic.com"
+    api_token_env: "CLAUDE_CODE_OAUTH_TOKEN"
+llms:
+  claude-haiku:
+    model_path: "claude-code/haiku"
+    provider: "${providers.claude-code}"
+  claude-opus:
+    model_path: "claude-code/opus"
+    provider: "${providers.claude-code}"
+agents:
+  a:
+    backend: "claude-code"
+    model: "${llms.claude-haiku}"
+    role: "Test agent role."
+    prompt_file: ".agents/prompts/a.md"
+    skills: ["skill-a"]
+    tools: ["think"]
+    complexity_overrides:
+      high:
+        model: "${llms.claude-opus}"

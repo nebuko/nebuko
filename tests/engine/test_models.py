@@ -113,7 +113,19 @@ class TestRunOutcome:
             "posted_body",
             "state",
             "phases",
+            "timings",
         ]
+
+    def test_timings_default_to_empty(self):
+        outcome = RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            turn_outcome=_approved_outcome(),
+            prompt=None,
+            posted_body=None,
+            state=None,
+            phases=(),
+        )
+        assert outcome.timings == {}
 
     def test_carries_the_turn_outcome_and_the_emitted_phases(self):
         outcome = RunOutcome(
@@ -194,7 +206,41 @@ class TestStepResult:
             "affected",
             "output",
             "duration_seconds",
+            "branch",
+            "head_sha",
+            "tested",
         ]
+
+    def test_records_the_tree_the_command_tested(self):
+        result = StepResult(
+            step_kind="run_script",
+            ok=True,
+            detail="",
+            affected=0,
+            branch="feature/issue-1-x",
+            head_sha="abc123",
+            tested="merge of abc123 into def456",
+        )
+        assert result.tested == "merge of abc123 into def456"
+
+    def test_defaults_to_no_tested_tree(self):
+        result = StepResult(step_kind="delete_comments", ok=True, detail="", affected=0)
+        assert result.tested == ""
+
+    def test_records_the_commit_the_command_ran_on(self):
+        result = StepResult(
+            step_kind="run_script",
+            ok=True,
+            detail="",
+            affected=0,
+            branch="feature/issue-1-x",
+            head_sha="abc123",
+        )
+        assert (result.branch, result.head_sha) == ("feature/issue-1-x", "abc123")
+
+    def test_defaults_to_no_commit(self):
+        result = StepResult(step_kind="delete_comments", ok=True, detail="", affected=0)
+        assert (result.branch, result.head_sha) == ("", "")
 
     def test_is_frozen(self):
         result = StepResult(step_kind="delete_comments", ok=True, detail="done", affected=1)
@@ -210,9 +256,10 @@ class TestNebukoManifest:
     def test_merge_main_can_be_turned_off(self):
         assert NebukoManifest(merge_main=False).merge_main is False
 
-    def test_unknown_keys_are_still_rejected(self):
-        with pytest.raises(ValueError):
-            NebukoManifest(unknown_key=True)
+    def test_unknown_keys_are_ignored(self):
+        # A manifest written for a newer engine must not abort an older run.
+        manifest = NebukoManifest(unknown_key=True)
+        assert not hasattr(manifest, "unknown_key")
 
 
 class TestDeterministicStepFromResolved:

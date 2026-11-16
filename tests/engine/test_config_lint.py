@@ -29,6 +29,10 @@ RULE_SEVERITY_EXPECTED = {
     "C6-unreferenced-entry": "warning",
     "C7-mcp-servers": "error",
     "C8-missing-role": "warning",
+    "C9-unknown-backend": "error",
+    "C10-backend-tool": "error",
+    "C11-skills-discover": "error",
+    "C12-claude-credentials": "error",
 }
 
 FILE_RULES = ("C4-prompt-file", "C5-skill-file")
@@ -48,6 +52,7 @@ KNOWN_TOOLS_EXPECTED = frozenset(
         "report_scaffold_branch",
         "complexity_review",
         "fetch_comment_bodies",
+        "handoff",
     }
 )
 
@@ -89,6 +94,7 @@ class TestConfigLinterContract:
             "_check_refs",
             "_check_schema",
             "_check_tools",
+            "_check_backends",
             "_check_roles",
             "_check_mcp_servers",
             "_check_prompt_files",
@@ -193,6 +199,49 @@ class TestRuleScenarios:
         issues = _by_rule(_lint("c7_mcp_catalog.yaml"), "C2-dangling-ref")
         assert [issue.location for issue in issues] == ["agents.a.mcp_servers[2]"]
 
+    def test_c12_rejects_a_subscription_token_on_an_openhands_agent(self):
+        """ADR 0017 rule 1: the token may only run through Claude Code."""
+        issues = _by_rule(_lint("c12_token_on_openhands.yaml"), "C12-claude-credentials")
+
+        assert [issue.location for issue in issues] == ["agents.a.model"]
+        assert issues[0].severity == "error"
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in issues[0].message
+
+    def test_c12_rejects_a_claude_code_model_on_an_openhands_agent(self):
+        issues = _by_rule(
+            _lint("c12_claude_model_on_openhands.yaml"), "C12-claude-credentials"
+        )
+
+        assert [issue.location for issue in issues] == ["agents.a.model"]
+        assert "claude-code/sonnet" in issues[0].message
+
+    def test_c12_rejects_a_claude_code_tier_swap_on_an_openhands_agent(self):
+        issues = _by_rule(
+            _lint("c12_tier_swap_on_openhands.yaml"), "C12-claude-credentials"
+        )
+
+        assert [issue.location for issue in issues] == [
+            "agents.a.complexity_overrides.high.model"
+        ]
+
+    def test_c12_rejects_a_claude_code_backend_with_a_metered_provider(self):
+        issues = _by_rule(
+            _lint("c12_claude_backend_metered_model.yaml"), "C12-claude-credentials"
+        )
+
+        assert [issue.location for issue in issues] == ["agents.a.backend"]
+        assert "ANTHROPIC_API_KEY" in issues[0].message
+        # The message must not claim the token env is the only legal credential:
+        # a metered key is accepted as long as the model path is claude-code/*.
+        assert "claude-code/*" in issues[0].hint
+
+    def test_c12_accepts_a_claude_code_backend_with_claude_credentials(self):
+        assert _lint("clean_claude_code.yaml") == []
+
+    def test_c12_accepts_a_metered_key_on_the_claude_code_backend(self):
+        """ADR 0017 Lane K runs the binary with ANTHROPIC_API_KEY too."""
+        assert _lint("clean_claude_code_api_key.yaml") == []
+
     def test_c6_warns_on_an_unreferenced_mcp_catalog_entry(self):
         issues = _by_rule(_lint("c6_mcp_unreferenced.yaml"), "C6-unreferenced-entry")
         assert {issue.location for issue in issues} == {"mcp_servers.dead-server"}
@@ -241,3 +290,20 @@ class TestShippedConfigs:
         for path in shipped:
             issues = ConfigLinter().lint(path)
             assert [issue for issue in issues if issue.rule in FILE_RULES] == []
+
+    def test_tracked_claude_profile_is_backend_clean(self):
+        """The tracked Claude Code profile must satisfy C9-C12 (issue #1368).
+
+        It was silently inert before the ``backend`` field existed: every role
+        ran OpenHands with the key dropped. The linter now fails loud, so the
+        profile has to stay servable by the backend it declares.
+        """
+        path = REPO_ROOT / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        issues = ConfigLinter().lint(path)
+        backend_rules = {
+            "C9-unknown-backend",
+            "C10-backend-tool",
+            "C11-skills-discover",
+            "C12-claude-credentials",
+        }
+        assert [issue for issue in issues if issue.rule in backend_rules] == []

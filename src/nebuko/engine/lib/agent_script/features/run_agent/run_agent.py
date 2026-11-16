@@ -11,12 +11,18 @@ import asyncio
 import dataclasses
 import json
 import os
+import uuid
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
+
+from nebuko.engine.agent_runner import EngineAgentUnavailable
+from nebuko.engine.harness.mcp import build_mcp_servers as _build_mcp_servers
+from nebuko.engine.harness.mcp import resolve_mcp_env as _resolve_mcp_env
 
 from nebuko.engine.lib.agent_script.sub_domains.token_budget.condenser import (
     build_condenser,
@@ -44,6 +50,7 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
 )
 from nebuko.engine.lib.agent_script.features.run_agent.checkpoints import (
     CHECKPOINT_100_PROMPT,
+    CHECKPOINT_100_PROMPT_NO_HANDOFF,
     CheckpointScheduler,
     compute_checkpoints,
     count_plan_changes,
@@ -137,55 +144,6 @@ Finish through the control tools described in your role instructions. Make your 
 """
 
 
-def _resolve_mcp_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """Resolve each child env var to the value of the OS env var it names.
-
-    Returns the resolved child environment and the names of any OS env vars
-    that are unset or empty (so the caller can skip that server).
-    """
-    resolved: dict[str, str] = {}
-    missing: list[str] = []
-    for child_var, source_name in env.items():
-        value = os.environ.get(source_name)
-        if value:
-            resolved[child_var] = value
-        else:
-            missing.append(source_name)
-    return resolved, missing
-
-
-def _build_mcp_servers(agent_cfg) -> dict[str, MCPServer]:
-    """Turn declarative ``mcp_servers`` into SDK server handles.
-
-    Each entry's ``env`` maps a child-process variable to the *name* of the OS
-    env var holding its value; an unset reference skips that server with a
-    warning so a missing secret degrades one capability instead of failing
-    the whole run.
-    """
-    if agent_cfg is None or not getattr(agent_cfg, "mcp_servers", None):
-        return {}
-
-    servers: dict[str, MCPServer] = {}
-    for spec in agent_cfg.mcp_servers:
-        resolved_env, missing = _resolve_mcp_env(spec.env)
-        if missing:
-            logger.warning(
-                f"MCP server '{spec.name}' skipped — unset env var(s): "
-                f"{', '.join(missing)}"
-            )
-            continue
-        server = MCPServer(
-            command=spec.command,
-            args=list(spec.args),
-            env=dict(resolved_env),
-            transport=spec.transport,
-        )
-        # Values are already resolved from the OS env; mark them literal so the
-        # SDK's ${VAR} expansion pass cannot re-interpret a resolved secret.
-        servers[spec.name] = server.as_literal()
-    return servers
-
-
 def _build_agent_context(
     role_name: str, skills: Sequence[Any] = ()
 ) -> AgentContext | None:
@@ -265,6 +223,7 @@ def _raise_if_provider_failure(failure: RunFailure, llm_config: dict) -> None:
 def _perform_wind_down(
     conversation: Conversation,
     budget: TimeoutBudget,
+    has_handoff: bool = True,
 ) -> bool:
     """Inject the wind-down prompt and run one bounded second pass.
 
@@ -272,13 +231,21 @@ def _perform_wind_down(
     consume the GitHub Actions hard timeout), but there is no recursion —
     if it trips we rely on the deterministic PR fallback instead.
 
+    Args:
+        conversation: The live conversation to wind down.
+        budget: The run's timeout budget.
+        has_handoff: Whether the role carries the ``handoff`` tool; roles
+            without it get the ``finalize``-only checkpoint 3 variant.
+
     Returns:
         True if the wind-down completed without tripping its own budget.
     """
     logger.info("Soft timeout reached — starting graceful wind-down phase")
     # CHECKPOINT_100_PROMPT wraps WIND_DOWN_PROMPT and asks for the handoff
     # update first (issue #966, scope item 3).
-    conversation.send_message(CHECKPOINT_100_PROMPT)
+    conversation.send_message(
+        CHECKPOINT_100_PROMPT if has_handoff else CHECKPOINT_100_PROMPT_NO_HANDOFF
+    )
     wind_down_watchdog, _ = _run_supervised(
         conversation, budget.wind_down_timeout_s, "Wind-down run"
     )
@@ -356,6 +323,288 @@ def _parse_context_bodies_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in payload.items()}
 
 
+def build_openhands_agent(
+    *,
+    llm: LLM,
+    cwd: str,
+    role_name: str,
+    agent_cfg: Any,
+    sdk_tools: Sequence[Any],
+    include_default_tools: Sequence[str],
+    mcp_servers: dict[str, MCPServer],
+    skill_context: Any,
+    collector: TokenTelemetryCollector,
+) -> Conversation:
+    """Build the OpenHands ``Agent`` and its ``Conversation`` (issue #1368).
+
+    Extracted from :func:`run_agent` so the harness port can construct the same
+    runtime without duplicating the SDK wiring.
+    """
+    agent = Agent(
+        llm=llm,
+        tools=list(sdk_tools),
+        include_default_tools=list(include_default_tools),
+        mcp_config=mcp_servers,
+        # Replace the SDK's whole static prompt with Nebuko's own (issue #943).
+        system_prompt=_SYSTEM_PROMPT,
+        agent_context=_build_agent_context(
+            role_name, skill_context.to_sdk_skills()
+        ),
+        condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
+    )
+    # Persist the conversation's event log (issue #1120): without a
+    # persistence_dir the SDK falls back to an InMemoryFileStore and the
+    # per-event JSON files (with per-command timings) are lost when the run
+    # ends. The default lands under the artifact staging dir via LOG_DIR's
+    # parent so the log uploads with the run's other artifacts.
+    return Conversation(
+        agent=agent,
+        workspace=cwd,
+        persistence_dir=_resolve_persistence_dir(),
+        # Keep the streaming path live so the LLM timeout applies between
+        # chunks rather than to the whole reasoning turn (issue #775).
+        token_callbacks=[_discard_token, collector.on_token],
+    )
+
+
+def _drop_subscription_tokens_for(backend: str) -> None:
+    """Remove Anthropic subscription tokens from the env of any other backend.
+
+    ADR 0017 A3: the workflow exports ``CLAUDE_CODE_OAUTH_TOKEN`` into the job
+    environment of every trigger, and a backend whose tools spawn subprocesses
+    (OpenHands' ``terminal`` inherits ``os.environ``) would hand a
+    prompt-injected agent the token. Only the Claude Code binary needs it, so
+    the other backends never see it.
+    """
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        CLAUDE_CODE_BACKEND,
+        scrub_subscription_tokens,
+    )
+
+    if backend == CLAUDE_CODE_BACKEND:
+        return
+    removed = scrub_subscription_tokens(os.environ)
+    if removed:
+        logger.info(
+            f"Dropped subscription credential(s) from the {backend} environment: "
+            f"{', '.join(removed)}"
+        )
+
+
+def _run_harness_agent(
+    harness: Any,
+    *,
+    role_name: str,
+    agent_cfg: Any,
+    prompt: str,
+    cwd: str,
+    llm_config: dict | None = None,
+) -> Any:
+    """Run one work turn on a non-OpenHands harness (issue #1368).
+
+    Returns a conversation-shaped view of the run, so the metrics and output
+    builders consume it exactly like an OpenHands ``Conversation``. The
+    closing turn stays with the host: the view carries the harness session and
+    its closing channel for it to delegate to.
+    """
+    from nebuko.engine.harness.claude_code import ClaudeCodeHarness  # noqa: PLC0415
+
+    if not isinstance(harness, ClaudeCodeHarness):
+        raise EngineAgentUnavailable(
+            f"agent backend {harness.name!r} has no work-loop driver; add one to "
+            "its harness adapter (issue #1368)"
+        )
+
+    conversation = harness.build_conversation(
+        role_name=role_name,
+        agent_cfg=agent_cfg,
+        prompt=_harness_system_prompt(role_name),
+        agent_context=SimpleNamespace(id=uuid.uuid4().hex, workspace=cwd),
+    )
+    session = conversation.harness_session
+    capabilities = harness.capabilities()
+    budget = resolve_timeout_budget()
+    logger.info(
+        f"Starting {harness.name} task execution "
+        f"(soft timeout budget: {budget.soft_timeout_s:.0f}s, "
+        f"wind-down: {budget.wind_down_timeout_s:.0f}s)..."
+    )
+    logger.info(f"Prompt: {prompt[:200]}...")
+
+    watchdog = RunWatchdog(budget.soft_timeout_s, _interrupt_hook(session)).arm()
+    error: Exception | None = None
+    try:
+        session.send_message(prompt)
+        session.run(timeout_s=budget.soft_timeout_s)
+    except Exception as exc:  # noqa: BLE001 - classified below, never swallowed
+        logger.error(f"{harness.name} run raised: {exc}")
+        error = exc
+    finally:
+        watchdog.cancel()
+
+    # The session's own turn timeout and the outer watchdog trip together; a
+    # ``TimeoutError`` from ``run`` is a soft timeout even if the timer lost
+    # the race by a few milliseconds.
+    soft_timeout_fired = watchdog.fired or isinstance(error, TimeoutError)
+    wind_down_completed = False
+    if soft_timeout_fired:
+        conversation.execution_status = SimpleNamespace(value="paused")
+        wind_down_completed = _wind_down_harness(session, budget)
+        outcome = RunOutcome(
+            status=OutcomeStatus.GRACEFULLY_TIMED_OUT,
+            soft_timeout_fired=True,
+            wind_down_completed=wind_down_completed,
+        )
+    elif error is not None:
+        conversation.execution_status = SimpleNamespace(value="error")
+        failure = classify_failure(error)
+        _raise_if_provider_failure(failure, llm_config or {})
+        outcome = RunOutcome(status=OutcomeStatus.FAILURE, failure=failure)
+    else:
+        outcome = RunOutcome(status=OutcomeStatus.SUCCESS)
+
+    conversation.run_outcome = outcome
+
+    # ── Bounded dispatch recall (issue #524) ────────────────────
+    if outcome is not OutcomeStatus.FAILURE:
+        recall_count, recall_offset = _harness_dispatch_recalls(
+            session, conversation, capabilities
+        )
+        if recall_count:
+            conversation.run_outcome = dataclasses.replace(
+                conversation.run_outcome,
+                dispatch_recall_count=recall_count,
+                dispatch_recall_event_offset=recall_offset,
+            )
+
+    logger.info(f"Run outcome: {outcome.status.value}")
+    return conversation
+
+
+def _interrupt_hook(session: Any):
+    """The watchdog's callback: stop the turn, keep the session usable.
+
+    Closing the session on a soft timeout would make the wind-down impossible,
+    so a session that can interrupt is preferred; ``close`` is the fallback for
+    a runtime that cannot.
+    """
+    interrupt = getattr(session, "interrupt", None)
+    return interrupt if callable(interrupt) else session.close
+
+
+def _wind_down_harness(session: Any, budget: TimeoutBudget) -> bool:
+    """Inject the wind-down prompt and run one bounded second pass.
+
+    Returns:
+        True if the wind-down completed without tripping its own budget.
+    """
+    logger.info("Soft timeout reached — starting graceful wind-down phase")
+    try:
+        session.send_message(CHECKPOINT_100_PROMPT)
+        session.run(timeout_s=budget.wind_down_timeout_s)
+        return True
+    except Exception as exc:  # noqa: BLE001 - the fallback is deterministic
+        logger.warning(
+            f"Wind-down budget also exhausted ({exc}) — relying on "
+            "deterministic PR fallback"
+        )
+        return False
+
+
+def _harness_dispatch_recalls(
+    session: Any, conversation: Any, capabilities: Any
+) -> tuple[int, int | None]:
+    """Bounded missing-outcome recall for a harness run (issue #524).
+
+    On this path the closing verdict lands in the session's ``FinalizeSink``
+    rather than in the engine registry, so an empty sink after the work turn is
+    exactly the "no decision" signal the recall pass exists for.
+
+    Returns:
+        The number of recall turns performed and the pre-recall event offset
+        (``None`` when no recall fired).
+    """
+    sink = getattr(session, "sink", None)
+    if not capabilities.dispatch_recall or sink is None:
+        return 0, None
+
+    def _has_dispatch() -> bool:
+        return sink.result() is not None
+
+    def _run_recall_pass(n: int) -> bool:
+        logger.warning(
+            f"Run ended without a finalize turn outcome — recall "
+            f"{n}/{MAX_DISPATCH_RECALLS}"
+        )
+        try:
+            session.run(timeout_s=RECALL_PASS_BUDGET_S)
+            return True
+        except Exception as exc:  # noqa: BLE001 - give up, keep the outcome
+            logger.warning(f"Dispatch recall {n} exhausted its budget — giving up: {exc}")
+            return False
+
+    offset = len(getattr(getattr(conversation, "state", None), "events", []))
+    count = perform_dispatch_recalls(session, _has_dispatch, _run_recall_pass)
+    return count, (offset if count else None)
+
+
+def _harness_system_prompt(role_name: str) -> str:
+    """The static prompt plus the role's injected team block (issue #943)."""
+    context = compose_system_context(role_name)
+    return f"{_SYSTEM_PROMPT}\n\n{context}" if context else _SYSTEM_PROMPT
+
+
+def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None) -> None:
+    """Refuse a backend/credential pairing the linter would reject (ADR 0017).
+
+    An Anthropic subscription token (``CLAUDE_CODE_OAUTH_TOKEN``) or a
+    ``claude-code/*`` model may only run through the Claude Code binary, and
+    that backend needs those credentials. A config that bypasses ``lint-config``
+    still fails here, before any provider call.
+
+    Every model ref is checked, so a complexity-tier swap cannot smuggle one
+    past the gate — and so are the two model strings the run actually builds:
+    the effective ``llm_config['model']`` (a ``CONFIG_MODEL`` override replaces
+    the config ref) and the condenser's summarizer model.
+    """
+    if agent_cfg is None:
+        return
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        enforce_backend_credentials,
+        is_subscription_token,
+    )
+
+    backend = getattr(agent_cfg, "backend", None)
+    refs = [getattr(agent_cfg, "model_ref", None)]
+    overrides = getattr(agent_cfg, "complexity_overrides", None) or {}
+    refs.extend(
+        override.model_ref
+        for override in overrides.values()
+        if getattr(override, "model_ref", None) is not None
+    )
+    subscription_token = None
+    for ref in refs:
+        provider = getattr(ref, "provider_ref", None)
+        api_token_env = getattr(provider, "api_token_env", None)
+        if is_subscription_token(api_token_env):
+            subscription_token = api_token_env
+        enforce_backend_credentials(
+            backend, getattr(ref, "model_path", None), api_token_env
+        )
+
+    effective_model = (llm_config or {}).get("model")
+    if isinstance(effective_model, str) and effective_model:
+        enforce_backend_credentials(backend, effective_model, subscription_token)
+        # The condenser summarizer is a second LLM on the same credentials.
+        enforce_backend_credentials(
+            backend,
+            resolve_token_budget_policy(agent_cfg).resolved_compaction_model(
+                effective_model
+            ),
+            subscription_token,
+        )
+
+
 def run_agent(
     llm_config: dict,
     prompt: str,
@@ -382,20 +631,48 @@ def run_agent(
                    Defaults to the engine's ``CONTEXT_BODIES`` env hand-off.
 
     Returns:
-        The completed Conversation object.
+        The completed conversation object: an OpenHands ``Conversation``, or the
+        harness session's conversation-shaped view on another backend (issue
+        #1368).
     """
-    llm = LLM(**llm_config)
+    role_name = os.environ.get("ROLE_NAME", "unknown")
 
     cwd = os.fspath(workspace) if workspace is not None else (
         os.environ.get("GFA_REPO_ROOT") or os.getcwd()
     )
 
-    role_name = os.environ.get("ROLE_NAME", "unknown")
-
     # Repair malformed tool-call JSON/keys before the SDK turns each one into
     # a wasted round-trip (13% of the GLM-5.3-flash actions in the issue #1114
     # run died on extra_forbidden / unparseable arguments).
     install_tool_call_repair()
+
+    # ── Harness selection (issue #1368) ──────────────────────────
+    # The port owns which runtime executes the turn. OpenHands runs the
+    # supervised work loop below; every other backend runs through its own
+    # harness session and returns the same conversation-shaped view, so the
+    # metrics and output builders stay unchanged. An unregistered backend
+    # fails loud here instead of silently running OpenHands.
+    from nebuko.engine.harness import resolve_harness  # noqa: PLC0415
+
+    _enforce_harness_credentials(agent_cfg, llm_config)
+    harness = resolve_harness(getattr(agent_cfg, "backend", None))
+    _drop_subscription_tokens_for(harness.name)
+    if harness.name != "openhands":
+        return _run_harness_agent(
+            harness,
+            role_name=role_name,
+            agent_cfg=agent_cfg,
+            prompt=prompt,
+            cwd=cwd,
+            llm_config=llm_config,
+        )
+
+    # Token telemetry capture (issue #829). Created before the LLM so the SDK's
+    # ``retry_listener`` can report every retry attempt into the same sink
+    # (issue #1352).
+    collector = TokenTelemetryCollector()
+
+    llm = LLM(**llm_config, retry_listener=collector.on_retry)
 
     # ── Tool resolution ──────────────────────────────────────────
     default_tool_list = [
@@ -447,41 +724,24 @@ def run_agent(
             f"Attaching MCP servers for {role_name}: {sorted(mcp_servers)}"
         )
 
-    # ── System prompt config ─────────────────────────────────────
-    agent = Agent(
-        llm=llm,
-        tools=sdk_tools,
-        include_default_tools=include_default_tools,
-        mcp_config=mcp_servers,
-        # Replace the SDK's whole static prompt with Nebuko's own (issue #943).
-        system_prompt=_SYSTEM_PROMPT,
-        agent_context=_build_agent_context(
-            role_name, skill_context.to_sdk_skills()
-        ),
-        condenser=build_condenser(llm, resolve_token_budget_policy(agent_cfg)),
-    )
-
     # ── Token telemetry capture (issue #829) ─────────────────────
     # The collector stamps each call's request start (via litellm.callbacks)
     # and reads first-token/finish/usage from the streamed chunks; LangFuse
     # self-registers only when its env keys opt in (default-off).
-    collector = TokenTelemetryCollector()
     install(collector)
     maybe_register_langfuse()
 
     # ── Conversation setup & supervised execution ────────────────
-    # Persist the conversation's event log (issue #1120): without a
-    # persistence_dir the SDK falls back to an InMemoryFileStore and the
-    # per-event JSON files (with per-command timings) are lost when the run
-    # ends. The default lands under the artifact staging dir via LOG_DIR's
-    # parent so the log uploads with the run's other artifacts.
-    conversation = Conversation(
-        agent=agent,
-        workspace=cwd,
-        persistence_dir=_resolve_persistence_dir(),
-        # Keep the streaming path live so the LLM timeout applies between
-        # chunks rather than to the whole reasoning turn (issue #775).
-        token_callbacks=[_discard_token, collector.on_token],
+    conversation = build_openhands_agent(
+        llm=llm,
+        cwd=cwd,
+        role_name=role_name,
+        agent_cfg=agent_cfg,
+        sdk_tools=sdk_tools,
+        include_default_tools=include_default_tools,
+        mcp_servers=mcp_servers,
+        skill_context=skill_context,
+        collector=collector,
     )
 
     budget = resolve_timeout_budget()
@@ -512,7 +772,9 @@ def run_agent(
         return count_plan_changes(text)
 
     checkpoint_scheduler = CheckpointScheduler(
-        compute_checkpoints(budget.soft_timeout_s)[:2],
+        compute_checkpoints(
+            budget.soft_timeout_s, has_handoff=resolved.has("handoff")
+        )[:2],
         deliver=lambda event: conversation.send_message(event.prompt),
         is_finished=lambda: status_value(conversation) == _STATUS_FINISHED,
     ).arm()
@@ -541,7 +803,9 @@ def run_agent(
         # The overall outcome stays "gracefully_timed_out" whether or not
         # the wind-down itself completed; the engine's publisher commits
         # and pushes whatever the agent left after the run.
-        wind_down_completed = _perform_wind_down(conversation, budget)
+        wind_down_completed = _perform_wind_down(
+            conversation, budget, has_handoff=resolved.has("handoff")
+        )
         outcome = OutcomeStatus.GRACEFULLY_TIMED_OUT
     elif main_error is not None:
         # A non-cancellation crash escaped arun(): whatever status the

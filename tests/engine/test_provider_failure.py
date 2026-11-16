@@ -160,6 +160,76 @@ def _saved_state(tmp_path: Path) -> dict:
     return json.loads((tmp_path / "runs" / "run-1" / "state.json").read_text())
 
 
+class TestProviderFailureTimings:
+    """The failed run reports where its wall-clock went (issue #1375)."""
+
+    def test_outcome_carries_the_phase_timings(self, tmp_path, monkeypatch):
+        _, outcome = _run_provider_failure(tmp_path, monkeypatch)
+
+        assert outcome.timings
+        assert {"normalize", "resolve_config", "guards", "prompt", "agent"} <= set(
+            outcome.timings
+        )
+        assert all(duration >= 0.0 for duration in outcome.timings.values())
+
+    def test_failure_comment_shows_the_time_spent(self, tmp_path, monkeypatch):
+        _run_provider_failure(tmp_path, monkeypatch)
+
+        journal = _journal(tmp_path)
+        assert "Time spent: " in journal
+        assert "agent=" in journal  # the phase that failed is included
+
+    def test_failure_comment_does_not_report_the_previous_steps_metrics(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed run appends no history entry: ``history[-1]`` is the prior step.
+
+        Issue #1389: every plan failure printed the earlier ``context`` agent's
+        model, tokens and runtimes in its "Agent:" line.
+        """
+        from nebuko.engine.lib.workflow_state.sub_domains.history_entry.history_entry import (
+            HistoryEntry,
+        )
+        from nebuko.engine.lib.workflow_state.sub_domains.state_metrics.state_metrics import (
+            StateMetrics,
+        )
+
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED))
+        prior = _prior_state()
+        prior.history.append(
+            HistoryEntry(
+                step="context",
+                agent="context",
+                turn_outcome={"status": "completed", "appreciation": "approved"},
+                metrics=StateMetrics(
+                    model_name="stale-previous-step-model",
+                    agent_runtime_ms=298523.56,
+                    wall_clock_ms=424014.28,
+                ),
+            )
+        )
+        engine.adapter.save_state(prior)
+
+        def _boom(self, prompt):
+            raise _provider_failure()
+
+        monkeypatch.setattr(Engine, "invoke_agent", _boom)
+        engine.run()
+
+        journal = _journal(tmp_path)
+        assert "Time spent: " in journal
+        assert "stale-previous-step-model" not in journal
+        assert "agent_runtime_ms=" not in journal
+        assert "Agent: " not in journal
+
+    def test_timings_artifact_is_staged(self, tmp_path, monkeypatch):
+        _run_provider_failure(tmp_path, monkeypatch)
+
+        staged = tmp_path / "runs" / "run-1" / "timings.json"
+        assert json.loads(staged.read_text(encoding="utf-8"))["agent"] >= 0.0
+
+
 class TestProviderFailureStopsTheRun:
     def test_first_call_provider_failure_stops_before_validate(
         self, tmp_path, monkeypatch

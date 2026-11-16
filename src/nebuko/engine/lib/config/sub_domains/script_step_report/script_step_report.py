@@ -56,6 +56,13 @@ class ScriptStepReport(BaseModel):
     exit_code: int | None = None
     duration_seconds: float = 0.0
     output: str = ""
+    # The commit the command ran on (issue #1327): the session branch checked
+    # out for evidence, empty when it ran on the workflow ref.
+    branch: str = ""
+    head_sha: str = ""
+    # The tree the command saw (issue #1344): "merge of <head> into <base>"
+    # when the base was merged in, "branch head <sha>" otherwise.
+    tested: str = ""
 
     # Frozen: a report describes one already-finished execution (functional-first
     # value object).
@@ -73,6 +80,7 @@ class ScriptStepReport(BaseModel):
             [
                 self._banner(),
                 "",
+                self._commit_line(),
                 "<details>",
                 "<summary>command output</summary>",
                 "",
@@ -81,6 +89,21 @@ class ScriptStepReport(BaseModel):
                 "</details>",
             ]
         )
+
+    def _commit_line(self) -> str:
+        """Which commit the command ran on (issue #1327).
+
+        Always rendered, so a step that ran on the workflow ref says so
+        explicitly (``branch: none``) instead of leaving the reader to guess.
+        """
+        branch = self.branch or "none"
+        head = f"`{self.head_sha[:12]}`" if self.head_sha else "unknown"
+        line = f"branch: `{branch}` · head: {head}"
+        if self.tested:
+            # Which tree the command saw (issue #1344): CI tests the PR merge
+            # commit, so a run that tested the bare branch head must say so.
+            line = f"{line} · {self.tested}"
+        return line
 
     def _banner(self) -> str:
         status = "succeeded" if self.ok else "failed"

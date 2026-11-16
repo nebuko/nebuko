@@ -1,6 +1,7 @@
 """Tests for wiring captured token telemetry into the run Metrics (issue #829)."""
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -71,6 +72,22 @@ class _TokenUsage:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.cache_read_tokens = cache_read_tokens
+
+
+def _agent_cfg(api_url="https://api.mistral.ai/v1"):
+    """A minimal agent config whose provider resolves to ``api_url``."""
+    provider = SimpleNamespace(api_url=api_url, api_token_env="TEST_KEY")
+    model_ref = SimpleNamespace(
+        model_path="mistral/deepseek-v4-1-flash-1017",
+        provider_ref=provider,
+        input_price=None,
+        output_price=None,
+        cache_read_price=None,
+        cache_write_price=None,
+    )
+    return SimpleNamespace(
+        model_ref=model_ref, complexity_overrides={}, temperature=0.0
+    )
 
 
 def _conversation_with(cache_hit_rate, token_usages):
@@ -209,6 +226,97 @@ class TestCollectLlmMetricsProviderHealth:
 
         assert metrics.tokens_per_second is None
         assert metrics.time_to_first_token is None
+
+
+class _Clock:
+    """Deterministic monotonic clock so a call can be made to look 70s long."""
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def _record_call_of(collector, clock, duration_s, retries=0):
+    collector.log_pre_api_call(model="m", messages=[], kwargs={"litellm_call_id": "c1"})
+    for attempt in range(retries):
+        collector.on_retry(attempt + 1, retries, TimeoutError("stalled"))
+    clock.advance(duration_s)
+    collector.on_token(_Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=9)))
+
+
+class TestCollectLlmMetricsStallsAndRetries:
+    """A stalled or retried call is visible in the step metrics (issue #1352)."""
+
+    def test_reports_max_latency_and_stall_count(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=70.0)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_max_call_latency_ms == pytest.approx(70000.0, rel=1e-3)
+        assert metrics.llm_stall_count == 1
+
+    def test_a_normal_call_is_not_a_stall(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=3.0)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_max_call_latency_ms == pytest.approx(3000.0, rel=1e-3)
+
+    def test_reports_retry_count_and_per_call_counts(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        _record_call_of(collector, clock, duration_s=2.0, retries=1)
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_retry_count == 1
+        assert metrics.llm_call_retry_counts == [1]
+
+    def test_defaults_without_any_observation(self):
+        install(TokenTelemetryCollector())
+
+        metrics = collect_llm_metrics(_Conversation())
+
+        assert metrics.llm_retry_count == 0
+        assert metrics.llm_stall_count == 0
+        assert metrics.llm_max_call_latency_ms is None
+        assert metrics.llm_call_retry_counts == []
+
+    def test_reports_the_retry_wait_and_provider(self, monkeypatch):
+        collector = TokenTelemetryCollector()
+        install(collector)
+        clock = _Clock()
+        monkeypatch.setattr(seam.time, "monotonic", clock)
+        collector.log_pre_api_call(
+            model="m", messages=[], kwargs={"litellm_call_id": "c1"}
+        )
+        collector.on_retry(1, 1, TimeoutError("backend_out_of_capacity"))
+        clock.advance(8.0)
+        collector.log_pre_api_call(
+            model="m", messages=[], kwargs={"litellm_call_id": "c2"}
+        )
+        clock.advance(2.0)
+        collector.on_token(_Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=9)))
+
+        metrics = collect_llm_metrics(_Conversation(), agent_cfg=_agent_cfg())
+
+        assert metrics.provider_retry_wait_ms == pytest.approx(8000.0)
+        assert metrics.provider == "https://api.mistral.ai/v1"
 
 
 class TestCollectLlmMetricsCacheAndReasoning:

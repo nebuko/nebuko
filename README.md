@@ -165,7 +165,8 @@ generates. Details: [adoption.md §3](docs/adoption.md#3-the-entrypoint-copy-pas
 3. **Add secrets** under *Settings → Secrets and variables → Actions*:
    - the provider key named by your config's `api_token_env`:
      `OPENROUTER_API_KEY`, `COMMANDCODE_API_KEY`, `OPENCODE_GO_API_KEY`,
-     `MISTRAL_API_KEY` or `LOCAL_VLLM_API_TOKEN` (see [providers](#providers));
+     `MISTRAL_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or `LOCAL_VLLM_API_TOKEN`
+     (see [providers](#providers) and [docs/claude-code.md](docs/claude-code.md));
    - optional MCP tokens (e.g. `BRAVE_API_KEY`) through the generic
      `EXTRA_SECRET_n_*` slots — see [adoption.md §3.1](docs/adoption.md#31-wiring-extra-secrets-mcp-tokens).
 
@@ -244,6 +245,7 @@ sampling that cascades per-invocation > per-agent > per-LLM. A per-step
 | **OpenRouter** | [`agent-config-openrouter.yaml`](defaults/agents/agent-config-openrouter.yaml) | Pay-as-you-go; 25+ free models | Model variety, zero-commitment trial |
 | **CommandCode** | [`agent-config-commandcode.yaml`](defaults/agents/agent-config-commandcode.yaml) | ~$10/mo GOAT plan ($10 → $70 of credits); API access needs **GOAT or higher** | Cheapest subscription-driven runs |
 | **Mistral** | [`agent-config-mistral.yaml`](defaults/agents/agent-config-mistral.yaml) | Pay-as-you-go per [published pricing](https://docs.mistral.ai/inference/pricing) | Small, fast European-hosted models with built-in reasoning |
+| **Claude Code** | [`agent-config-anthropic.yaml`](.nebuko/agents/agent-config-anthropic.yaml) | Your Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`) or an API key | Claude Code's own tools and context management — see [claude-code.md](docs/claude-code.md) |
 
 Copy a profile to `.nebuko/agents/agent-config.yaml` and point
 `agent_config_path` at it (Quickstart step 1). See

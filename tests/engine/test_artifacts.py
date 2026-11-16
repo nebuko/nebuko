@@ -9,6 +9,7 @@ SDK's ``app.log`` is renamed to the browser-viewable ``app.txt`` (issue #894).
 
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from nebuko.engine.artifacts import (
     EVENT_LOG_FILE,
     PERSISTENCE_DIR_NAME,
     SDK_APP_LOG_FILE,
+    TIMINGS_FILE,
     ArtifactFile,
     RunArtifactStager,
     RunArtifacts,
@@ -73,6 +75,7 @@ class TestRunArtifactStager:
             ArtifactFile(name=CONSOLE_LOG_FILE, path=staging.resolve() / CONSOLE_LOG_FILE),
             ArtifactFile(name=APP_LOG_FILE, path=staging.resolve() / APP_LOG_FILE),
             ArtifactFile(name=EVENT_LOG_FILE, path=staging.resolve() / EVENT_LOG_FILE),
+            ArtifactFile(name=TIMINGS_FILE, path=staging.resolve() / TIMINGS_FILE),
         )
         assert all(artifact.path.is_absolute() for artifact in files)
 
@@ -88,7 +91,7 @@ class TestRunArtifactStager:
 
         names = [artifact.name for artifact in RunArtifactStager(staging).artifact_files()]
 
-        assert names == ["console.txt", "app.txt", "events.jsonl"]
+        assert names == ["console.txt", "app.txt", "events.jsonl", "timings.json"]
 
     def test_bundle_renames_the_sdk_app_log_to_app_txt(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"
@@ -111,7 +114,16 @@ class TestRunArtifactStager:
             "console.txt",
             "app.txt",
             "events.jsonl",
+            "timings.json",
         ]
+
+    def test_stage_timings_writes_the_json_payload(self, tmp_path):
+        staging = tmp_path / "nebuko-task-logs"
+
+        RunArtifactStager(staging).stage_timings({"agent": 1234.5, "route": 0.5})
+
+        payload = json.loads((staging / TIMINGS_FILE).read_text(encoding="utf-8"))
+        assert payload == {"agent": 1234.5, "route": 0.5}
 
     def test_bundle_without_persistence_writes_no_event_log(self, tmp_path):
         staging = tmp_path / "nebuko-task-logs"

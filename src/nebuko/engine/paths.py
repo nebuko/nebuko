@@ -52,6 +52,7 @@ __all__ = [
     "LIB_DIR",
     "NebukoPaths",
     "defaults_dir",
+    "load_manifest",
     "repo_root",
 ]
 
@@ -116,7 +117,7 @@ class NebukoPaths:
             repo_root=root,
             user_dir=user_dir,
             defaults_dir=defaults_dir(),
-            manifest=_load_manifest(user_dir / MANIFEST_NAME),
+            manifest=load_manifest(user_dir / MANIFEST_NAME),
         )
 
     # @stub-protected
@@ -260,7 +261,7 @@ class ConfigPathAnchor:
         return str(self.caller_root / self.raw)
 
 
-def _load_manifest(path: Path) -> NebukoManifest:
+def load_manifest(path: Path) -> NebukoManifest:
     """Parse the optional manifest; an absent file yields an empty manifest."""
     if not path.is_file():
         return NebukoManifest()

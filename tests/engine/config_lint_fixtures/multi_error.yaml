@@ -6,6 +6,9 @@ llms:
   l1:
     model_path: "hosted_vllm/l1"
     provider: "${providers.p1}"
+  l2:
+    model_path: "hosted_vllm/l2"
+    provider: "${providers.p1}"
 agents:
   a:
     model: "${llms.nope}"
@@ -17,3 +20,17 @@ agents:
         command: "npx"
       - name: "dup"
         command: "npx"
+  b:
+    backend: "no-such-backend"
+    model: "${llms.l1}"
+    role: "Second agent."
+    prompt_file: ".agents/prompts/a.md"
+    tools: ["think"]
+  c:
+    backend: "claude-code"
+    model: "${llms.l1}"
+    role: "Third agent."
+    prompt_file: ".agents/prompts/a.md"
+    skills:
+      - discover: ["ghost-skill"]
+    tools: ["think", "file_editor"]

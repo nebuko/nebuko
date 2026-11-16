@@ -28,6 +28,10 @@ dependencies = [
 # `uv lock`).
 runtime = [
     "litellm",
+    # The official Claude Code SDK (issue #1368): it drives the plain `claude`
+    # binary in headless mode and can host an *in-process* MCP server, which is
+    # the only way a custom tool (``finalize``) reaches Claude Code.
+    "claude-agent-sdk>=0.1",
     "openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@8ba966d1d3af49f08e04349c055009e1614b48d6#subdirectory=openhands-sdk",
     "openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@8ba966d1d3af49f08e04349c055009e1614b48d6#subdirectory=openhands-tools",
 ]

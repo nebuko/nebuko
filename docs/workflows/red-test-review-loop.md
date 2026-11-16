@@ -6,16 +6,16 @@ agent, runs `git_diff` and `run_tests`, so review judges evidence the agent
 did not produce.
 
 This page explains **which tree** `run_tests` executes against, why it used to
-disagree with CI, and how to read the `tested:` line in the run log.
+disagree with CI, and how to read the `branch:` line in the run log.
 
 ---
 
 ## What code the tests run on
 
-Script steps start on the workflow's own checkout, so `run_tests` first calls
-`.nebuko/scripts/use-session-branch.sh`. The script fetches `origin`, detaches
-onto the issue's `feature/issue-<n>-*` branch, and then — when asked — merges
-`origin/main` into that detached head.
+Script steps run on the session branch (`checkout: session`, the default since
+issue #1327): the engine fetches `origin`, detaches onto the issue's
+`feature/issue-<n>-*` branch, and — when asked — merges `origin/main` into that
+detached head.
 
 The merge is what makes the run comparable with CI. `actions/checkout` on a
 pull request checks out GitHub's **PR merge commit**: the branch head merged
@@ -42,11 +42,19 @@ The merge is on by default. `.nebuko/nebuko.yaml` sets it repo-wide:
 merge_main: true   # default when undeclared
 ```
 
-- **Default: on.** With no manifest key the script merges `origin/main` into
+- **Default: on.** With no manifest key the engine merges `origin/main` into
   the detached branch head before the step's command runs.
-- `NEBUKO_MERGE_MAIN=0` (or `1`) overrides the manifest for one step. The
-  `git_diff` step sets `0`: a merge would pull `main`'s changes into the diff
-  and hide the change under review.
+- A step opts out with an `env` block on its `script`:
+
+  ```yaml
+  script:
+    command: "sh"
+    env:
+      NEBUKO_MERGE_MAIN: "0"
+  ```
+
+  Both `git_diff` steps do: a merge would pull `main`'s changes into the diff
+  and hide the change under review. `NEBUKO_MERGE_MAIN=1` forces the merge on.
 - The merge uses `git -c user.name=nebuko -c user.email=nebuko@invalid merge
   --no-edit --no-ff origin/main`, so it works on a runner with no git identity
   configured.
@@ -57,28 +65,29 @@ merge_main: true   # default when undeclared
 ## Merge conflicts
 
 If the branch and `origin/main` changed the same lines, the merge cannot
-complete. The script then:
+complete. The engine then:
 
 1. runs `git merge --abort`, leaving the checkout clean on the branch head;
-2. prints `merge: conflict with origin/main; testing branch head`;
-3. exits `0`, so the red tests still run and still produce evidence.
+2. logs `evidence checkout: <branch> conflicts with origin/main; testing the
+   branch head`;
+3. still runs the step, so the red tests still produce evidence.
 
 A conflicted run therefore tests the branch head, not the merged tree. Its
 counts can differ from CI's — the branch needs `main` merged in (or a rebase)
 before the two agree.
 
-## Reading the `tested:` line
+## Reading the `branch:` line
 
-Every run prints exactly one line naming the tree it tested:
+The step's posted comment names the tree it tested, on its `branch:` line:
 
 ```
-tested: merge of <branch head sha> into <origin/main sha>
+branch: `feature/issue-1344-x` · head: `0123456789ab` · merge of <branch head sha> into <origin/main sha>
 ```
 
 or, when the flag is off or the merge conflicted:
 
 ```
-tested: branch head <branch head sha>
+branch: `feature/issue-1344-x` · head: `0123456789ab` · branch head <branch head sha>
 ```
 
 Compare that line with CI's log for the same pull request:
@@ -87,6 +96,6 @@ Compare that line with CI's log for the same pull request:
   subtests` summary should match CI's.
 - Different `origin/main` sha → different counts are expected and legitimate;
   `main` moved between the two runs (tests added, removed, or fixed).
-- `tested: branch head …` in a `run_tests` log → the merge did not happen
-  (flag missing or conflict); treat the extra failures as possibly
-  already-fixed-on-`main` before charging them to the change.
+- `branch head …` in a `run_tests` comment → the merge did not happen (flag
+  off or conflict); treat the extra failures as possibly already-fixed-on-
+  `main` before charging them to the change.

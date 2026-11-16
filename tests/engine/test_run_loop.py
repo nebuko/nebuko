@@ -1219,12 +1219,17 @@ class TestBenignNoNextAgentExit:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
-        assert outcome.posted_body is None
         assert "agent" not in outcome.phases
         assert outcome.state is not None
         # The reason is recorded in the state alongside the existing context.
         assert outcome.state.current_context["terminal_reason"] == "No valid task found"
         assert outcome.state.current_context["last_run_status"] == "success"
+        # A human who triggered the run gets an answer (issue #1376).
+        assert outcome.posted_body is not None
+        assert outcome.posted_body.splitlines()[0] == "<!-- bot-workflow-terminal -->"
+        assert "@olivier-norture" in outcome.posted_body
+        assert "No valid task found" in outcome.posted_body
+        assert "<!-- workflow-continue -->" not in outcome.posted_body
 
     def test_a_terminal_step_skip_exits_zero(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
@@ -1241,7 +1246,53 @@ class TestBenignNoNextAgentExit:
         outcome = engine.run()
 
         assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is not None
+        assert "no agent to run" in outcome.posted_body
+
+    def test_a_bot_triggered_terminal_skip_stays_silent(self, tmp_path, monkeypatch):
+        """Loop safety: an engine-posted comment must never re-enter the chain."""
+        engine = _engine(
+            tmp_path,
+            _trigger(body="<!-- bot-workflow-terminal -->\n/nebuko resume", number=1376),
+        )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Terminal step 'review' has no next in workflow 'default'",
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.posted_body is None
+
+    def test_a_failed_terminal_skip_post_is_swallowed(self, tmp_path, monkeypatch):
+        """Best-effort: a failed notice must not mask the (successful) no-op."""
+        engine = _engine(tmp_path)
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "REASON": "Terminal step 'review' has no next in workflow 'default'",
+                "SKIP_KIND": "terminal",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+
+        def boom(body):
+            raise RuntimeError("github is down")
+
+        monkeypatch.setattr(engine.adapter, "post", boom)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.posted_body is None
+        assert outcome.process_exit_code() == 0
 
     def test_a_config_error_skip_still_exits_terminal(self, tmp_path, monkeypatch):
         """Regression guard: a real config failure keeps the terminal outcome (20).
@@ -2181,7 +2232,11 @@ class TestHumanActionSinglePing:
         assert "@ " not in outcome.posted_body
 
     def test_the_follow_up_terminal_skip_run_posts_no_notice(self, tmp_path, monkeypatch):
-        """Only the *completing* run announces the end of the workflow (#795)."""
+        """Only the *completing* run announces the end of the workflow (#795).
+
+        An *unclassified* skip keeps the fail-safe silence (issue #1376 only
+        answers the benign, classified terminal-skip branch).
+        """
         engine = _engine(tmp_path)
         _stub_resolved(
             monkeypatch,
@@ -4756,6 +4811,88 @@ class TestGitSessionGuardWiring:
         ).stdout
         assert scaffolded not in remote_heads
 
+    def test_a_detached_head_at_the_branch_tip_is_reattached_and_finalize_passes(
+        self, tmp_path, monkeypatch
+    ):
+        """Repro of run 42288598222 (issue #1351): a reviewer's verification ran
+        ``use-session-branch.sh``, whose ``git checkout --detach origin/<b>``
+        left HEAD detached at the branch tip. finalize must re-attach instead of
+        failing the run.
+        """
+        import subprocess
+
+        from nebuko.engine.lib.git import git_session
+
+        remote = tmp_path / "caller-origin.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        )
+        caller = tmp_path / "caller"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(caller)], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.name", "t"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "config", "user.email", "t@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "remote", "add", "origin", str(remote)],
+            check=True,
+        )
+        (caller / "base.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(caller), "add", "base.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(caller), "commit", "-q", "-m", "base"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(caller), "push", "-q", "origin", "main"], check=True
+        )
+
+        trigger = _trigger(number=1351)
+        object.__setattr__(
+            trigger, "payload", {"issue": {"title": "fix it", "number": 1351}}
+        )
+        engine = _engine(tmp_path, trigger, env={"GITHUB_WORKSPACE": str(caller)})
+        engine._run_resolved["resolved"] = {"ENGINE_TRIGGER": trigger, "TASK": "dev"}
+        object.__setattr__(engine, "repo_root", caller)
+
+        scaffold = engine._branch_scaffold()
+        assert scaffold.ok and not scaffold.skipped, scaffold.detail
+        scaffolded = "feature/issue-1351-fix-it"
+        assert scaffold.branch == scaffolded
+        engine._scaffold_state["head_before"] = git_session.GitSessionGuard(
+            engine._caller_root(), engine._session_env()
+        ).head_sha()
+        # The branch is published before the reviewer's script runs.
+        subprocess.run(
+            ["git", "-C", str(caller), "push", "-q", "origin", scaffolded],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(caller),
+                "checkout",
+                "-q",
+                "--detach",
+                f"origin/{scaffolded}",
+            ],
+            check=True,
+        )
+
+        result = engine._git_session_finalize()
+
+        assert result.ok, result.detail
+        assert "re-attached from detached HEAD" in result.detail
+        assert subprocess.run(
+            ["git", "-C", str(caller), "rev-parse", "--abbrev-ref", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == scaffolded
+
     def test_a_skipped_finalize_is_not_a_failure(self, tmp_path, monkeypatch):
         from nebuko.engine.lib.git import git_session
 
@@ -5190,7 +5327,7 @@ class TestBranchScaffoldWiring:
 
         state = engine.adapter.load_state()
         assert state is not None
-        assert state.current_context.get("dev_branch") == "feature/issue-590-x"
+        assert state.git.branch_name == "feature/issue-590-x"
 
 
 class TestPrFinalizerWiring:

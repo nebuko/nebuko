@@ -51,20 +51,17 @@ steps:
     inputs: [plan]
     next: git_diff
 
-  # The workspace checkout is shallow (actions/checkout default fetch-depth: 1)
-  # and pinned to the triggering ref, so the remote-tracking ref `origin/main`
-  # does not exist. Fetch it explicitly before diffing; without this the diff
-  # dies with `fatal: ambiguous argument 'origin/main'` (issue #957).
-  #
-  # Fetch and diff are deliberately ONE `sh -c` step (human decision at the
-  # #965 gate): the base ref can then never be separated from the diff, and each
-  # script step runs in its own engine invocation with its own checkout (issue
-  # #994), so cross-step workspace state is never relied upon. `&&` fails fast,
-  # so a fetch failure never prints a bogus diff.
+  # The engine checks the session branch out for script steps (issue #1327,
+  # `checkout: session` by default) with enough base history for a three-dot
+  # diff, so the fetch this step used to do is gone.
   - name: git_diff
     script:
       command: "sh"
-      args: ["-c", "git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main && GIT_PAGER='' git diff origin/main HEAD"]
+      args:
+        - "-c"
+        - >-
+          git --no-pager diff --stat origin/main...HEAD &&
+          git --no-pager diff origin/main...HEAD
     next: run_tests
 
   - name: run_tests

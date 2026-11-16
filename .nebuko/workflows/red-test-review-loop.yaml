@@ -50,13 +50,16 @@ steps:
     next: git_diff
 
   # The stat comes first: output over the size cap loses its middle.
+  # `NEBUKO_MERGE_MAIN=0` opts this step out of the merge-before-tests default
+  # (issue #1344): a merge would pull `main` into the change under review.
   - name: git_diff
     script:
       command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
       args:
         - "-c"
         - >-
-          NEBUKO_MERGE_MAIN=0 sh .nebuko/scripts/use-session-branch.sh &&
           git --no-pager diff --stat origin/main...HEAD &&
           git --no-pager diff origin/main...HEAD
     # Default edges: a failed command is evidence for review, not a stop.
@@ -71,7 +74,6 @@ steps:
       args:
         - "-c"
         - >-
-          sh .nebuko/scripts/use-session-branch.sh &&
           uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf
       timeout_minutes: 20
     conditions:
@@ -116,8 +118,8 @@ steps:
 
          `run_tests` tests the branch head merged with the current
          `origin/main` (the `merge_main` manifest flag, on by default), the same
-         shape of tree CI tests. Read its `tested:` line first: when it says
-         `tested: branch head ...` the merge did not happen (flag off, or the
+         shape of tree CI tests. Read its `branch:` line first: when it ends
+         with `branch head ...` the merge did not happen (flag off, or the
          branch conflicts with `main`), so a branch that is behind `main` fails
          tests that `main` already fixed (this made a 31-failure loop run look
          broken while CI showed 4). Classify each non-new failing test ID

@@ -214,7 +214,21 @@ class TestWorkflowStepScript:
             "SCRIPT_ARGS": '["-c", "echo \\"a b\\" && ls"]',
             "SCRIPT_WORKING_DIR": "src",
             "SCRIPT_ENV": '{"MSG": "two words"}',
+            "SCRIPT_CHECKOUT": "session",
         }
+
+    def test_checkout_defaults_to_session_and_can_opt_out(self):
+        default = WorkflowStep(name="run-tests", script={"command": "sh"})
+        assert default.script.to_process_env()["SCRIPT_CHECKOUT"] == "session"
+
+        opt_out = WorkflowStep(
+            name="run-tests", script={"command": "sh", "checkout": "workflow"}
+        )
+        assert opt_out.script.to_process_env()["SCRIPT_CHECKOUT"] == "workflow"
+
+    def test_unknown_checkout_is_rejected(self):
+        with pytest.raises(ValueError):
+            WorkflowStep(name="broken", script={"command": "sh", "checkout": "none"})
 
     def test_empty_command_rejected(self):
         with pytest.raises(ValueError, match="non-empty"):

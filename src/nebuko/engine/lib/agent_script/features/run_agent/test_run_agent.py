@@ -5,6 +5,7 @@ arming, arun invocation, wind-down trigger, outcome attachment) is exercised.
 """
 
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -28,6 +29,7 @@ from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import (
     OutcomeStatus,
     RunOutcome,
 )
+from nebuko.engine.harness.engine_tools import FinalizeSink
 from nebuko.engine.lib.agent_script.features.run_agent.run_watchdog import RunWatchdog
 
 
@@ -54,6 +56,35 @@ def _make_conversation(status_after="finished"):
     convo.interrupt = MagicMock()
     convo.send_message = MagicMock()
     return convo
+
+
+class _FakeHarnessSession:
+    """Minimal ``HarnessSession``: records turns, can fail chosen turns."""
+
+    def __init__(self, *, sink=None, fail_on=()) -> None:
+        from nebuko.engine.harness.engine_tools import FinalizeSink
+
+        self.sink = sink if sink is not None else FinalizeSink()
+        self.messages: list[str] = []
+        self.runs: list[float | None] = []
+        self.on_run = None
+        self._fail_on = set(fail_on)
+
+    def send_message(self, text: str) -> None:
+        self.messages.append(text)
+
+    def run(self, timeout_s: float | None = None) -> None:
+        self.runs.append(timeout_s)
+        if len(self.runs) in self._fail_on:
+            raise TimeoutError("turn budget")
+        if self.on_run is not None:
+            self.on_run(len(self.runs))
+
+    def close(self) -> None:
+        pass
+
+    def on_event(self, callback) -> None:
+        pass
 
 
 class TestRunSupervised(unittest.TestCase):
@@ -167,6 +198,10 @@ class TestRunAgentIntegration(unittest.TestCase):
         self.assertEqual(len(callbacks), 2)
         self.assertIs(callbacks[0], _discard_token)
         self.assertEqual(callbacks[1].__name__, "on_token")
+        # The same collector receives the SDK's retry attempts (#1352).
+        listener = mock_llm.call_args.kwargs["retry_listener"]
+        self.assertEqual(listener.__name__, "on_retry")
+        self.assertIs(listener.__self__, callbacks[1].__self__)
 
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
     @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
@@ -568,6 +603,113 @@ class TestMCPServerWiring(unittest.TestCase):
         )
 
 
+class TestHarnessRunPath(unittest.TestCase):
+    """The non-OpenHands run path keeps the timeout and recall guarantees."""
+
+    def _run(self, session, capabilities=None):
+        from types import SimpleNamespace
+
+        from nebuko.engine.harness.claude_code import ClaudeCodeHarness
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _run_harness_agent,
+        )
+
+        harness = ClaudeCodeHarness()
+        conversation = SimpleNamespace(
+            harness_session=session, state=SimpleNamespace(events=[])
+        )
+        harness.build_conversation = lambda **kwargs: conversation
+        if capabilities is not None:
+            harness.capabilities = lambda: capabilities
+        with patch(
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget",
+            return_value=SimpleNamespace(
+                soft_timeout_s=60.0, wind_down_timeout_s=30.0
+            ),
+        ):
+            return _run_harness_agent(
+                harness,
+                role_name="dev",
+                agent_cfg=None,
+                prompt="do the thing",
+                cwd="/tmp/repo",
+            )
+
+    def test_soft_timeout_runs_a_wind_down_turn(self):
+        session = _FakeHarnessSession(fail_on={1})
+        conversation = self._run(session)
+
+        self.assertEqual(
+            conversation.run_outcome.status, OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        self.assertTrue(conversation.run_outcome.soft_timeout_fired)
+        self.assertTrue(conversation.run_outcome.wind_down_completed)
+        # The wind-down prompt is the second message; the remaining runs are
+        # the bounded recall passes (parity with the OpenHands path).
+        self.assertIn("WIND-DOWN", session.messages[1])
+        self.assertEqual(session.runs[1], 30.0)
+
+    def test_wind_down_failure_keeps_the_timeout_outcome(self):
+        session = _FakeHarnessSession(fail_on={1, 2})
+        conversation = self._run(session)
+
+        self.assertEqual(
+            conversation.run_outcome.status, OutcomeStatus.GRACEFULLY_TIMED_OUT
+        )
+        self.assertFalse(conversation.run_outcome.wind_down_completed)
+
+    def test_missing_sink_outcome_triggers_bounded_recall(self):
+        sink = FinalizeSink()
+        session = _FakeHarnessSession(sink=sink)
+
+        def _record(turn: int) -> None:
+            # The work turn records nothing; the recall turn supplies it.
+            if turn > 1:
+                sink.record(
+                    {"report": "r", "turn_outcome": {"appreciation": "approved"}}
+                )
+
+        session.on_run = _record
+        conversation = self._run(session)
+
+        self.assertEqual(conversation.run_outcome.dispatch_recall_count, 1)
+        self.assertEqual(conversation.run_outcome.dispatch_recall_event_offset, 0)
+
+    def test_recorded_outcome_skips_recall(self):
+        sink = FinalizeSink()
+        sink.record({"report": "r", "turn_outcome": {"appreciation": "approved"}})
+        conversation = self._run(_FakeHarnessSession(sink=sink))
+
+        self.assertEqual(conversation.run_outcome.dispatch_recall_count, 0)
+        self.assertIsNone(conversation.run_outcome.dispatch_recall_event_offset)
+
+    def test_watchdog_interrupts_rather_than_closing_the_session(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _interrupt_hook,
+        )
+
+        session = _FakeHarnessSession()
+        session.interrupt = MagicMock()
+        session.close = MagicMock()
+
+        _interrupt_hook(session)()
+
+        session.interrupt.assert_called_once_with()
+        session.close.assert_not_called()
+
+    def test_watchdog_falls_back_to_close_without_interrupt(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _interrupt_hook,
+        )
+
+        session = _FakeHarnessSession()
+        session.close = MagicMock()
+
+        _interrupt_hook(session)()
+
+        session.close.assert_called_once_with()
+
+
 class TestParseContextBodiesEnv(unittest.TestCase):
     """``CONTEXT_BODIES`` carries a temp-file *path*, not inline JSON (#1193)."""
 
@@ -608,6 +750,223 @@ class TestParseContextBodiesEnv(unittest.TestCase):
 
         self._os.environ["CONTEXT_BODIES"] = "/nonexistent/path.json"
         self.assertEqual(_parse_context_bodies_env(), {})
+
+
+class TestClaudeCredentialGate(unittest.TestCase):
+    """ADR 0017 rule 1 is enforced at run time, not only by the linter."""
+
+    @staticmethod
+    def _agent(backend=None, model_path="claude-code/sonnet", token="CLAUDE_CODE_OAUTH_TOKEN"):
+        ref = SimpleNamespace(
+            model_path=model_path,
+            provider_ref=SimpleNamespace(api_token_env=token),
+        )
+        return SimpleNamespace(
+            backend=backend, model_ref=ref, complexity_overrides={}
+        )
+
+    def test_subscription_token_on_openhands_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        with self.assertRaises(ClaudeCredentialError) as context:
+            _enforce_harness_credentials(
+                self._agent(backend=None, model_path="anthropic/claude-sonnet")
+            )
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", str(context.exception))
+
+    def test_claude_code_backend_with_a_metered_key_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(
+                self._agent(
+                    backend="claude-code",
+                    model_path="anthropic/claude-sonnet",
+                    token="ANTHROPIC_API_KEY",
+                )
+            )
+
+    def test_claude_code_backend_with_claude_credentials_passes(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        _enforce_harness_credentials(self._agent(backend="claude-code"))
+
+    def test_a_tier_swap_is_checked_too(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        agent.complexity_overrides = {
+            "high": SimpleNamespace(
+                model_ref=SimpleNamespace(
+                    model_path="claude-code/opus",
+                    provider_ref=SimpleNamespace(
+                        api_token_env="CLAUDE_CODE_OAUTH_TOKEN"
+                    ),
+                )
+            )
+        }
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(agent)
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    def test_run_agent_refuses_before_building_the_llm(self, mock_llm):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        with self.assertRaises(ClaudeCredentialError):
+            run_agent(
+                llm_config={},
+                prompt="do the thing",
+                agent_cfg=self._agent(
+                    backend=None, model_path="anthropic/claude-sonnet"
+                ),
+            )
+        mock_llm.assert_not_called()
+
+    def test_the_model_the_llm_is_built_from_is_checked(self):
+        """A ``CONFIG_MODEL`` override can swap in a claude-code model.
+
+        The config refs are metered, so only the effective ``llm_config`` model
+        reveals the violation; that is the string ``LLM(**llm_config)`` gets.
+        """
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(agent, {"model": "claude-code/opus"})
+
+    def test_the_condenser_model_is_checked(self):
+        """The condenser builds a second LLM; it must not bypass the gate."""
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+        from nebuko.engine.lib.config import TokenBudgetPolicy
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        agent.token_budget = TokenBudgetPolicy(compaction_model="claude-code/opus")
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(
+                agent, {"model": "anthropic/claude-sonnet"}
+            )
+
+    def test_claude_code_backend_with_a_metered_key_and_claude_model_passes(self):
+        """ADR 0017 Lane K: the binary also runs on ANTHROPIC_API_KEY."""
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        _enforce_harness_credentials(
+            self._agent(backend="claude-code", token="ANTHROPIC_API_KEY"),
+            {"model": "claude-code/sonnet"},
+        )
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    def test_run_agent_refuses_a_smuggled_llm_config_model(self, mock_llm):
+        """The refused ref is the one ``LLM(**llm_config)`` would be built from."""
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        with self.assertRaises(ClaudeCredentialError):
+            run_agent(
+                llm_config={"model": "claude-code/opus"},
+                prompt="do the thing",
+                agent_cfg=self._agent(
+                    backend=None,
+                    model_path="anthropic/claude-sonnet",
+                    token="ANTHROPIC_API_KEY",
+                ),
+            )
+        mock_llm.assert_not_called()
+
+
+class TestSubscriptionTokenIsolation(unittest.TestCase):
+    """ADR 0017 A3: only the Claude Code backend may see the token.
+
+    The workflow exports ``CLAUDE_CODE_OAUTH_TOKEN`` into the job environment
+    of every comment-triggered run. The OpenHands ``terminal`` tool inherits
+    ``os.environ``, so a prompt-injected agent on that backend could read and
+    exfiltrate it unless the run path drops it first.
+    """
+
+    TOKEN = "sk-ant-oat-subscription-token"
+
+    def setUp(self) -> None:
+        self._prior = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = self.TOKEN
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        if self._prior is None:
+            os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        else:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = self._prior
+
+    def test_openhands_run_scrubs_the_token_from_the_agent_environment(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _drop_subscription_tokens_for,
+        )
+
+        _drop_subscription_tokens_for("openhands")
+
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ)
+
+    def test_claude_code_run_keeps_the_token_for_the_binary(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _drop_subscription_tokens_for,
+        )
+
+        _drop_subscription_tokens_for("claude-code")
+
+        self.assertEqual(os.environ["CLAUDE_CODE_OAUTH_TOKEN"], self.TOKEN)
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch(
+        "nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget"
+    )
+    def test_run_agent_on_openhands_never_hands_it_to_the_agent(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+
+        seen: list[str | None] = []
+
+        def _capture(**_kwargs):
+            seen.append(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+            return MagicMock()
+
+        mock_agent.side_effect = _capture
+        with patch(
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+
+        self.assertEqual(seen, [None])
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ)
 
 
 if __name__ == "__main__":

@@ -75,18 +75,37 @@ caller's checkout.
 
 ---
 
-## The Default Workflow
+## The Nebuko Manifest (`.nebuko/nebuko.yaml`)
 
-A bare `/nebuko run workflow` (no `--name`) starts the repo's **default
-workflow** (issue #1094). Set it in the Nebuko manifest `.nebuko/nebuko.yaml`:
+The manifest is the single place for a repo's **non-secret** Nebuko settings
+(issue #1094). Secrets and the `uses: …@<tag>` version pin stay in the caller
+workflow: the manifest is only read once the engine starts, which is after the
+workflow ref has already been resolved.
 
 ```yaml
-default_workflow: default
+default_workflow: default                # bare `/nebuko run workflow` target
+agent_config: .nebuko/agents/agent-config.yaml
+circuit_breaker_threshold: 15
+history_comment_count: 5
+pin_comment: false
+skills_dir: .nebuko/skills              # optional path override
 ```
 
-When the manifest is absent or does not declare `default_workflow`, the shipped
-`default` workflow is used. The manifest is read from the caller's workspace
-(the same `.nebuko/` directory that holds workflow and agent overrides).
+Every key is optional and unknown keys are ignored, so a manifest written for
+a newer engine does not abort an older run. The engine reads the
+manifest from the caller's workspace at startup and overlays it on the
+environment it was given, so the precedence is:
+
+**explicit env / workflow input (non-blank) > `.nebuko/nebuko.yaml` > built-in default**
+
+That keeps existing callers working: a `with:` input still wins. `pin_comment`
+is the one OR-ed setting — the workflow input is a boolean and cannot express
+"unset", so a `true` from either source pins the step comments.
+
+A bare `/nebuko run workflow` uses `default_workflow`; when the manifest is
+absent or does not declare it, the shipped `default` workflow is used. The
+manifest is read from the caller's workspace (the same `.nebuko/` directory
+that holds workflow and agent overrides).
 
 ---
 
@@ -101,10 +120,11 @@ head. Testing the bare head reports failures `main` has already fixed (issue
 merge_main: true   # default when undeclared
 ```
 
-`.nebuko/scripts/use-session-branch.sh` reads it and merges `origin/main` into
-the detached branch head — locally, never pushed. A single step overrides it
-with `NEBUKO_MERGE_MAIN=0` (`git_diff` does: a merge would pull `main`'s
-changes into the diff and hide the change under review) or `=1` to force the
+`.nebuko/nebuko.yaml` sets it and the engine applies it when it checks the
+session branch out: it merges `origin/main` into the detached branch head
+locally, never pushed. A single step overrides it with an `env` block —
+`NEBUKO_MERGE_MAIN: "0"` (`git_diff` does: a merge would pull `main`'s
+changes into the diff and hide the change under review) or `"1"` to force the
 merge on.
 
 ---
@@ -245,6 +265,7 @@ llms:
 | Field | Type | Description |
 |-------|------|-------------|
 | `model` | `${ref}` | LLM entry from the `llms:` layer. |
+| `backend` | string | Agent runtime that executes this role: `openhands` (default) or `claude-code`. Registry-resolved (`nebuko.engine.harness.resolve_harness`), so a new harness is one adapter module and no schema change. An unregistered value fails the `C9-unknown-backend` lint error instead of silently running OpenHands. See [claude-code.md](./claude-code.md). |
 | `role` | string | One-line role description, rendered into every other agent's "Your Team" section. Optional; a missing role renders a placeholder and raises the `C8-missing-role` lint warning. |
 | `temperature` | float | Per-agent temperature override (floor for complexity adjustment). |
 | `prompt_file` | string | Path to the agent's system prompt (convention: `defaults/prompts/{agent}.md`). Only the basename is used at run time — the layered lookup re-resolves it, so deployments can override a prompt by name. |

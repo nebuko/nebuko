@@ -362,6 +362,17 @@ class TestPost:
         assert result.permalink == "https://example.test/c/4242"
         assert ("post_comment", "olivier-norture/git-flow-ai", 590, "hello") in client.calls
 
+    def test_a_terminal_skip_notice_reaches_the_issue_with_its_marker(self, tmp_path):
+        """Issue #1376: the engine's terminal-skip notice is a normal comment."""
+        client = FakeGhClient()
+        adapter = _adapter(tmp_path, client)
+        adapter.read_trigger()
+
+        body = "<!-- bot-workflow-terminal -->\n@olivier-norture no agent to run — terminal"
+        adapter.post(body)
+
+        assert ("post_comment", "olivier-norture/git-flow-ai", 590, body) in client.calls
+
 
 class TestDeleteIssueComments:
     """Batch comment deletion through the composed REST client (issue #724)."""

@@ -15,6 +15,10 @@ soft-kill wind-down, now built on the handoff document.
 Each checkpoint asks for ``plan_changes`` in the handoff, so comparing
 versions shows whether the plan moved; the per-run count is logged as a
 drift signal for later analysis.
+
+Roles without the ``handoff`` tool (e.g. ``context``) get a ``NO_HANDOFF``
+variant that only references tools they actually carry — ``finalize`` is
+appended to every role's tool list in ``run_agent`` (issue #1350).
 """
 
 import re
@@ -76,10 +80,44 @@ previous checkpoint's handoff plus the deterministic PR fallback carries on.
 """
 
 
+CHECKPOINT_50_PROMPT_NO_HANDOFF = """\
+⏱️   CHECKPOINT 1 — HALFWAY THROUGH YOUR TIME BUDGET
+
+State whether you can already explain the delta you were asked to report:
+what you measured, the files and commands behind it, and what is still open.
+If yes, call finalize now with your findings. If not, name the one remaining
+measurement you need and go straight to it.
+"""
+
+CHECKPOINT_75_PROMPT_NO_HANDOFF = """\
+⏱️   CHECKPOINT 2 — 75% OF YOUR TIME BUDGET ELAPSED
+
+State whether you can already meet the step goal with what you have. If yes,
+call finalize now with your findings. If not, name the one remaining
+measurement and do only that — do not start new work that cannot land.
+"""
+
+CHECKPOINT_100_PROMPT_NO_HANDOFF = f"""\
+⏱️   CHECKPOINT 3 — FINAL UPDATE BEFORE WIND-DOWN
+
+{WIND_DOWN_PROMPT}
+
+End by calling finalize with the final state: what is done, what remains, and
+the one next step. If you cannot finalize, the deterministic PR fallback
+carries on from what you pushed.
+"""
+
+
 CHECKPOINT_PROMPTS: dict[CheckpointLabel, str] = {
     "checkpoint_50": CHECKPOINT_50_PROMPT,
     "checkpoint_75": CHECKPOINT_75_PROMPT,
     "checkpoint_100": CHECKPOINT_100_PROMPT,
+}
+
+CHECKPOINT_PROMPTS_NO_HANDOFF: dict[CheckpointLabel, str] = {
+    "checkpoint_50": CHECKPOINT_50_PROMPT_NO_HANDOFF,
+    "checkpoint_75": CHECKPOINT_75_PROMPT_NO_HANDOFF,
+    "checkpoint_100": CHECKPOINT_100_PROMPT_NO_HANDOFF,
 }
 
 
@@ -98,11 +136,16 @@ class CheckpointEvent:
     prompt: str
 
 
-def compute_checkpoints(soft_timeout_s: float) -> tuple[CheckpointEvent, ...]:
+def compute_checkpoints(
+    soft_timeout_s: float, has_handoff: bool = True
+) -> tuple[CheckpointEvent, ...]:
     """Compute the checkpoint schedule for a soft budget.
 
     Args:
         soft_timeout_s: The soft time budget in seconds. Must be positive.
+        has_handoff: Whether the role carries the ``handoff`` tool. When it
+            does not, the prompt variant referencing only ``finalize`` is
+            used so no checkpoint asks for an unavailable tool.
 
     Returns:
         One :class:`CheckpointEvent` per entry of ``CHECKPOINT_FRACTIONS``,
@@ -115,10 +158,13 @@ def compute_checkpoints(soft_timeout_s: float) -> tuple[CheckpointEvent, ...]:
         raise ValueError(
             f"soft_timeout_s must be positive, got {soft_timeout_s}"
         )
+    prompts = (
+        CHECKPOINT_PROMPTS if has_handoff else CHECKPOINT_PROMPTS_NO_HANDOFF
+    )
     return tuple(
         CheckpointEvent(
             label=label, offset_s=fraction * soft_timeout_s,
-            prompt=CHECKPOINT_PROMPTS[label],
+            prompt=prompts[label],
         )
         for label, fraction in CHECKPOINT_FRACTIONS
     )

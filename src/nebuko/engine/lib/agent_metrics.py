@@ -400,6 +400,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         "total_cache_hit_tokens": 0,
         "cache_weighted_sum": 0.0,
         "cache_weight": 0,
+        "llm_retry_sum": 0,
+        "llm_stall_sum": 0,
         # Per-1M USD prices of the estimated runs only (issue #1048); sets so a
         # multi-model agent lists each distinct price once.
         "input_prices": set(),
@@ -434,6 +436,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
             tool_time_per_tool = m.tool_time_per_tool
             tool_runtime = m.tool_runtime_ms
             wall_clock = m.wall_clock_ms
+            llm_retries = m.llm_retry_count
+            llm_stalls = m.llm_stall_count
         else:
             # Legacy dict support
             agent = m.get("agent_role", "unknown")
@@ -457,6 +461,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
             tool_time_per_tool = m.get("tool_time_per_tool", {})
             tool_runtime = m.get("tool_runtime_ms", 0.0)
             wall_clock = m.get("wall_clock_ms", 0.0)
+            llm_retries = m.get("llm_retry_count", 0)
+            llm_stalls = m.get("llm_stall_count", 0)
 
         agg = aggregated[agent]
         agg["runs"] += 1
@@ -477,6 +483,8 @@ def aggregate_by_agent(all_metrics, resolver=None):  # @stub-protected
         agg["llm_runtime_sum"] += runtime
         agg["tool_runtime_sum"] += tool_runtime
         agg["wall_clock_sum"] += wall_clock
+        agg["llm_retry_sum"] += llm_retries
+        agg["llm_stall_sum"] += llm_stalls
         agg["tool_calls_sum"] += tool_calls
         agg["error_rate_sum"] += error_rate
         agg["review_fix_requests_sum"] += fix_requests
@@ -622,6 +630,9 @@ class StatsTotals:
     tps_count: int = 0
     ttft_sum: float = 0.0
     ttft_count: int = 0
+    # SDK retries scheduled and calls over the stall threshold (issue #1375).
+    llm_retries: int = 0
+    llm_stalls: int = 0
 
     # @stub-protected
     @classmethod
@@ -652,6 +663,8 @@ class StatsTotals:
         tps_count = 0
         ttft_sum = 0.0
         ttft_count = 0
+        llm_retries = 0
+        llm_stalls = 0
         for agg in aggregated.values():
             runs += agg.get("runs", 0)
             input_tokens += agg.get("total_uncached_input_tokens", 0)
@@ -670,6 +683,8 @@ class StatsTotals:
             tps_count += agg.get("tps_count", 0)
             ttft_sum += agg.get("ttft_sum", 0.0)
             ttft_count += agg.get("ttft_count", 0)
+            llm_retries += agg.get("llm_retry_sum", 0)
+            llm_stalls += agg.get("llm_stall_sum", 0)
         return cls(
             runs=runs,
             input_tokens=input_tokens,
@@ -688,6 +703,8 @@ class StatsTotals:
             tps_count=tps_count,
             ttft_sum=ttft_sum,
             ttft_count=ttft_count,
+            llm_retries=llm_retries,
+            llm_stalls=llm_stalls,
         )
 
     # @stub-protected
@@ -711,6 +728,8 @@ class StatsTotals:
             "tps_count": self.tps_count,
             "ttft_sum": self.ttft_sum,
             "ttft_count": self.ttft_count,
+            "llm_retry_sum": self.llm_retries,
+            "llm_stall_sum": self.llm_stalls,
             # The price rows are per-agent only: the Total cell is always "—".
             "input_prices": set(),
             "output_prices": set(),
@@ -1013,6 +1032,24 @@ def _detail_rows(aggregated, totals, columns):
             columns,
             "Reasoning tokens",
             lambda b: format_number(b.get("total_reasoning_tokens", 0)),
+        )
+    )
+    rows.append(
+        _build_summary_row(
+            aggregated,
+            totals,
+            columns,
+            "LLM retries",
+            lambda b: format_number(b.get("llm_retry_sum", 0)),
+        )
+    )
+    rows.append(
+        _build_summary_row(
+            aggregated,
+            totals,
+            columns,
+            "LLM stalls",
+            lambda b: format_number(b.get("llm_stall_sum", 0)),
         )
     )
 
