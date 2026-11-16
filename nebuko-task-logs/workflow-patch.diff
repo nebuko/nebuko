@@ -1,9 +1,0 @@
-diff --git a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-index 33fa448..446aa45 100644
---- a/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-+++ b/.github/workflows/interntal-trigger-nebuko-on-comment.yaml
-@@ -27,3 +27,4 @@ jobs:
-       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-       CHEAPERINFERENCE_API_KEY: ${{ secrets. CHEAPERINFERENCE_API_KEY }}
-       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
