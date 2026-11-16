@@ -751,5 +751,151 @@ class TestParseContextBodiesEnv(unittest.TestCase):
         self.assertEqual(_parse_context_bodies_env(), {})
 
 
+class TestClaudeCredentialGate(unittest.TestCase):
+    """ADR 0017 rule 1 is enforced at run time, not only by the linter."""
+
+    @staticmethod
+    def _agent(backend=None, model_path="claude-code/sonnet", token="CLAUDE_CODE_OAUTH_TOKEN"):
+        ref = SimpleNamespace(
+            model_path=model_path,
+            provider_ref=SimpleNamespace(api_token_env=token),
+        )
+        return SimpleNamespace(
+            backend=backend, model_ref=ref, complexity_overrides={}
+        )
+
+    def test_subscription_token_on_openhands_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        with self.assertRaises(ClaudeCredentialError) as context:
+            _enforce_harness_credentials(
+                self._agent(backend=None, model_path="anthropic/claude-sonnet")
+            )
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", str(context.exception))
+
+    def test_claude_code_backend_with_a_metered_key_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(
+                self._agent(
+                    backend="claude-code",
+                    model_path="anthropic/claude-sonnet",
+                    token="ANTHROPIC_API_KEY",
+                )
+            )
+
+    def test_claude_code_backend_with_claude_credentials_passes(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        _enforce_harness_credentials(self._agent(backend="claude-code"))
+
+    def test_a_tier_swap_is_checked_too(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        agent.complexity_overrides = {
+            "high": SimpleNamespace(
+                model_ref=SimpleNamespace(
+                    model_path="claude-code/opus",
+                    provider_ref=SimpleNamespace(
+                        api_token_env="CLAUDE_CODE_OAUTH_TOKEN"
+                    ),
+                )
+            )
+        }
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(agent)
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    def test_run_agent_refuses_before_building_the_llm(self, mock_llm):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        with self.assertRaises(ClaudeCredentialError):
+            run_agent(
+                llm_config={},
+                prompt="do the thing",
+                agent_cfg=self._agent(
+                    backend=None, model_path="anthropic/claude-sonnet"
+                ),
+            )
+        mock_llm.assert_not_called()
+
+    def test_the_model_the_llm_is_built_from_is_checked(self):
+        """A ``CONFIG_MODEL`` override can swap in a claude-code model.
+
+        The config refs are metered, so only the effective ``llm_config`` model
+        reveals the violation; that is the string ``LLM(**llm_config)`` gets.
+        """
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(agent, {"model": "claude-code/opus"})
+
+    def test_the_condenser_model_is_checked(self):
+        """The condenser builds a second LLM; it must not bypass the gate."""
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+        from nebuko.engine.lib.config import TokenBudgetPolicy
+
+        agent = self._agent(
+            backend=None, model_path="anthropic/claude-sonnet", token="ANTHROPIC_API_KEY"
+        )
+        agent.token_budget = TokenBudgetPolicy(compaction_model="claude-code/opus")
+        with self.assertRaises(ClaudeCredentialError):
+            _enforce_harness_credentials(
+                agent, {"model": "anthropic/claude-sonnet"}
+            )
+
+    def test_claude_code_backend_with_a_metered_key_and_claude_model_passes(self):
+        """ADR 0017 Lane K: the binary also runs on ANTHROPIC_API_KEY."""
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _enforce_harness_credentials,
+        )
+
+        _enforce_harness_credentials(
+            self._agent(backend="claude-code", token="ANTHROPIC_API_KEY"),
+            {"model": "claude-code/sonnet"},
+        )
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    def test_run_agent_refuses_a_smuggled_llm_config_model(self, mock_llm):
+        """The refused ref is the one ``LLM(**llm_config)`` would be built from."""
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        with self.assertRaises(ClaudeCredentialError):
+            run_agent(
+                llm_config={"model": "claude-code/opus"},
+                prompt="do the thing",
+                agent_cfg=self._agent(
+                    backend=None,
+                    model_path="anthropic/claude-sonnet",
+                    token="ANTHROPIC_API_KEY",
+                ),
+            )
+        mock_llm.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
