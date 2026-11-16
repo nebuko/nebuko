@@ -110,7 +110,8 @@ def _script_resolved(command: str, args: list[str], **extra) -> dict:
     return resolved
 
 
-def _seed_state(engine: Engine, **context) -> None:
+def _seed_state(engine: Engine, *, branch: str = "", **context) -> None:
+    git = {"branch_name": branch} if branch else None
     engine.adapter.save_state(
         WorkflowState.model_validate(
             {
@@ -118,6 +119,19 @@ def _seed_state(engine: Engine, **context) -> None:
                 "step": "implement",
                 "agent": "dev",
                 "current_context": context,
+                "git": git,
+                # A real state after an agent step carries its history entry;
+                # the branch recovery only applies to an agent session.
+                "history": [
+                    {
+                        "step": "implement",
+                        "agent": "dev",
+                        "turn_outcome": {
+                            "status": "completed",
+                            "appreciation": "approved",
+                        },
+                    }
+                ],
             }
         )
     )
@@ -128,7 +142,7 @@ class TestSessionCheckout:
         self, tmp_path, workspace, monkeypatch
     ):
         engine = _engine(tmp_path, workspace, monkeypatch)
-        _seed_state(engine, dev_branch=BRANCH)
+        _seed_state(engine, branch=BRANCH)
         _patch_resolver(
             monkeypatch,
             _script_resolved("sh", ["-c", "git rev-parse HEAD"]),
@@ -152,7 +166,7 @@ class TestSessionCheckout:
         self, tmp_path, workspace, monkeypatch
     ):
         engine = _engine(tmp_path, workspace, monkeypatch)
-        _seed_state(engine, dev_branch=BRANCH)
+        _seed_state(engine, branch=BRANCH)
         _patch_resolver(
             monkeypatch,
             _script_resolved("sh", ["-c", "git diff --stat origin/main...HEAD"]),
@@ -177,7 +191,7 @@ class TestSessionCheckout:
         self, tmp_path, workspace, monkeypatch
     ):
         engine = _engine(tmp_path, workspace, monkeypatch)
-        _seed_state(engine, dev_branch="feature/does-not-exist")
+        _seed_state(engine, branch="feature/does-not-exist")
         marker = tmp_path / "ran"
         _patch_resolver(
             monkeypatch,
@@ -191,10 +205,57 @@ class TestSessionCheckout:
         assert not marker.exists()
 
 
+class TestUnrecordedBranchRecovery:
+    """A standalone evidence step on an issue whose branch already exists (#1397).
+
+    The state may predate the branch record (or have been posted by an older
+    engine), so the branch is recovered from ``origin/feature/issue-<n>-*``
+    instead of silently reporting ``branch: none``.
+    """
+
+    def _push_issue_branch(self, workspace: Path, name: str) -> None:
+        _git(workspace, "push", "-q", "origin", f"HEAD:refs/heads/{name}")
+
+    def test_the_only_issue_branch_is_used(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        self._push_issue_branch(workspace, "feature/issue-590-recovered")
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        _seed_state(engine)
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved("sh", ["-c", "git rev-parse HEAD"]),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert "branch: `feature/issue-590-recovered`" in outcome.posted_body
+
+    def test_two_issue_branches_fail_instead_of_guessing(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        self._push_issue_branch(workspace, "feature/issue-590-one")
+        self._push_issue_branch(workspace, "feature/issue-590-two")
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        _seed_state(engine)
+        marker = tmp_path / "ran"
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved("sh", ["-c", f"touch {marker}"]),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ERROR
+        assert "several" in outcome.posted_body
+        assert not marker.exists()
+
+
 class TestWorkflowCheckout:
     def test_keeps_the_workflow_ref(self, tmp_path, workspace, monkeypatch):
         engine = _engine(tmp_path, workspace, monkeypatch)
-        _seed_state(engine, dev_branch=BRANCH)
+        _seed_state(engine, branch=BRANCH)
         _patch_resolver(
             monkeypatch,
             _script_resolved(
@@ -215,7 +276,7 @@ class TestExecInputs:
         self, tmp_path, workspace, monkeypatch
     ):
         engine = _engine(tmp_path, workspace, monkeypatch)
-        _seed_state(engine, dev_branch=BRANCH)
+        _seed_state(engine, branch=BRANCH)
         resolved = {
             "SKIP_AGENT": "true",
             "REASON": "no next step",
