@@ -13,7 +13,7 @@ implementation.
 
 from __future__ import annotations
 
-from typing import MutableMapping
+from collections.abc import MutableMapping
 
 __all__ = [
     "CLAUDE_CODE_BACKEND",

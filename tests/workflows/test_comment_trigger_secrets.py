@@ -66,38 +66,47 @@ def _apply_unified_diff(text: str, diff: str) -> str:
 
 
 def _workflow(path: Path) -> dict:
-    text = (REPO_ROOT / path).read_text(encoding="utf-8")
-    if PATCH_PATH.exists():
-        section = _patch_section(PATCH_PATH.read_text(encoding="utf-8"), path)
-        if section:
-            text = _apply_unified_diff(text, section)
-    return yaml.safe_load(text)
+    return yaml.safe_load(_effective_text(path))
+
+
+def _patch_additions(section: str) -> list[str]:
+    return [
+        raw[1:]
+        for raw in section.splitlines()
+        if raw.startswith("+") and not raw.startswith("+++")
+    ]
 
 
 def _effective_text(path: Path) -> str:
-    """The file plus its pending patch section.
+    """The file, with its pending patch section applied unless already present.
 
     The trigger workflow change travels as a ``workflow-patch.diff`` until a
     human applies it, so the assertion has to see both sides: red if the change
     is lost from the file *and* the patch, green on either side of the apply.
+    The branch keeps the committed patch file after the apply, so a section
+    whose added lines are already in the file is ignored rather than applied
+    twice.
     """
     text = (REPO_ROOT / path).read_text(encoding="utf-8")
     if PATCH_PATH.exists():
-        text += _patch_section(PATCH_PATH.read_text(encoding="utf-8"), path)
+        section = _patch_section(PATCH_PATH.read_text(encoding="utf-8"), path)
+        additions = _patch_additions(section)
+        if additions and not all(line in text for line in additions):
+            text = _apply_unified_diff(text, section)
     return text
 
 
 def test_trigger_forwards_the_claude_code_token() -> None:
+    job = _workflow(TRIGGER_PATH)["jobs"]["agent"]
     assert (
-        "CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
-        in _effective_text(TRIGGER_PATH)
+        job["secrets"]["CLAUDE_CODE_OAUTH_TOKEN"]
+        == "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
     )
 
 
 def test_trigger_job_still_passes_the_provider_keys() -> None:
     job = _workflow(TRIGGER_PATH)["jobs"]["agent"]
     assert job["secrets"]["MISTRAL_API_KEY"] == "${{ secrets.MISTRAL_API_KEY }}"
-
 
 
 def test_reusable_workflow_declares_it_optional() -> None:
