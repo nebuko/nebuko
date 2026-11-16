@@ -5,6 +5,7 @@ arming, arun invocation, wind-down trigger, outcome attachment) is exercised.
 """
 
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -895,6 +896,77 @@ class TestClaudeCredentialGate(unittest.TestCase):
                 ),
             )
         mock_llm.assert_not_called()
+
+
+class TestSubscriptionTokenIsolation(unittest.TestCase):
+    """ADR 0017 A3: only the Claude Code backend may see the token.
+
+    The workflow exports ``CLAUDE_CODE_OAUTH_TOKEN`` into the job environment
+    of every comment-triggered run. The OpenHands ``terminal`` tool inherits
+    ``os.environ``, so a prompt-injected agent on that backend could read and
+    exfiltrate it unless the run path drops it first.
+    """
+
+    TOKEN = "sk-ant-oat-subscription-token"
+
+    def setUp(self) -> None:
+        self._prior = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = self.TOKEN
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        if self._prior is None:
+            os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        else:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = self._prior
+
+    def test_openhands_run_scrubs_the_token_from_the_agent_environment(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _drop_subscription_tokens_for,
+        )
+
+        _drop_subscription_tokens_for("openhands")
+
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ)
+
+    def test_claude_code_run_keeps_the_token_for_the_binary(self):
+        from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
+            _drop_subscription_tokens_for,
+        )
+
+        _drop_subscription_tokens_for("claude-code")
+
+        self.assertEqual(os.environ["CLAUDE_CODE_OAUTH_TOKEN"], self.TOKEN)
+
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Conversation")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.Agent")
+    @patch("nebuko.engine.lib.agent_script.features.run_agent.run_agent.LLM")
+    @patch(
+        "nebuko.engine.lib.agent_script.features.run_agent.run_agent.resolve_timeout_budget"
+    )
+    def test_run_agent_on_openhands_never_hands_it_to_the_agent(
+        self, mock_budget, mock_llm, mock_agent, mock_conversation_cls
+    ):
+        mock_budget.return_value = SimpleNamespace(
+            soft_timeout_s=60.0, wind_down_timeout_s=30.0
+        )
+        mock_conversation_cls.return_value = _make_conversation("finished")
+
+        seen: list[str | None] = []
+
+        def _capture(**_kwargs):
+            seen.append(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+            return MagicMock()
+
+        mock_agent.side_effect = _capture
+        with patch(
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent.build_condenser",
+            return_value=None,
+        ):
+            run_agent(llm_config={}, prompt="do the thing")
+
+        self.assertEqual(seen, [None])
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ)
 
 
 if __name__ == "__main__":

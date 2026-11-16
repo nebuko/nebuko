@@ -24,7 +24,12 @@ the seam itself.
 
 The reusable workflow declares the secret and exports it into the job
 environment **only when it is non-empty** (`::add-mask::`ed, never echoed), so
-an empty value can never shadow a token the runner already provides.
+an empty value can never shadow a token the runner already provides. The
+comment trigger workflow forwards it (`secrets: CLAUDE_CODE_OAUTH_TOKEN`), and
+the engine removes it from the environment of every backend except
+`claude-code` before the agent is built — an OpenHands run in the same workflow
+never has it, so a prompt-injected agent cannot exfiltrate it through the
+`terminal` tool.
 
 Then comment `/nebuko run workflow --name default` on an issue.
 
