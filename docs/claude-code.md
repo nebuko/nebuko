@@ -28,6 +28,20 @@ an empty value can never shadow a token the runner already provides.
 
 Then comment `/nebuko run workflow --name default` on an issue.
 
+> **Every agent that uses the claude-code provider must say
+> `backend: "claude-code"`.** That covers `CLAUDE_CODE_OAUTH_TOKEN` *and* a
+> `claude-code/*` model path, including `complexity_overrides.<tier>.model`
+> swaps. The default backend is `openhands`, so an agent that only points its
+> model at the provider is a config error. A subscription token may only be
+> exercised by the unmodified Claude Code binary (ADR 0017 rule 1); running it
+> through the OpenHands/litellm loop risks the account being banned. It is
+> enforced twice: `lint-config` rule
+> [`C12`](./lint.md#c12-claude-credentials--subscription-tokens-are-binary-only)
+> and a terminal run-time refusal (`ClaudeCredentialError`) before any provider
+> call. The metered `ANTHROPIC_API_KEY` lane is fine with `claude-code/*` model
+> paths. Detection is by env-var name and model prefix, so an unusual spelling
+> can slip through (see #1394).
+
 > **Billing.** A subscription token bills the seat that minted it. Only use it
 > in a repo where you are the triggerer; for shared/org automation use
 > `ANTHROPIC_API_KEY` (Console) instead. The reasoning, the rejected
@@ -49,7 +63,7 @@ llms:
 
 agents:
   dev:
-    backend: "claude-code"             # default: "openhands"
+    backend: "claude-code"             # required for claude-code/* models
     model: "${llms.claude-sonnet}"
 ```
 
