@@ -16,7 +16,7 @@ import pytest
 
 from nebuko.adapters.local import LocalAdapter
 from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
-from nebuko.engine.models import ExitCode, Trigger
+from nebuko.engine.models import DeterministicStep, ExitCode, Trigger
 from nebuko.engine.paths import repo_root
 from nebuko.engine.run_loop import EVIDENCE_COMMITS_KEY, Engine
 
@@ -293,3 +293,86 @@ class TestExecInputs:
 
         assert failure is None
         assert _git(workspace, "rev-parse", "HEAD") == _pushed_sha(workspace)
+
+
+class TestMergeBaseBeforeTests:
+    """The ``merge_main`` default and the per-step opt-out (issue #1344).
+
+    CI tests GitHub's pull-request merge commit; a step that ran on the bare
+    branch head reported failures ``main`` had already fixed (31 local vs 4 in
+    CI on the same commit).
+    """
+
+    def _step(self, **env: str) -> DeterministicStep:
+        return DeterministicStep.from_resolved(
+            _script_resolved("sh", ["-c", "true"], SCRIPT_ENV=json.dumps(env))
+        )
+
+    def test_the_default_is_on(self, tmp_path, workspace, monkeypatch):
+        engine = _engine(tmp_path, workspace, monkeypatch)
+
+        assert engine._merge_base_requested(self._step()) is True
+
+    def test_the_manifest_can_turn_it_off(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        (workspace / ".nebuko").mkdir(exist_ok=True)
+        (workspace / ".nebuko" / "nebuko.yaml").write_text("merge_main: false\n")
+        engine = _engine(tmp_path, workspace, monkeypatch)
+
+        assert engine._merge_base_requested(self._step()) is False
+
+    def test_the_step_env_overrides_the_manifest_both_ways(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        (workspace / ".nebuko").mkdir(exist_ok=True)
+        (workspace / ".nebuko" / "nebuko.yaml").write_text("merge_main: false\n")
+        engine = _engine(tmp_path, workspace, monkeypatch)
+
+        assert engine._merge_base_requested(
+            self._step(NEBUKO_MERGE_MAIN="1")
+        ) is True
+        (workspace / ".nebuko" / "nebuko.yaml").write_text("merge_main: true\n")
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        assert engine._merge_base_requested(
+            self._step(NEBUKO_MERGE_MAIN="0")
+        ) is False
+
+    def test_run_tests_tests_the_merged_tree_and_says_so(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        _seed_state(engine, branch=BRANCH)
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved("sh", ["-c", "git rev-parse HEAD"]),
+        )
+        branch_head = _pushed_sha(workspace)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert f"merge of {branch_head} into " in outcome.posted_body
+        # The merge commit is local only: the remote branch never moved.
+        assert _pushed_sha(workspace) == branch_head
+
+    def test_an_opted_out_step_tests_the_branch_head(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        _seed_state(engine, branch=BRANCH)
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved(
+                "sh",
+                ["-c", "git rev-parse HEAD"],
+                SCRIPT_ENV=json.dumps({"NEBUKO_MERGE_MAIN": "0"}),
+            ),
+        )
+        branch_head = _pushed_sha(workspace)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert f"branch head {branch_head}" in outcome.posted_body
+        assert "merge of" not in outcome.posted_body

@@ -17,12 +17,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from nebuko.engine.lib.config import load_workflow
 from nebuko.engine.lib.git.evidence_checkout import resolve_evidence_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLE_WORKFLOW = REPO_ROOT / ".nebuko" / "workflows" / "plan-dev-review-cmd.yaml"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -31,8 +31,11 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _declared_step():
-    definition = load_workflow(str(EXAMPLE_WORKFLOW))
+def _declared_step(
+    workflow: str = "plan-dev-review-cmd",
+):
+    path = REPO_ROOT / ".nebuko" / "workflows" / f"{workflow}.yaml"
+    definition = load_workflow(str(path))
     step = next(s for s in definition.steps if s.name == "git_diff")
     assert step.script is not None
     return step.script
@@ -81,6 +84,20 @@ def shallow_checkout(tmp_path: Path) -> Path:
 class TestGitDiffStep:
     def test_the_step_runs_on_the_session_checkout(self):
         assert _declared_step().checkout == "session"
+
+    def test_the_step_opts_out_of_the_merge_before_tests(self):
+        """Issue #1344: a merge would pull `main` into the change under review."""
+        for name in ("dev-review-loop", "red-test-review-loop"):
+            step = _declared_step(name)
+
+            assert step.env == {"NEBUKO_MERGE_MAIN": "0"}
+
+    def test_the_repo_manifest_declares_the_merge_default(self):
+        manifest = yaml.safe_load(
+            (REPO_ROOT / ".nebuko" / "nebuko.yaml").read_text(encoding="utf-8")
+        )
+
+        assert manifest["merge_main"] is True
 
     def test_the_engine_checkout_makes_the_three_dot_diff_resolve(
         self, shallow_checkout: Path

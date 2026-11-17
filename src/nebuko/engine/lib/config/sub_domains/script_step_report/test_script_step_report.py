@@ -94,3 +94,23 @@ class TestScriptStepReport:
 
     def test_an_unknown_commit_says_unknown(self):
         assert "head: unknown" in ScriptStepReport(step="run_tests", ok=True).render()
+
+    def test_the_commit_line_names_the_tree_it_tested(self):
+        """Issue #1344: review must see whether the base was merged in."""
+        report = ScriptStepReport(
+            step="run_tests",
+            ok=True,
+            branch="feature/issue-1344-x",
+            head_sha="0123456789abcdef",
+            tested="merge of 0123456789abcdef into fedcba987654",
+        )
+
+        assert (
+            "branch: `feature/issue-1344-x` · head: `0123456789ab` · "
+            "merge of 0123456789abcdef into fedcba987654"
+        ) in report.render()
+
+    def test_the_commit_line_omits_an_unknown_tree(self):
+        report = ScriptStepReport(step="run_tests", ok=True, head_sha="0123456789abcdef")
+
+        assert report.render().count(" · ") == 1

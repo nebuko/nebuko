@@ -61,8 +61,15 @@ class NebukoManifest(BaseModel):
 
     Paths are resolved relative to the repo root. Every field is optional, so an
     absent or empty manifest keeps the fixed ``<kind>/`` subfolders and the
-    built-in defaults (every feature flag off). Secrets never live here — they
-    stay in the workflow.
+    built-in defaults. Secrets never live here — they stay in the workflow.
+    Paths are resolved relative to the repo root. Both fields are optional, so an
+    absent or empty manifest keeps the fixed ``<kind>/`` subfolders.
+
+    ``merge_main`` (issue #1344) is the repo-wide default for script steps that
+    run tests: CI tests GitHub's PR merge commit, so a step that tests the bare
+    branch head reports failures ``main`` already fixed. Defaults to ``True``;
+    a step opts out with ``NEBUKO_MERGE_MAIN=0`` (``git_diff`` does, since a
+    merge would hide the change under review).
 
     Unknown keys are ignored (not rejected): a manifest written for a newer
     engine (e.g. a ``features:`` block) must not abort every run of an older one.
@@ -72,6 +79,7 @@ class NebukoManifest(BaseModel):
 
     skills_dir: str | None = None
     default_workflow: str | None = None
+    merge_main: bool = True
     features: NebukoFeatures = NebukoFeatures()
     agent_config: str | None = None
     circuit_breaker_threshold: int | None = Field(None, ge=1)
@@ -306,6 +314,9 @@ class StepResult:
     # out for evidence, or "" when it ran on the workflow ref.
     branch: str = ""
     head_sha: str = ""
+    # The tree the command actually saw (issue #1344): "merge of <head> into
+    # <base>" when the base was merged in, "branch head <sha>" otherwise.
+    tested: str = ""
 
 
 # @stub-protected
@@ -361,6 +372,16 @@ class DeterministicStep:
                 circuit_breaker_value=int(raw) if raw.isascii() and raw.isdigit() else 0,
             )
         return None
+
+    # @stub-protected
+    def env_overrides(self) -> dict[str, str]:
+        """The step's declared ``env`` block, decoded (issue #1344).
+
+        The engine reads it for step-scoped switches such as
+        ``NEBUKO_MERGE_MAIN``; the child process gets the same values through
+        :func:`_script_process_context`.
+        """
+        return _script_env(self.script_env)
 
     # @stub-protected
     def execute(self, adapter: Any, checkout: Any = None) -> StepResult:
@@ -447,6 +468,7 @@ class DeterministicStep:
         )
         branch = str(getattr(checkout, "branch", "") or "")
         head_sha = str(getattr(checkout, "head_sha", "") or "")
+        tested = str(getattr(checkout, "tested", "") or "")
         started = time.monotonic()
         try:
             completed = subprocess.run(
@@ -468,6 +490,7 @@ class DeterministicStep:
                 duration_seconds=time.monotonic() - started,
                 branch=branch,
                 head_sha=head_sha,
+                tested=tested,
             )
         return StepResult(
             step_kind=self.kind,
@@ -478,6 +501,7 @@ class DeterministicStep:
             duration_seconds=time.monotonic() - started,
             branch=branch,
             head_sha=head_sha,
+            tested=tested,
         )
 
 
