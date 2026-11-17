@@ -123,3 +123,21 @@ instead of a GitHub secret (ADR-0017's Lane R), is **not implemented yet** —
 `nebuko init anthropic-local-runner` is tracked as a follow-up (#1393). Until
 then use the hosted path above, or a normal `runs_on: "self-hosted"` runner that
 exports `CLAUDE_CODE_OAUTH_TOKEN` in its own environment.
+
+## Runner strategy (`runner_strategy`)
+
+The reusable workflow's `runner_strategy` input picks where jobs run:
+
+- `static` (default): jobs run on `runs_on`.
+- `per-user`: jobs run on a runner labelled `nebuko-<event author login>`, so
+  each user's Claude Code token stays in that user's runner environment.
+
+The workflow refuses these combinations with an error:
+
+- `per-user` together with the shared `CLAUDE_CODE_OAUTH_TOKEN` secret.
+- `per-user` with a static `runs_on` starting with `nebuko-`.
+- The claude-code backend (a `CLAUDE_CODE_OAUTH_TOKEN` is passed) for bot,
+  schedule or actor-less events. Use the API-key lane for those runs.
+
+Credentials reach steps through `env`, never through `with:` inputs (ADR-0008).
+A caller-provided `GH_PAT` is used directly and skips the OIDC token broker.
