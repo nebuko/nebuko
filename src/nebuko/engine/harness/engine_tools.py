@@ -220,11 +220,14 @@ class EngineToolServer:
             )
         )
 
-    def as_sdk_server(self) -> Any:
-        """Wrap the handlers as an in-process SDK MCP server."""
-        from claude_agent_sdk import create_sdk_mcp_server, tool  # noqa: PLC0415
+    @staticmethod
+    def tool_specs() -> list[tuple[str, str, dict[str, Any]]]:
+        """``(name, description, input_schema)`` for each engine tool, in handler order.
 
-        specs = [
+        Schemas are self-contained: the Claude Code MCP bridge receives them without
+        the pydantic ``$defs`` block, so every ``$ref`` must already be inlined.
+        """
+        return [
             (
                 "finalize",
                 "End this step: record the report and the typed turn_outcome.",
@@ -232,7 +235,9 @@ class EngineToolServer:
                     "type": "object",
                     "properties": {
                         "report": {"type": "string"},
-                        "turn_outcome": TurnOutcomePayload.model_json_schema(),
+                        "turn_outcome": _inline_refs(
+                            TurnOutcomePayload.model_json_schema()
+                        ),
                     },
                     "required": ["report", "turn_outcome"],
                 },
@@ -258,10 +263,36 @@ class EngineToolServer:
                 {"type": "object", "properties": {}},
             ),
         ]
+
+    def as_sdk_server(self) -> Any:
+        """Wrap the handlers as an in-process SDK MCP server."""
+        from claude_agent_sdk import create_sdk_mcp_server, tool  # noqa: PLC0415
+
         sdk_tools = [
             tool(name, description, schema)(handler)
             for (name, description, schema), handler in zip(
-                specs, self.handlers(), strict=True
+                self.tool_specs(), self.handlers(), strict=True
             )
         ]
         return create_sdk_mcp_server(name=MCP_SERVER_NAME, tools=sdk_tools)
+
+
+def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return ``schema`` with every local ``$ref`` replaced by its ``$defs`` target.
+
+    The ``$defs`` block itself is dropped, so the result has no dangling pointers
+    when it is handed on without its root document.
+    """
+    defs = schema.get("$defs", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                return resolve(defs[ref.removeprefix("#/$defs/")])
+            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(v) for v in node]
+        return node
+
+    return resolve(schema)
