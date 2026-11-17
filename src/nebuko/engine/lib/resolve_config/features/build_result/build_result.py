@@ -163,16 +163,18 @@ def _deepest_workflow_index(refs: list, workflow: str) -> Optional[int]:
     return None
 
 
-def _agent_skill_specs(role_name: str) -> list:
+def _agent_skill_specs(role_name: str, config_path: Optional[str] = None) -> list:
     """The role's declared skill entries; empty when the roster is unreadable.
 
     The resolver already loads the roster for routing (``TASK_TO_PROMPT``), so
     this reads the same file rather than duplicating the roster into the
-    dispatch payload.
+    dispatch payload. ``config_path`` is the agent config this run selected
+    (issue #1389); it outranks the ambient ``AGENT_CONFIG_PATH`` because the
+    child only receives the override through this result dict.
     """
     from nebuko.engine.lib.config import load_config
 
-    path = os.environ.get("AGENT_CONFIG_PATH", "agent-config.yaml")
+    path = config_path or os.environ.get("AGENT_CONFIG_PATH", "agent-config.yaml")
     try:
         agent = load_config(path).agents.get(role_name)
     except Exception:  # noqa: BLE001 - a bad roster must not break resolution
@@ -370,7 +372,9 @@ def _build_result(
         # Skill attachment hand-off (issue #955): both spec lists plus the
         # absolute skills directory, so the prompt builder and the agent child
         # resolve the same inject/discover split from the same files.
-        "AGENT_SKILL_SPECS": specs_to_env(_agent_skill_specs(role_name)),
+        "AGENT_SKILL_SPECS": specs_to_env(
+            _agent_skill_specs(role_name, config.get("agent_config_path"))
+        ),
         "STEP_SKILL_SPECS": wf_result.get("STEP_SKILL_SPECS", ""),
         "SKILLS_DIR": _skills_dir(),
         "STEP_PROMPT_FILE": wf_result.get("STEP_PROMPT_FILE", ""),
@@ -435,6 +439,12 @@ def _build_result(
         ),
         "SKIP_AGENT": "false",
     }
+    # Per-run agent config selection (issue #1389): the resolved path overrides
+    # the workflow input for this run only, and the raw flag value rides along
+    # so ``build_output`` can persist it in workflow state for later hand-offs.
+    if config.get("agent_config_path"):
+        result["AGENT_CONFIG_PATH"] = config["agent_config_path"]
+        result["AGENT_CONFIG"] = config.get("agent_config_raw", "")
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
     result = _attach_position(result, config, workflows_dir, local_workflows_dir)

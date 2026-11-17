@@ -89,6 +89,20 @@ class TestCodecRoundTrip(unittest.TestCase):
 
         self.assertIsInstance(json.loads(raw), dict)
 
+    def test_disk_roundtrip_preserves_agent_config(self):
+        """The per-run agent config survives the hand-off file (issue #1389)."""
+        state = _state_v7().model_copy(
+            update={"agent_config": "agent-config-anthropic.yaml"}
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            codec = WorkflowStateCodec(runner_temp=tmp)
+            codec.save_prev(state)
+
+            restored = codec.load_prev().state
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.agent_config, "agent-config-anthropic.yaml")
+
 
 def _state_with_per_entry_outcomes() -> WorkflowState:
     """A state whose history entries each carry their own turn outcome (#685)."""

@@ -96,6 +96,7 @@ def build_state(
     gate_decision: Optional[GateDecision] = None,
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
+    agent_config: Optional[str] = None,
     complexity_adjustment: Optional[ComplexityAdjustment] = None,
     complexity_review_request: Optional[ComplexityReviewRequest] = None,
     complexity_policy: Optional[ComplexityPolicy] = None,
@@ -173,6 +174,10 @@ def build_state(
             (issue #862), read from ``job.workflow_ref``. None preserves the
             previous value (``None`` on legacy blobs), so a run hosted outside
             the reusable workflow records nothing.
+        agent_config: Agent config selected for this run by
+            ``/nebuko run workflow --config <file>`` (issue #1389), as the raw
+            flag value. None preserves the previous value, so a hand-off
+            comment keeps the provider the human selected.
         thread: The reconciled thread ledger (issue #872). Non-None replaces the
             ledger wholesale (the engine folds the full comment list into it
             before advancing); None preserves the previous ledger.
@@ -196,6 +201,7 @@ def build_state(
         base_pr = None
         base_started_by = None
         base_workflow_ref = None
+        base_agent_config = None
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
@@ -216,6 +222,7 @@ def build_state(
         base_pr = prev_state.pull_request
         base_started_by = prev_state.started_by
         base_workflow_ref = prev_state.workflow_ref
+        base_agent_config = prev_state.agent_config
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
@@ -300,6 +307,13 @@ def build_state(
     # stays None on legacy blobs).
     new_workflow_ref = (
         workflow_ref if workflow_ref is not None else base_workflow_ref
+    )
+
+    # Per-run agent config selection (issue #1389): a run that carries a
+    # ``--config`` records it; a later hand-off comment (a new job that carries
+    # no flag) preserves it, so the provider does not silently revert.
+    new_agent_config = (
+        agent_config if agent_config is not None else base_agent_config
     )
 
     # Human_gate decision (issue #648): when this run was started by an
@@ -397,6 +411,7 @@ def build_state(
         callback=callback,
         started_by=new_started_by,
         workflow_ref=new_workflow_ref,
+        agent_config=new_agent_config,
         position=position_refs,
         soft_retry=new_soft_retry,
         # Per-issue circuit-breaker policy (issue #839): carried forward
