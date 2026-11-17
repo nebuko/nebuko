@@ -437,6 +437,11 @@ def collect_llm_metrics(conversation, agent_cfg=None, price_table=None):
             if hasattr(first_event, 'timestamp'):
                 start_time = first_event.timestamp
         end_time = datetime.now(timezone.utc).isoformat()
+        # A harness that times its own SDK queries reports the real run window.
+        run_started = getattr(combined_metrics, "started_at", None)
+        run_finished = getattr(combined_metrics, "finished_at", None)
+        if run_started and run_finished:
+            start_time, end_time = run_started, run_finished
         wall_clock_ms = round(_duration_ms(start_time, end_time), 2)
 
         # Provider-health indicators captured over the run's LLM calls (#829),
