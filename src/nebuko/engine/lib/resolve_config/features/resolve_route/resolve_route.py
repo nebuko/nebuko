@@ -2162,6 +2162,80 @@ def _default_workflow_name() -> str:
     return "default"
 
 
+def _agent_config_param(wf_cmd: Optional[WorkflowCommand]) -> Optional[str]:
+    """The ``--config`` value of a ``/nebuko run workflow`` command (issue #1389).
+
+    Returns ``None`` when the command is not a ``run`` or carries no flag; the
+    grammar already rejects a bare ``--config`` as a command attempt.
+    """
+    if wf_cmd is None or wf_cmd.action != "run":
+        return None
+    value = (wf_cmd.params.get("config") or "").strip()
+    return value or None
+
+
+def _agent_config_roots(caller_root: Optional[Path]) -> tuple[Path, Path]:
+    """The two agent-config search roots, most specific first.
+
+    ``.nebuko/agents`` is the caller's own override layer (anchored at the
+    caller workspace, not the engine checkout — issue #930);
+    ``defaults/agents`` is the tree shipped with Nebuko.
+    """
+    from nebuko.engine.lib.default_paths import checkout_root
+
+    root = caller_root if caller_root is not None else Path.cwd()
+    return root / ".nebuko" / "agents", checkout_root() / "defaults" / "agents"
+
+
+def _resolve_agent_config_value(
+    value: str, caller_root: Optional[Path] = None
+) -> Optional[str]:
+    """Resolve a ``--config`` value to an existing agent-config file (issue #1389).
+
+    A bare file name is looked up through the layered precedence
+    ``.nebuko/agents`` → ``defaults/agents``; a value containing a path
+    separator is caller-workspace-relative (the same anchor
+    ``ConfigPathAnchor.resolve`` applies to ``AGENT_CONFIG_PATH``).
+
+    Returns:
+        The absolute path of the matching file, or ``None`` when no root holds
+        it (the caller turns that into a usage reply listing the available
+        configs).
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    separators = {os.sep, "/"}
+    if os.altsep:
+        separators.add(os.altsep)
+    if os.path.isabs(raw) or any(sep in raw for sep in separators):
+        candidate = Path(raw) if os.path.isabs(raw) else (caller_root or Path.cwd()) / raw
+        return str(candidate) if candidate.is_file() else None
+    for root in _agent_config_roots(caller_root):
+        candidate = root / raw
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _available_agent_configs(caller_root: Optional[Path] = None) -> list[str]:
+    """File names of every agent config reachable from the two search roots.
+
+    Used by the unknown-value usage reply so a human sees the valid choices
+    (issue #1389). Sorted and de-duplicated across layers.
+    """
+    names: set[str] = set()
+    for root in _agent_config_roots(caller_root):
+        if not root.is_dir():
+            continue
+        names.update(
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_file() and entry.suffix in (".yaml", ".yml")
+        )
+    return sorted(names)
+
+
 def _resolve_human_path(
     trigger_body: str,
     repo: Optional[str],

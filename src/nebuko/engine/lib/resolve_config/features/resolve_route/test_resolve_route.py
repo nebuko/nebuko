@@ -1392,3 +1392,64 @@ class TestUnmatchedVerdictFallback:
         assert result.get("SKIP_KIND") != "terminal"
 
 
+
+
+class TestAgentConfigHelpers:
+    """``--config`` value resolution and the available-config listing (#1389)."""
+
+    def _roots(self, tmp_path):
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _agent_config_roots,
+        )
+
+        caller = tmp_path / "caller"
+        (caller / ".nebuko" / "agents").mkdir(parents=True)
+        (caller / ".nebuko" / "agents" / "agent-config-local.yaml").write_text(
+            "agents: {}\n"
+        )
+        return caller, _agent_config_roots(caller)
+
+    def test_bare_name_resolves_through_layers(self, tmp_path):
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _resolve_agent_config_value,
+        )
+
+        caller, (local_root, defaults_root) = self._roots(tmp_path)
+        assert _resolve_agent_config_value(
+            "agent-config-local.yaml", caller
+        ) == str(local_root / "agent-config-local.yaml")
+        # The shipped layer is the fallback for a name the repo does not override.
+        shipped = sorted(p.name for p in defaults_root.iterdir() if p.suffix == ".yaml")
+        if shipped:
+            assert _resolve_agent_config_value(shipped[0], caller) == str(
+                defaults_root / shipped[0]
+            )
+
+    def test_unknown_bare_name_is_none(self, tmp_path):
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _resolve_agent_config_value,
+        )
+
+        caller, _ = self._roots(tmp_path)
+        assert _resolve_agent_config_value("nope.yaml", caller) is None
+
+    def test_separator_value_is_caller_relative(self, tmp_path):
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _resolve_agent_config_value,
+        )
+
+        caller, _ = self._roots(tmp_path)
+        assert _resolve_agent_config_value(
+            ".nebuko/agents/agent-config-local.yaml", caller
+        ) == str(caller / ".nebuko" / "agents" / "agent-config-local.yaml")
+        assert _resolve_agent_config_value("missing/agent-config.yaml", caller) is None
+
+    def test_available_configs_lists_both_layers(self, tmp_path):
+        from nebuko.engine.lib.resolve_config.features.resolve_route.resolve_route import (
+            _available_agent_configs,
+        )
+
+        caller, _ = self._roots(tmp_path)
+        available = _available_agent_configs(caller)
+        assert "agent-config-local.yaml" in available
+        assert available == sorted(set(available))

@@ -9,6 +9,7 @@ from nebuko.engine.lib.workflow_state import (
     StateMetrics,
     TurnOutcome,
     TurnStatus,
+    agent_config_from_env,
     workflow_ref_from_env,
 )
 from nebuko.engine.lib.workflow_state.sub_domains.gate_decision import GateDecision
@@ -495,3 +496,77 @@ class TestWorkflowRefFromEnv(unittest.TestCase):
 
     def test_whitespace_only_maps_to_none(self):
         self.assertIsNone(workflow_ref_from_env({"NEBUKO_WORKFLOW_REF": "   "}))
+
+
+class TestAgentConfigProvenance(unittest.TestCase):
+    """The per-run agent config survives the state codec (issue #1389).
+
+    Each hand-off comment is a new job, so the selection has to be persisted or
+    the next run silently reverts to the workflow's own config.
+    """
+
+    def test_defaults_to_none(self):
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(state.agent_config)
+
+    def test_legacy_blob_without_field_loads_none(self):
+        data = {
+            "version": 3,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "architect",
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {
+                        "status": "completed",
+                        "appreciation": "approved",
+                    },
+                }
+            ],
+        }
+        state = WorkflowState.model_validate(data)
+        self.assertIsNone(state.agent_config)
+
+    def test_round_trip_preserves_value(self):
+        import json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
+
+        state = WorkflowState(
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            agent_config="agent-config-anthropic.yaml",
+        )
+        raw = json.loads(to_json(state))
+        self.assertEqual(raw["agent_config"], "agent-config-anthropic.yaml")
+        back = WorkflowState.model_validate(raw)
+        self.assertEqual(back.agent_config, "agent-config-anthropic.yaml")
+
+    def test_to_json_omits_none_agent_config(self):
+        import json
+        from nebuko.engine.lib.workflow_state.workflow_state import to_json
+
+        state = WorkflowState(workflow="default", step="analyze", agent="architect")
+        self.assertNotIn("agent_config", json.loads(to_json(state)))
+
+
+class TestAgentConfigFromEnv(unittest.TestCase):
+    """``AGENT_CONFIG`` -> ``agent_config`` (issue #1389)."""
+
+    def test_returns_value_when_present(self):
+        self.assertEqual(
+            agent_config_from_env({"AGENT_CONFIG": "agent-config-anthropic.yaml"}),
+            "agent-config-anthropic.yaml",
+        )
+
+    def test_absent_maps_to_none(self):
+        self.assertIsNone(agent_config_from_env({}))
+
+    def test_empty_string_maps_to_none(self):
+        self.assertIsNone(agent_config_from_env({"AGENT_CONFIG": ""}))
+
+    def test_whitespace_only_maps_to_none(self):
+        self.assertIsNone(agent_config_from_env({"AGENT_CONFIG": "   "}))

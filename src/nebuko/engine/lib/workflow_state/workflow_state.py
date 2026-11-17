@@ -136,8 +136,9 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 # top-level state shape changes: v1 flat -> v2 recursive position -> v3
 # universal position -> v4 (``run_id`` + ``schema_version`` split) -> v5 (thread
 # ledger + per-step input records, issue #872) -> v6 (``turn_outcome`` replaces
-# the legacy ``dispatch``, issue #964).
-STATE_SCHEMA_VERSION = 6
+# the legacy ``dispatch``, issue #964) -> v7 (``agent_config`` per-run agent
+# config selection, issue #1389).
+STATE_SCHEMA_VERSION = 7
 
 
 class WorkflowState(BaseModel):
@@ -222,6 +223,13 @@ class WorkflowState(BaseModel):
             via the ``NEBUKO_WORKFLOW_REF`` env var. Provenance only — the
             checkout pin is resolved by the workflow YAML itself. None when the
             var is absent, so legacy blobs load and serialize unchanged.
+        agent_config: Agent config selected for this run by
+            ``/nebuko run workflow --config <file>`` (issue #1389), stored as the
+            raw flag value. It selects which credentials the child process
+            receives, so it is routing-adjacent like ``workflow_ref`` and
+            persists across hand-off comments — each comment is a new job that
+            would otherwise fall back to the workflow's own config. None when
+            the run never selected one, so legacy blobs load unchanged.
     """
 
     run_id: int = 0
@@ -280,6 +288,11 @@ class WorkflowState(BaseModel):
     # from ``NEBUKO_WORKFLOW_REF`` (``job.workflow_ref``). Provenance only;
     # None on legacy blobs, which load and serialize unchanged.
     workflow_ref: Optional[str] = None
+    # Per-run agent config selection (issue #1389), from the ``--config`` flag
+    # of ``/nebuko run workflow``. Persisted so later hand-off comments (each a
+    # new job) keep the same provider; None on legacy blobs, which load
+    # unchanged.
+    agent_config: Optional[str] = None  # @stub-protected
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -371,6 +384,24 @@ def workflow_ref_from_env(env: Mapping[str, str]) -> Optional[str]:
     return value or None
 
 
+def agent_config_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read this run's selected agent config from ``AGENT_CONFIG``.
+
+    The resolver emits the raw ``--config`` value (issue #1389) so the state
+    built after the run records it; the child process itself uses the resolved
+    ``AGENT_CONFIG_PATH``. An absent or empty value maps to ``None`` so a run
+    that selected nothing preserves the previous state's value.
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty ``AGENT_CONFIG`` value, or ``None``.
+    """
+    value = (env.get("AGENT_CONFIG") or "").strip()
+    return value or None
+
+
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
     return state_to_json(state)
@@ -409,6 +440,7 @@ def go_next(
     callback: Optional[str] = None,
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
+    agent_config: Optional[str] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -436,4 +468,5 @@ def go_next(
         callback=callback,
         workflow_ref=workflow_ref,
         gate=gate,
+        agent_config=agent_config,
     )

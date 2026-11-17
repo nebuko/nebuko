@@ -56,6 +56,40 @@ steps:
 
 ---
 
+## Selecting the Agent Config per Run (`--config`)
+
+The agent config is normally chosen per repo — the comment-trigger workflow's
+`agent_config_path` input, or `agent_config` in `.nebuko/nebuko.yaml` (issue
+#1176 territory). To compare providers in a parity run without editing either
+file, select the config for **one run** from the command itself (issue #1389):
+
+```
+/nebuko run workflow --name dev-review-loop --config agent-config-anthropic.yaml
+```
+
+- A **bare file name** resolves through the same layered precedence as
+  `AGENT_CONFIG_PATH`: `<caller>/.nebuko/agents/` first, then the shipped
+  `defaults/agents/`. A value containing a path separator is
+  caller-workspace-relative.
+- An **unknown** value is a terminal command attempt: the thread gets a usage
+  reply that lists the configs available in both roots, and no agent runs
+  ([ADR-0011](./adr/0011-command-attempts-resolved-by-grammar.md)).
+- The choice is **persisted in workflow state** (`agent_config`), so every
+  later hand-off comment — each one is a new job — keeps the same config. A
+  later command carrying its own `--config` overrides it; omit the flag to keep
+  the persisted choice.
+- Anyone who can post a `/nebuko` command may use it. The flag can select any
+  config whose secrets the workflow already holds.
+
+> ⚠️ **Warning.** Selecting a config that uses your personal Anthropic
+> subscription (`CLAUDE_CODE_OAUTH_TOKEN`, `claude-code` backend) for automated
+> runs may violate the subscription's terms of service and get the account
+> banned. The default config stays `agent-config-mistral.yaml`; choosing
+> claude-code for a bot-driven workflow is a deliberate human decision (ADR-0017
+> guard 3).
+
+---
+
 ## Step Instructions (`prompt`)
 
 A step can carry a `prompt:` field with a standing instruction that is

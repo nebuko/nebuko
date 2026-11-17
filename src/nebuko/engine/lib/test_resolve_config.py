@@ -617,6 +617,141 @@ class TestResolveConfigWithWorkflowCommand:
 
 
 
+class TestAgentConfigSelection:
+    """``/nebuko run workflow --config`` selects the agent config (issue #1389)."""
+
+    def _setup(self, tmp_path, monkeypatch):
+        from nebuko.engine.lib.resolve_workflow import TASK_TO_PROMPT
+
+        # ``ConfigPathAnchor`` prefers $GITHUB_WORKSPACE; pin the caller root to
+        # this test's tmp workspace instead of the CI checkout.
+        monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        prompt_base = tmp_path / "prompts"
+        prompt_base.mkdir()
+        for name in TASK_TO_PROMPT.values():
+            (prompt_base / name).write_text(f"# {name}")
+        workflows_dir = tmp_path / "workflows"
+        workflows_dir.mkdir()
+        (workflows_dir / "default.yaml").write_text(
+            "name: default\n"
+            'description: "test"\n'
+            "steps:\n"
+            "  - name: analyze\n    agent: architect\n    next: implement\n"
+            "  - name: implement\n    agent: dev\n    next: null\n"
+        )
+        agents = tmp_path / ".nebuko" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "agent-config-anthropic.yaml").write_text("agents: {}\n")
+        return str(prompt_base), str(workflows_dir)
+
+    def test_known_config_selects_it_for_this_run(self, tmp_path, monkeypatch):
+        prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
+
+        result = resolve_config(
+            "/nebuko run workflow --name default --config agent-config-anthropic.yaml",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+        )
+
+        assert result["TASK"] == "architect"
+        assert result["AGENT_CONFIG_PATH"] == str(
+            tmp_path / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        )
+        assert result["AGENT_CONFIG"] == "agent-config-anthropic.yaml"
+
+    def test_unknown_config_is_a_usage_reply_listing_available(self, tmp_path, monkeypatch):
+        prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
+
+        result = resolve_config(
+            "/nebuko run workflow --name default --config nope.yaml",
+            prompt_base,
+            workflows_dir,
+            is_bot=False,
+        )
+
+        assert result["SKIP_AGENT"] == "true"
+        assert result["COMMAND_ERROR"] == "true"
+        assert "nope.yaml" in result["REASON"]
+        assert "agent-config-anthropic.yaml" in result["REASON"]
+        assert "AGENT_CONFIG_PATH" not in result
+
+    def test_hand_off_keeps_the_selected_config(self, tmp_path, monkeypatch):
+        """A later comment (new job, no flag) re-applies the persisted choice."""
+        prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
+        state = {
+            "version": 7,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "architect",
+            "agent_config": "agent-config-anthropic.yaml",
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {
+                        "status": "completed",
+                        "appreciation": "approved",
+                    },
+                }
+            ],
+        }
+        body = (
+            "/nebuko run workflow --name default\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
+
+        assert result["AGENT_CONFIG_PATH"] == str(
+            tmp_path / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        )
+        assert result["AGENT_CONFIG"] == "agent-config-anthropic.yaml"
+
+    def test_bot_hand_off_comment_keeps_the_selected_config(
+        self, tmp_path, monkeypatch
+    ):
+        """A bot hand-off (no command, no flag) still applies the persisted choice."""
+        prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
+        state = {
+            "version": 7,
+            "workflow": "default",
+            "step": "analyze",
+            "agent": "architect",
+            "agent_config": "agent-config-anthropic.yaml",
+            "history": [
+                {
+                    "step": "analyze",
+                    "agent": "architect",
+                    "summary": "ok",
+                    "turn_outcome": {
+                        "status": "completed",
+                        "appreciation": "approved",
+                    },
+                }
+            ],
+            "turn_outcome": {"status": "completed", "appreciation": "approved"},
+        }
+        body = (
+            "<!-- bot-agent-architect -->\n"
+            "<!-- WORKFLOW_STATE_START -->\n"
+            + json.dumps(state)
+            + "\n<!-- WORKFLOW_STATE_END -->"
+        )
+
+        result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
+
+        assert result["AGENT_CONFIG_PATH"] == str(
+            tmp_path / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        )
+        assert result["AGENT_CONFIG"] == "agent-config-anthropic.yaml"
+
+
 class TestResolveNextAgentFromWorkflow(unittest.TestCase):
     """Tests for resolve_next_agent_from_workflow function."""
 

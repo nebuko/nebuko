@@ -32,6 +32,9 @@ from .features.parse_trigger.parse_trigger import (
 from .features.resolve_route.resolve_route import (
     build_author_identity_from_env,
     _armed_gate,
+    _agent_config_param,
+    _available_agent_configs,
+    _resolve_agent_config_value,
     _resolve_resume_path,
     _resolve_outcome_path,
     _resolve_function_call_path,
@@ -445,6 +448,49 @@ def resolve_config(
 
     if config.get("SKIP_AGENT") == "true":
         return config
+
+    # Per-run agent config selection (issue #1389): ``/nebuko run workflow
+    # --config <file>`` picks the agent config for this run only. The raw value
+    # is persisted in workflow state, so every later hand-off comment (a new
+    # job with no flag) re-applies it; an explicit flag overrides it. An unknown
+    # *explicit* value is a terminal command error listing the available configs
+    # — never a silent fallback to the workflow's own config (ADR-0011). A
+    # *persisted* value that no longer resolves only warns: a deleted file must
+    # not kill the run that is already in flight.
+    requested_config = (
+        _agent_config_param(wf_cmd)
+        if wf_cmd is not None and wf_cmd.action == "run" and not is_bot
+        else None
+    )
+    selected_config = requested_config or (
+        prev_state.agent_config if prev_state is not None else None
+    )
+    if selected_config:
+        from nebuko.engine.paths import ConfigPathAnchor
+
+        caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
+        resolved_config = _resolve_agent_config_value(selected_config, caller_root)
+        if resolved_config is not None:
+            config["agent_config_path"] = resolved_config
+            config["agent_config_raw"] = selected_config
+        elif requested_config:
+            available = _available_agent_configs(caller_root)
+            listing = ", ".join(available) if available else "none found"
+            usage = (
+                "/nebuko run workflow --name <workflow> "
+                "[--step <step[.step...]>] [--config <agent-config>]"
+            )
+            config["task"] = ""
+            config["config_command_error"] = (
+                f"unknown agent config '{selected_config}'; "
+                f"available: {listing} — usage: {usage}"
+            )
+        else:
+            print(
+                f"Warning: persisted agent config '{selected_config}' not "
+                "found; using the workflow's own config",
+                file=sys.stderr,
+            )
 
     # Branch-mounted child fetch-on-miss (issue #604): carry the state's
     # scaffold_branch into result-building so sub-workflow entry resolution

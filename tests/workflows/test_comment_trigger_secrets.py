@@ -1,9 +1,10 @@
-"""The comment trigger forwards the Claude Code token (issue #1402).
+"""The comment trigger forwards the Claude Code token (issue #1389).
 
-``nebuko-workflow.yaml`` declares, masks and exports ``CLAUDE_CODE_OAUTH_TOKEN``
-(#1395), but a ``workflow_call`` only receives the secrets its caller names — so
-the trigger workflow has to pass it, or a comment-triggered Claude Code run
-starts without a credential.
+``nebuko-workflow.yaml`` declares, masks and exports ``CLAUDE_CODE_OAUTH_TOKEN``,
+but a ``workflow_call`` only receives the secrets its caller names — so the
+trigger workflow has to pass it, or a comment-triggered claude-code run starts
+without a credential. Secret values travel through ``secrets:`` only, never
+``with:`` (ADR-0008).
 
 The trigger workflow change is delivered as a ``workflow-patch.diff`` (AGENTS.md:
 the agent token has no ``workflow`` scope), so it is applied in memory when the
@@ -65,10 +66,6 @@ def _apply_unified_diff(text: str, diff: str) -> str:
     return "".join(out)
 
 
-def _workflow(path: Path) -> dict:
-    return yaml.safe_load(_effective_text(path))
-
-
 def _patch_additions(section: str) -> list[str]:
     return [
         raw[1:]
@@ -83,9 +80,6 @@ def _effective_text(path: Path) -> str:
     The trigger workflow change travels as a ``workflow-patch.diff`` until a
     human applies it, so the assertion has to see both sides: red if the change
     is lost from the file *and* the patch, green on either side of the apply.
-    The branch keeps the committed patch file after the apply, so a section
-    whose added lines are already in the file is ignored rather than applied
-    twice.
     """
     text = (REPO_ROOT / path).read_text(encoding="utf-8")
     if PATCH_PATH.exists():
@@ -94,6 +88,10 @@ def _effective_text(path: Path) -> str:
         if additions and not all(line in text for line in additions):
             text = _apply_unified_diff(text, section)
     return text
+
+
+def _workflow(path: Path) -> dict:
+    return yaml.safe_load(_effective_text(path))
 
 
 def test_trigger_forwards_the_claude_code_token() -> None:
@@ -107,6 +105,10 @@ def test_trigger_forwards_the_claude_code_token() -> None:
 def test_trigger_job_still_passes_the_provider_keys() -> None:
     job = _workflow(TRIGGER_PATH)["jobs"]["agent"]
     assert job["secrets"]["MISTRAL_API_KEY"] == "${{ secrets.MISTRAL_API_KEY }}"
+    assert (
+        job["secrets"]["CHEAPERINFERENCE_API_KEY"]
+        == "${{ secrets.CHEAPERINFERENCE_API_KEY }}"
+    )
 
 
 def test_reusable_workflow_declares_it_optional() -> None:
