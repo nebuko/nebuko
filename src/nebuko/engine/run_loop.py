@@ -771,6 +771,11 @@ class Engine:
     _config_caller_root: dict[str, Path] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The caller's parsed manifest, read once per run (issue #1344).
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _manifest_cache: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # Requirements-ledger bookkeeping (issue #1257): the ledger parsed from the
     # analyze step's output, and whether this run's plan finalize was refused
     # for missing coverage. Engine-internal, so it is excluded from
@@ -850,7 +855,9 @@ class Engine:
         from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import wrap_script_comment
 
         self.notify_script_started(self._script_start_notice(step, trigger))
-        checkout, failure = self._evidence_checkout(step.script_checkout, phases)
+        checkout, failure = self._evidence_checkout(
+            step.script_checkout, phases, merge_base=self._merge_base_requested(step)
+        )
         if failure is not None:
             # An unreachable session branch is an engine failure, never a
             # silent fallback to the workflow ref (issue #1327): the command
@@ -872,6 +879,7 @@ class Engine:
                 output=result.output,
                 branch=result.branch,
                 head_sha=result.head_sha,
+                tested=result.tested,
             ).render(),
         )
         state = self._post_script_output(state, body, result)
@@ -957,8 +965,32 @@ class Engine:
         context[EVIDENCE_COMMITS_KEY] = records
         return state.model_copy(update={"current_context": context})
 
+    def _merge_base_requested(self, step: DeterministicStep) -> bool:
+        """Whether this script step merges the base before running (issue #1344).
+
+        CI tests GitHub's pull-request merge commit, so a step that runs tests
+        must see the same tree or it reports failures ``main`` already fixed.
+        The manifest sets the repo-wide default (on when undeclared); a step
+        opts out with ``env: {NEBUKO_MERGE_MAIN: "0"}`` — ``git_diff`` does,
+        since a merge would pull ``main`` into the change under review.
+        """
+        override = step.env_overrides().get("NEBUKO_MERGE_MAIN")
+        if override is not None and override.strip():
+            return override.strip().lower() in ("1", "true", "yes", "on")
+        return bool(self._manifest().merge_main)
+
+    def _manifest(self) -> NebukoManifest:
+        """The caller's ``.nebuko/nebuko.yaml``, read once per run (issue #1344)."""
+        cached = self._manifest_cache.get("manifest")
+        if cached is None:
+            from nebuko.engine.paths import load_manifest
+
+            cached = load_manifest(self._caller_root() / ".nebuko" / "nebuko.yaml")
+            self._manifest_cache["manifest"] = cached
+        return cached
+
     def _evidence_checkout(
-        self, mode: str, phases: list[str]
+        self, mode: str, phases: list[str], merge_base: bool = False
     ) -> tuple[evidence_checkout.EvidenceCheckout | None, "RunOutcome | None"]:
         """Check out the commit an evidence command must run on (issue #1327).
 
@@ -968,8 +1000,12 @@ class Engine:
         workflow ref and reports ``branch: none``. ``workflow`` keeps today's
         behaviour. An unreachable branch fails the run here, before the command
         executes.
+
+        ``merge_base`` merges the base branch into the detached head first
+        (issue #1344), so a test step sees the same tree CI's pull-request merge
+        commit does.
         """
-        checkout, failure = self._resolve_evidence_checkout(mode)
+        checkout, failure = self._resolve_evidence_checkout(mode, merge_base)
         if failure:
             log.error("[phase:action] evidence checkout failed: %s", failure)
             return None, self._evidence_failure_outcome(
@@ -978,7 +1014,7 @@ class Engine:
         return checkout, None
 
     def _resolve_evidence_checkout(
-        self, mode: str
+        self, mode: str, merge_base: bool = False
     ) -> tuple[evidence_checkout.EvidenceCheckout | None, str]:
         """Resolve the evidence checkout; ``(checkout, "")`` or ``(None, detail)``.
 
@@ -1003,7 +1039,11 @@ class Engine:
             if failure:
                 return None, failure
         checkout = evidence_checkout.resolve_evidence_checkout(
-            self._evidence_workspace(), self._session_env(), mode=mode, branch=branch
+            self._evidence_workspace(),
+            self._session_env(),
+            mode=mode,
+            branch=branch,
+            merge_base=merge_base,
         )
         if not checkout.ok:
             return None, checkout.detail

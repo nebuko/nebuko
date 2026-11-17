@@ -13,9 +13,13 @@ steps:
     next: git_diff
 
   # The stat comes first: output over the size cap loses its middle.
+  # `NEBUKO_MERGE_MAIN=0` opts this step out of the merge-before-tests default
+  # (issue #1344): a merge would pull `main` into the change under review.
   - name: git_diff
     script:
       command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
       args:
         - "-c"
         - >-
