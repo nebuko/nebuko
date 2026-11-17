@@ -250,6 +250,95 @@ def test_declared_mcp_server_with_unset_env_is_skipped(monkeypatch) -> None:
     assert _stdio_servers(cfg) == {}
 
 
+def test_result_message_feeds_the_conversation_stats() -> None:
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    from nebuko.engine.harness.claude_code import ClaudeCodeConversation, _events_of
+
+    session, _, _ = _session()
+    conversation = ClaudeCodeConversation(
+        session=session,
+        closing_channel=ClaudeCodeClosingChannel(),
+        workspace="/tmp/repo",
+    )
+    for event in _events_of(
+        AssistantMessage(content=[TextBlock(text="hi")], model="claude-sonnet-x")
+    ):
+        session._emit(event)
+    for event in _events_of(
+        ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=900,
+            is_error=False,
+            num_turns=1,
+            session_id="s1",
+            total_cost_usd=0.5,
+            usage={
+                "input_tokens": 100,
+                "cache_read_input_tokens": 300,
+                "cache_creation_input_tokens": 50,
+                "output_tokens": 40,
+            },
+            result="done",
+        )
+    ):
+        session._emit(event)
+
+    metrics = conversation.conversation_stats.get_combined_metrics()
+    usage = metrics.accumulated_token_usage
+    assert metrics.model_name == "claude-sonnet-x"
+    assert usage.prompt_tokens == 450
+    assert usage.completion_tokens == 40
+    assert usage.cache_read_tokens == 300
+    assert usage.cache_write_tokens == 50
+    assert metrics.accumulated_cost == 0.5
+
+
+def test_collect_llm_metrics_reports_claude_code_run(monkeypatch) -> None:
+    from nebuko.engine.harness.claude_code import ClaudeCodeConversation
+    from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import (
+        collect_llm_metrics,
+    )
+
+    monkeypatch.delenv("ROLE_NAME", raising=False)
+    session, client, _ = _session()
+    conversation = ClaudeCodeConversation(
+        session=session,
+        closing_channel=ClaudeCodeClosingChannel(),
+        workspace="/tmp/repo",
+        run_id="run-cc",
+    )
+
+    def _turn(_client):
+        session._emit(HarnessEvent(kind="commentary", text="work", data={"model": "claude-x"}))
+        session._emit(
+            HarnessEvent(
+                kind="result",
+                text="done",
+                data={
+                    "usage": {"input_tokens": 150000, "output_tokens": 10},
+                    "total_cost_usd": 1.25,
+                    "model_usage": {},
+                },
+            )
+        )
+
+    client._on_query = _turn
+    session.send_message("go")
+    session.run()
+
+    metrics = collect_llm_metrics(conversation)
+    assert metrics.error is None
+    assert metrics.model_name == "claude-x"
+    assert metrics.input_tokens == 150000
+    assert metrics.output_tokens == 10
+    assert metrics.cost == 1.25
+    assert metrics.start_time and metrics.end_time
+    assert metrics.start_time != metrics.end_time
+    assert metrics.wall_clock_ms >= 0
+
+
 def test_tool_results_surface_as_observation_events() -> None:
     from claude_agent_sdk import ToolResultBlock, UserMessage
 
