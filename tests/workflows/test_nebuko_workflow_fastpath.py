@@ -12,13 +12,15 @@ lands in ``.github/workflows/nebuko-workflow.yaml``.
 from __future__ import annotations
 
 import re
+import subprocess
 from typing import Any, ClassVar
 from pathlib import Path
 
 import pytest
 import yaml
 
-_PATCH_PATH = Path(__file__).resolve().parents[2] / "nebuko-task-logs" / "workflow-patch.diff"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_PATCH_PATH = REPO_ROOT / "nebuko-task-logs" / "workflow-patch.diff"
 
 
 def _patch_section(diff: str, path: Path) -> str:
@@ -107,6 +109,38 @@ class WorkflowSpec:
     # @stub-protected: signature defined by architect — do not modify
     def permissions_of(self, job_name: str) -> set[str]:
         return set(self.job(job_name).get("permissions", {}))
+
+
+def test_committed_patch_applies_to_the_committed_workflow(tmp_path: Path) -> None:
+    """Given the committed patch, when a human runs the advertised
+    ``git apply``, then it applies to the workflow file in the repo.
+
+    The patch drifted once (a merge moved the context lines) and the apply
+    command posted in the PR comment failed. Nothing is left to check once the
+    change is already in the file."""
+    if not _PATCH_PATH.exists():
+        pytest.skip("no workflow patch committed")
+    section = _patch_section(
+        _PATCH_PATH.read_text(encoding="utf-8"), WorkflowSpec.WORKFLOW_PATH
+    )
+    if not section:
+        pytest.skip("patch carries no section for the reusable workflow")
+    text = WorkflowSpec.WORKFLOW_PATH.read_text(encoding="utf-8")
+    additions = [
+        raw[1:] for raw in section.splitlines() if raw.startswith("+") and not raw.startswith("+++")
+    ]
+    if additions and all(line in text for line in additions):
+        pytest.skip("workflow change already applied")
+
+    patch_file = tmp_path / "workflow-patch.diff"
+    patch_file.write_text(section, encoding="utf-8")
+    result = subprocess.run(
+        ["git", "apply", "--check", str(patch_file)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_patch_sections_for_other_files_are_ignored() -> None:

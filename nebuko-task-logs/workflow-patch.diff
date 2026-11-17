@@ -1,8 +1,8 @@
 diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
-index f13c686..37ee330 100644
+index afe855c..b2d43ba 100644
 --- a/.github/workflows/nebuko-workflow.yaml
 +++ b/.github/workflows/nebuko-workflow.yaml
-@@ -371,6 +371,22 @@ jobs:
+@@ -374,6 +374,22 @@ jobs:
                    [ "$VENV_CACHE_HIT" = "true" ] && COMPILE=
                    uv sync --project "$NEBUKO_ROOT" --extra runtime --locked --no-dev $COMPILE
  
@@ -22,6 +22,6 @@ index f13c686..37ee330 100644
 +                  install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
 +                  gitleaks version
 +
-             - name: "Materialize extra secret slots as env vars"
+             - name: Export Claude Code token
                env:
-                 EXTRA_SECRET_1_NAME: ${{ inputs.EXTRA_SECRET_1_NAME }}
+                 CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
