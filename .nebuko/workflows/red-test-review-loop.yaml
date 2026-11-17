@@ -50,9 +50,13 @@ steps:
     next: git_diff
 
   # The stat comes first: output over the size cap loses its middle.
+  # `NEBUKO_MERGE_MAIN=0` opts this step out of the merge-before-tests default
+  # (issue #1344): a merge would pull `main` into the change under review.
   - name: git_diff
     script:
       command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
       args:
         - "-c"
         - >-
@@ -112,10 +116,13 @@ steps:
          never classify with `git stash`: it only hides uncommitted changes, and
          the branch's commits stay in the tree, so it proves nothing.
 
-         `run_tests` tests the branch head ALONE. CI tests the branch merged
-         into the current `origin/main`, so a branch that is behind `main`
-         fails tests that `main` already fixed (this made a 31-failure loop run
-         look broken while CI showed 4). Classify each non-new failing test ID
+         `run_tests` tests the branch head merged with the current
+         `origin/main` (the `merge_main` manifest flag, on by default), the same
+         shape of tree CI tests. Read its `branch:` line first: when it ends
+         with `branch head ...` the merge did not happen (flag off, or the
+         branch conflicts with `main`), so a branch that is behind `main` fails
+         tests that `main` already fixed (this made a 31-failure loop run look
+         broken while CI showed 4). Classify each non-new failing test ID
          (a few IDs, not the whole suite) on two throw-away trees:
              git fetch origin main
              git rev-list --count HEAD..origin/main     # > 0: branch is behind main

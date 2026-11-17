@@ -5,6 +5,7 @@ from __future__ import annotations
 from nebuko.engine.paths import (
     ConfigPathAnchor,
     LIB_DIR,
+    NebukoPaths,
     defaults_dir,
     repo_root,
 )
@@ -25,6 +26,19 @@ class TestLibDir:
     def test_points_at_the_migrated_orchestration_library(self):
         assert LIB_DIR.is_dir()
         assert (LIB_DIR / "event_normalizer.py").is_file()
+
+
+class TestManifestMergeMain:
+    """``merge_main`` in ``.nebuko/nebuko.yaml`` (issue #1344)."""
+
+    def test_an_absent_manifest_defaults_to_merging_main(self, tmp_path):
+        assert NebukoPaths.discover(tmp_path).manifest.merge_main is True
+
+    def test_the_manifest_can_turn_the_merge_off(self, tmp_path):
+        (tmp_path / ".nebuko").mkdir()
+        (tmp_path / ".nebuko" / "nebuko.yaml").write_text("merge_main: false\n")
+
+        assert NebukoPaths.discover(tmp_path).manifest.merge_main is False
 
 
 class TestConfigPathAnchorResolve:

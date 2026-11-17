@@ -150,3 +150,78 @@ class TestCurrentCheckout:
         assert checkout == EvidenceCheckout(
             ok=True, branch="", head_sha=_git(shallow_work, "rev-parse", "HEAD")
         )
+
+
+class TestMergeBase:
+    """Merging the base into the detached head (issue #1344).
+
+    CI tests GitHub's pull-request merge commit, so a test step that ran on the
+    bare branch head reported failures ``main`` had already fixed.
+    """
+
+    def test_merges_the_base_into_the_branch_head(self, shallow_work, remote):
+        branch_head = _git(remote, "rev-parse", BRANCH)
+        base_head = _git(remote, "rev-parse", "main")
+
+        checkout = resolve_evidence_checkout(
+            shallow_work, {}, mode="session", branch=BRANCH, merge_base=True
+        )
+
+        assert checkout.ok, checkout.detail
+        assert checkout.tested == f"merge of {branch_head} into {base_head}"
+        assert checkout.head_sha != branch_head
+        # The merged tree carries both sides.
+        assert (shallow_work / "later.txt").is_file()
+        assert (shallow_work / "work.txt").is_file()
+        parents = _git(shallow_work, "rev-list", "--parents", "-n", "1", "HEAD").split()
+        assert len(parents) == 3
+
+    def test_the_merge_commit_is_never_pushed(self, shallow_work, remote):
+        branch_head = _git(remote, "rev-parse", BRANCH)
+
+        resolve_evidence_checkout(
+            shallow_work, {}, mode="session", branch=BRANCH, merge_base=True
+        )
+
+        assert _git(remote, "rev-parse", BRANCH) == branch_head
+
+    def test_without_the_flag_the_branch_head_is_tested(self, shallow_work, remote):
+        branch_head = _git(remote, "rev-parse", BRANCH)
+
+        checkout = resolve_evidence_checkout(
+            shallow_work, {}, mode="session", branch=BRANCH
+        )
+
+        assert checkout.head_sha == branch_head
+        assert checkout.tested == f"branch head {branch_head}"
+
+    def test_a_conflict_keeps_the_branch_head_and_still_succeeds(
+        self, tmp_path, remote
+    ):
+        seed = tmp_path / "seed"
+        _git(seed, "fetch", "-q", "origin")
+        _git(seed, "checkout", "-q", "-B", BRANCH, f"origin/{BRANCH}")
+        _commit(seed, "base.txt", "branch side\n", "branch edits base")
+        _git(seed, "push", "-q", "origin", BRANCH)
+        _git(seed, "checkout", "-q", "-B", "main", "origin/main")
+        _commit(seed, "base.txt", "main side\n", "main edits base")
+        _git(seed, "push", "-q", "origin", "main")
+        branch_head = _git(seed, "rev-parse", BRANCH)
+
+        work = tmp_path / "work"
+        subprocess.run(
+            ["git", "clone", "-q", "--depth=1", "--branch", "main", remote.as_uri(), str(work)],
+            check=True,
+        )
+        _git(work, "config", "user.name", "t")
+        _git(work, "config", "user.email", "t@example.com")
+
+        checkout = resolve_evidence_checkout(
+            work, {}, mode="session", branch=BRANCH, merge_base=True
+        )
+
+        assert checkout.ok, checkout.detail
+        assert checkout.head_sha == branch_head
+        assert checkout.tested == f"branch head {branch_head}"
+        # The aborted merge leaves no in-progress merge behind.
+        assert not (work / ".git" / "MERGE_HEAD").exists()

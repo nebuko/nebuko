@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
@@ -88,6 +89,8 @@ from nebuko.engine.lib.workflow_state import (
     Appreciation,
     HoldKind,
     IncompleteReason,
+    IssueInfo,
+    PullRequestInfo,
     TurnOutcome,
     TurnStatus,
 )
@@ -643,6 +646,23 @@ def _clear_prev_state_handoff() -> None:
 
 
 # @stub-protected
+def _utc_now_iso() -> str:
+    """The current UTC time, ISO-8601, as recorded in the state (issue #1397)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _had_agent_step(state: "WorkflowState | None") -> bool:
+    """Whether an agent (not a script) step already ran in this workflow.
+
+    A script-only history has no session branch of its own to recover: the
+    branch belongs to the agent session that scaffolded it (issue #1397).
+    """
+    if state is None:
+        return False
+    return any(entry.agent and entry.agent != "script" for entry in state.history)
+
+
+# @stub-protected
 def _scaffold_git_status(result: branch_scaffold.ScaffoldResult) -> GitActionStatus:
     """The git action a prepared scaffold amounts to (issue #1153)."""
     if result.conflict:
@@ -751,6 +771,11 @@ class Engine:
     _config_caller_root: dict[str, Path] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+    # The caller's parsed manifest, read once per run (issue #1344).
+    # Engine-internal, so it is excluded from ``__init__``/equality/repr.
+    _manifest_cache: dict[str, Any] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
     # Requirements-ledger bookkeeping (issue #1257): the ledger parsed from the
     # analyze step's output, and whether this run's plan finalize was refused
     # for missing coverage. Engine-internal, so it is excluded from
@@ -830,7 +855,9 @@ class Engine:
         from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import wrap_script_comment
 
         self.notify_script_started(self._script_start_notice(step, trigger))
-        checkout, failure = self._evidence_checkout(step.script_checkout, phases)
+        checkout, failure = self._evidence_checkout(
+            step.script_checkout, phases, merge_base=self._merge_base_requested(step)
+        )
         if failure is not None:
             # An unreachable session branch is an engine failure, never a
             # silent fallback to the workflow ref (issue #1327): the command
@@ -852,6 +879,7 @@ class Engine:
                 output=result.output,
                 branch=result.branch,
                 head_sha=result.head_sha,
+                tested=result.tested,
             ).render(),
         )
         state = self._post_script_output(state, body, result)
@@ -881,18 +909,20 @@ class Engine:
         """
         from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
 
-        return build_state(
-            self._previous_state(),
-            workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
-            step=step.step_name,
-            agent="script",
-            phase="action",
-            turn_outcome=TurnOutcome(
-                status=TurnStatus.COMPLETED,
-                appreciation=(
-                    Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+        return self._with_trigger_metadata(
+            build_state(
+                self._previous_state(),
+                workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+                step=step.step_name,
+                agent="script",
+                phase="action",
+                turn_outcome=TurnOutcome(
+                    status=TurnStatus.COMPLETED,
+                    appreciation=(
+                        Appreciation.APPROVED if result.ok else Appreciation.REJECTED
+                    ),
                 ),
-            ),
+            )
         )
 
     def _post_script_output(
@@ -935,18 +965,47 @@ class Engine:
         context[EVIDENCE_COMMITS_KEY] = records
         return state.model_copy(update={"current_context": context})
 
+    def _merge_base_requested(self, step: DeterministicStep) -> bool:
+        """Whether this script step merges the base before running (issue #1344).
+
+        CI tests GitHub's pull-request merge commit, so a step that runs tests
+        must see the same tree or it reports failures ``main`` already fixed.
+        The manifest sets the repo-wide default (on when undeclared); a step
+        opts out with ``env: {NEBUKO_MERGE_MAIN: "0"}`` — ``git_diff`` does,
+        since a merge would pull ``main`` into the change under review.
+        """
+        override = step.env_overrides().get("NEBUKO_MERGE_MAIN")
+        if override is not None and override.strip():
+            return override.strip().lower() in ("1", "true", "yes", "on")
+        return bool(self._manifest().merge_main)
+
+    def _manifest(self) -> NebukoManifest:
+        """The caller's ``.nebuko/nebuko.yaml``, read once per run (issue #1344)."""
+        cached = self._manifest_cache.get("manifest")
+        if cached is None:
+            from nebuko.engine.paths import load_manifest
+
+            cached = load_manifest(self._caller_root() / ".nebuko" / "nebuko.yaml")
+            self._manifest_cache["manifest"] = cached
+        return cached
+
     def _evidence_checkout(
-        self, mode: str, phases: list[str]
+        self, mode: str, phases: list[str], merge_base: bool = False
     ) -> tuple[evidence_checkout.EvidenceCheckout | None, "RunOutcome | None"]:
         """Check out the commit an evidence command must run on (issue #1327).
 
-        ``session`` (the default) checks out the branch ``_record_scaffold_branch``
-        persisted in ``current_context["dev_branch"]``; with no branch yet (a
-        script before any agent scaffolded one) it stays on the workflow ref and
-        reports ``branch: none``. ``workflow`` keeps today's behaviour. An
-        unreachable branch fails the run here, before the command executes.
+        ``session`` (the default) checks out the branch the scaffold recorded in
+        ``state.git.branch_name``; with no branch recorded and none discoverable
+        on the remote (a script before any agent scaffolded one) it stays on the
+        workflow ref and reports ``branch: none``. ``workflow`` keeps today's
+        behaviour. An unreachable branch fails the run here, before the command
+        executes.
+
+        ``merge_base`` merges the base branch into the detached head first
+        (issue #1344), so a test step sees the same tree CI's pull-request merge
+        commit does.
         """
-        checkout, failure = self._resolve_evidence_checkout(mode)
+        checkout, failure = self._resolve_evidence_checkout(mode, merge_base)
         if failure:
             log.error("[phase:action] evidence checkout failed: %s", failure)
             return None, self._evidence_failure_outcome(
@@ -955,26 +1014,70 @@ class Engine:
         return checkout, None
 
     def _resolve_evidence_checkout(
-        self, mode: str
+        self, mode: str, merge_base: bool = False
     ) -> tuple[evidence_checkout.EvidenceCheckout | None, str]:
         """Resolve the evidence checkout; ``(checkout, "")`` or ``(None, detail)``.
 
-        The branch comes from ``current_context["dev_branch"]``, which
-        ``_record_scaffold_branch`` persists after a run scaffolded one. A state
-        without it is a first run (no agent has pushed yet), not an unreachable
-        branch: session mode then runs on the workflow ref and reports
-        ``branch: none``.
+        The branch is ``state.git.branch_name``, which ``_record_scaffold_branch``
+        persists after a run scaffolded one (issue #1397: it used to live in
+        ``current_context["dev_branch"]``, which the posted comment never
+        carried). A state without it is either a first run (no branch yet) or a
+        state written before the branch was recorded — a standalone
+        ``--step git_diff`` run on an issue whose branch already exists. The
+        latter is recovered from ``origin/feature/issue-<n>-*`` with a warning
+        instead of silently reporting ``branch: none``; several candidates fail
+        the run rather than guessing. Recovery is only attempted when an agent
+        step ran before — a script-only history has no branch of its own to
+        find, and a run with no previous state is a genuine first run.
         """
         state = self._previous_state()
         branch = ""
         if state is not None and mode == "session":
-            branch = str((state.current_context or {}).get("dev_branch") or "")
+            branch = str(getattr(state.git, "branch_name", "") or "")
+        if mode == "session" and not branch and _had_agent_step(state):
+            branch, failure = self._recover_session_branch()
+            if failure:
+                return None, failure
         checkout = evidence_checkout.resolve_evidence_checkout(
-            self._evidence_workspace(), self._session_env(), mode=mode, branch=branch
+            self._evidence_workspace(),
+            self._session_env(),
+            mode=mode,
+            branch=branch,
+            merge_base=merge_base,
         )
         if not checkout.ok:
             return None, checkout.detail
         return checkout, ""
+
+    def _recover_session_branch(self) -> tuple[str, str]:
+        """The unrecorded session branch of an issue-triggered run (#1397).
+
+        Returns ``(branch, "")`` when exactly one ``feature/issue-<n>-*`` branch
+        exists on the remote, ``("", "")`` when there is none (a genuine first
+        run), and ``("", detail)`` when the choice is ambiguous.
+        """
+        trigger = self._active_trigger()
+        number = int(getattr(trigger, "number", 0) or 0) if trigger else 0
+        if not number:
+            return "", ""
+        candidates = evidence_checkout.discover_issue_branch(
+            self._evidence_workspace(), self._session_env(), number
+        )
+        if not candidates:
+            return "", ""
+        if len(candidates) > 1:
+            return "", (
+                f"no session branch recorded for issue #{number} and several "
+                f"exist on the remote ({', '.join(candidates)}); record one in "
+                "the state (git.branch_name) before running this step"
+            )
+        log.warning(
+            "[phase:action] no session branch in the state; using %s, the only "
+            "branch for issue #%s",
+            candidates[0],
+            number,
+        )
+        return candidates[0], ""
 
     def _evidence_workspace(self) -> Path:
         """The directory the evidence checkout moves and the command runs in.
@@ -1146,13 +1249,22 @@ class Engine:
                     # reason in the workflow state and exit 0 so the host run
                     # stays green (issue #853).
                     log.info("[phase:guards] no next agent — %s", reason)
+                    # A human who triggered the run (a ``/nebuko resume`` on an
+                    # already-terminal workflow, issue #1376) must still get an
+                    # answer on the thread; a bot trigger stays silent so the
+                    # chain cannot re-enter itself.
+                    posted = (
+                        None
+                        if _is_bot_trigger(trigger)
+                        else self._post_terminal_skip_notice(reason)
+                    )
                     return RunOutcome(
                         exit_code=skip.exit_code,
                         turn_outcome=TurnOutcome.for_incomplete(
                             IncompleteReason.NO_OUTCOME, note=reason
                         ),
                         prompt=None,
-                        posted_body=None,
+                        posted_body=posted,
                         state=self._record_terminal_skip(skip),
                         phases=tuple(phases),
                     )
@@ -1337,7 +1449,9 @@ class Engine:
             # returns ``ExitCode.ERROR`` and the whole workflow dies before the
             # in-place retry.
             self._enter(phases, "state")
-            state = self._record_scaffold_branch(self.persist(agent_result))
+            state = self._record_scaffold_branch(
+                self._record_trigger_metadata(self.persist(agent_result))
+            )
 
             # PR finalize (issue #1138): the engine opens the session's PR and
             # records its metadata in the persisted state. Runs only after an
@@ -1372,6 +1486,8 @@ class Engine:
                         commit_id=finalize_result.auto_commit,
                         detail="committed work the agent left uncommitted",
                     )
+                # The pushed tip is the branch's head from here on (issue #1397).
+                state = self._record_head_sha(state)
                 if not finalize_result.ok:
                     note = f"git session finalize failed: {finalize_result.detail}"
                     failure_reason = (
@@ -1384,6 +1500,12 @@ class Engine:
             # wild and the workflow cannot advance over a failed run. The
             # verdict so far is published with the comment: a failed run's
             # comment is a notification (no continue token) from creation.
+            #
+            # The recorded state is what the comment embeds (issue #1397):
+            # the agent's own artifact predates the engine's git/PR/issue
+            # records, so framing the comment from it left them invisible to
+            # the next run — the only reader that matters.
+            self._publish_state["state"] = state
             self._publish_state["failure_reason"] = failure_reason
             self._enter(phases, "publish")
             publication = self._run_phase(
@@ -1798,16 +1920,20 @@ class Engine:
         try:
             trigger = self._active_trigger()
             scaffold = self._scaffold_state.get("result")
-            branch = (
-                scaffold.branch
-                if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
-                else ""
-            )
-            head = ""
-            if branch:
+            git = base.git
+            branch = str(getattr(git, "branch_name", "") or "")
+            if not branch and isinstance(scaffold, branch_scaffold.ScaffoldResult):
+                branch = scaffold.branch if scaffold.ok else ""
+            head = str(getattr(git, "head_sha", "") or "")
+            if branch and not head:
                 head = git_session.GitSessionGuard(
                     self._caller_root(), self._session_env()
                 ).head_sha()
+            base_branch = str(
+                getattr(git, "base_branch", "")
+                or self.env.get("NEBUKO_BASE_BRANCH")
+                or "main"
+            )
             pr_url = str(getattr(getattr(base, "pull_request", None), "url", "") or "")
             facts = {
                 "ok": False,
@@ -1820,7 +1946,7 @@ class Engine:
                 "pushed": pushed,
                 "branch": branch,
                 "head_sha": head,
-                "base_branch": str(self.env.get("NEBUKO_BASE_BRANCH") or "main"),
+                "base_branch": base_branch,
                 "base_sha": str(self._scaffold_state.get("head_before") or ""),
                 "run_url": self._run_url(trigger) if trigger else "",
                 "pr_url": pr_url,
@@ -1901,7 +2027,7 @@ class Engine:
             provider=str(failure.provider or ""),
             model=str(failure.model or ""),
             requires_config_fix=bool(failure.requires_config_fix),
-            timings=self._render_failure_timings(state),
+            timings=self._render_failure_timings(),
         )
         return RunOutcome(
             exit_code=ExitCode.ERROR,
@@ -1914,24 +2040,23 @@ class Engine:
             phases=tuple(phases),
         )
 
-    def _render_failure_timings(self, state: Any = None) -> str:
+    def _render_failure_timings(self) -> str:
         """The failed run's wall-clock breakdown for the failure notice (#1375).
 
-        Engine phases measured so far plus the agent's own LLM/tool split when
-        the run got far enough to persist metrics. Empty when nothing was
-        timed, so the notice keeps its old shape.
+        Engine phases measured so far. Empty when nothing was timed, so the
+        notice keeps its old shape.
+
+        Deliberately no agent-metrics line: a failed run never appends its own
+        history entry, so ``state.history[-1]`` is the *previous* step's record.
+        Reading it showed another agent's model, tokens and runtimes on every
+        failure (issue #1389: five plan failures all reported the ``context``
+        step's numbers). The provider and model are already in the notice header
+        and the failed agent's own wall-clock is the ``agent=`` phase above.
         """
         timings = {**self.init_timings, **self._clock.snapshot()}
         if not timings:
             return ""
-        lines = ["Time spent: " + _format_timings(timings)]
-        agent = _agent_timings(state)
-        if agent:
-            lines.append(
-                "Agent: "
-                + " ".join(f"{key}={value}" for key, value in agent.items())
-            )
-        return "\n".join(lines) + "\n"
+        return "Time spent: " + _format_timings(timings) + "\n"
 
     def _pending_worktree_paths(self) -> tuple[str, ...]:
         """Uncommitted paths in the caller checkout, best-effort (#1322).
@@ -2012,6 +2137,26 @@ class Engine:
             self.adapter.post(notice.render())
         except Exception as exc:  # noqa: BLE001 - a notice must not mask the failure
             log.warning("[phase:error] failure notice failed: %s", exc)
+
+    # @stub-protected
+    def _post_terminal_skip_notice(self, reason: str) -> str | None:
+        """Acknowledge a benign terminal skip to the human who asked (#1376).
+
+        A ``/nebuko resume`` on an already-terminal workflow ends the run with no
+        agent and — before this notice — no comment either, leaving the human
+        with silence. Marker-led and trigger-safe like the other guards notices;
+        the trigger author is pinged when one resolves. Best-effort: a failed
+        post returns ``None`` and never masks the (successful) no-op outcome.
+        """
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        body = f"{marker}\n{self._human_ping()}no agent to run — {reason}"
+        notice = _neutralize_agent_triggers(body)
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:guards] terminal skip notice failed: %s", exc)
+            return None
+        return notice
 
     # @stub-protected
     def _post_gate_noop_notice(self, reason: str) -> str:
@@ -3265,10 +3410,11 @@ class Engine:
     def _record_scaffold_branch(self, state: WorkflowState) -> WorkflowState:
         """Record the engine-scaffolded dev branch in the persisted state.
 
-        ``current_context`` is the durable surface (it is serialized into the
-        state comment and ``state.json``), so the next run finds the branch
-        without re-deriving it. ``scaffold_branch`` itself stays reserved for
-        the branch-mounted scaffold plan (issue #604) that ``resolve_route``
+        ``git.branch_name`` is the single authority for the session branch
+        (issue #1397): it is serialized into the state comment, so the next run
+        — including a standalone ``--step git_diff`` — finds the branch without
+        re-deriving it. ``scaffold_branch`` itself stays reserved for the
+        branch-mounted scaffold plan (issue #604) that ``resolve_route``
         consumes — the dev branch must never clobber it.
         """
         result = self._scaffold_state.get("result")
@@ -3279,7 +3425,6 @@ class Engine:
         ):
             return state
         context = dict(state.current_context)
-        context["dev_branch"] = result.branch
         if getattr(result, "already_up_to_date", False):
             # Issue #1194: the branch already contains the base, so the
             # already-committed work is present — the prompt must say so
@@ -3287,16 +3432,13 @@ class Engine:
             context["dev_branch_up_to_date"] = True
             context["dev_branch_note"] = result.detail
         updated = state.model_copy(update={"current_context": context})
-        try:
-            self.adapter.save_state(updated)
-        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
-            log.warning("[phase:state] could not persist the dev branch")
         return self._record_git_action(
             updated,
             _scaffold_git_status(result),
             commit_id=str(self._scaffold_state.get("head_before") or "") or None,
             detail=result.detail,
             branch_name=result.branch,
+            base_branch=str(self.env.get("NEBUKO_BASE_BRANCH") or "main"),
         )
 
     def _record_git_action(
@@ -3307,26 +3449,57 @@ class Engine:
         commit_id: str | None = None,
         detail: str = "",
         branch_name: str | None = None,
-        pr_number: int | None = None,
+        base_branch: str | None = None,
+        head_sha: str | None = None,
     ) -> WorkflowState | None:
         """Append one engine git action to the persisted state (issue #1153).
 
         ``turn`` is the history length, which ties the action to a step. Audit
         data only: nothing routes on it, so a failed write is only logged.
+        ``created_at`` is stamped the first time a branch is recorded, so the
+        branch's age survives later transitions (issue #1397).
         """
         if state is None:
             return None
         git = state.git.model_copy(deep=True) if state.git else GitInfo()
         if branch_name:
             git.branch_name = branch_name
-        if pr_number is not None:
-            git.pr_number = pr_number
+            git.created_at = git.created_at or _utc_now_iso()
+        if base_branch:
+            git.base_branch = base_branch
+        if head_sha:
+            git.head_sha = head_sha
         git.record(status, commit_id=commit_id, turn=len(state.history), detail=detail)
         updated = state.model_copy(update={"git": git})
         try:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the git action")
+        return updated
+
+    def _record_head_sha(self, state: WorkflowState | None) -> WorkflowState | None:
+        """Record the session branch's current HEAD in ``git.head_sha`` (#1397).
+
+        Best-effort: an unreadable HEAD leaves the recorded value alone, and a
+        state without a branch has nothing to describe.
+        """
+        if state is None or state.git is None or not state.git.branch_name:
+            return state
+        try:
+            head = git_session.GitSessionGuard(
+                self._caller_root(), self._session_env()
+            ).head_sha()
+        except Exception:  # noqa: BLE001 - a probe failure is not fatal
+            return state
+        if not head or head == state.git.head_sha:
+            return state
+        git = state.git.model_copy(deep=True)
+        git.head_sha = head
+        updated = state.model_copy(update={"git": git})
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the branch head")
         return updated
 
     def _record_pull_request(
@@ -3368,10 +3541,89 @@ class Engine:
             self.adapter.save_state(updated)
         except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
             log.warning("[phase:state] could not persist the PR metadata")
-        if state.git is not None and state.git.pr_number == number:
+        if state.pull_request == pr:
             return updated  # every later run finds the same PR: record it once
         return self._record_git_action(
-            updated, GitActionStatus.PR, detail=pr_result.pr_url, pr_number=number
+            updated, GitActionStatus.PR, detail=pr_result.pr_url
+        )
+
+    def _record_trigger_metadata(self, state: WorkflowState | None) -> WorkflowState | None:
+        """Populate ``issue``/``pull_request`` from the trigger payload (#1397).
+
+        The agent child frames the embedded state from its own artifact, which
+        could only fill these from ``ISSUE_URL``/``PR_*`` env vars that nothing
+        exported — so they stayed null on every posted comment. The engine owns
+        the trigger, so it writes them here, from the payload, and saves only
+        when something changed.
+        """
+        if state is None:
+            return None
+        updated = self._with_trigger_metadata(state)
+        if updated is state:
+            return state
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the issue metadata")
+        return updated
+
+    def _with_trigger_metadata(self, state: WorkflowState) -> WorkflowState:
+        """``state`` with ``issue``/``pull_request`` filled from the trigger.
+
+        Never overwrites a value a previous run recorded, so a trigger payload
+        that only carries a comment cannot blank the issue metadata.
+        """
+        updates: dict[str, Any] = {}
+        if state.issue is None:
+            issue = self._issue_info_from_trigger()
+            if issue is not None:
+                updates["issue"] = issue
+        if state.pull_request is None:
+            pull_request = self._pull_request_info_from_trigger()
+            if pull_request is not None:
+                updates["pull_request"] = pull_request
+        return state.model_copy(update=updates) if updates else state
+
+    def _issue_info_from_trigger(self) -> IssueInfo | None:
+        """The triggering issue's metadata, from the event payload."""
+        trigger = self._active_trigger()
+        payload = (trigger.payload or {}) if trigger is not None else {}
+        issue = payload.get("issue") or {}
+        number = int(issue.get("number") or 0)
+        if not number:
+            return None
+        return IssueInfo(
+            number=number,
+            url=str(issue.get("html_url") or ""),
+            title=str(issue.get("title") or ""),
+            author=str((issue.get("user") or {}).get("login") or ""),
+            repo=self._payload_repo(payload),
+        )
+
+    def _pull_request_info_from_trigger(self) -> PullRequestInfo | None:
+        """The triggering PR's metadata, on a PR-triggered run."""
+        trigger = self._active_trigger()
+        payload = (trigger.payload or {}) if trigger is not None else {}
+        pull_request = payload.get("pull_request") or {}
+        number = int(pull_request.get("number") or 0)
+        if not number:
+            return None
+        return PullRequestInfo(
+            number=number,
+            url=str(pull_request.get("html_url") or ""),
+            title=str(pull_request.get("title") or ""),
+            author=str((pull_request.get("user") or {}).get("login") or ""),
+            repo=self._payload_repo(payload),
+        )
+
+    def _payload_repo(self, payload: Mapping[str, Any]) -> str:
+        """``owner/name`` from the event payload, else the run's env."""
+        repository = payload.get("repository") or {}
+        return str(
+            repository.get("full_name")
+            or self.env.get("GITHUB_REPOSITORY")
+            or self.env.get("REPO_NAME")
+            or ""
         )
 
     def _artifacts(self) -> RunArtifactStager:
@@ -3672,9 +3924,20 @@ class Engine:
         # The verdict is about *this* run only: a previous run's INCOMPLETE/
         # FAILURE state must not frame a green run as failed (#1288 review).
         # The previous state is used as the failure-facts base only when the
-        # run really failed; otherwise the agent's explicit state (or none)
-        # frames the header, as on main.
+        # run really failed; otherwise the recorded state frames the header.
+        # That state is the agent's artifact plus the engine's post-agent
+        # records (issue #1397) — the agent's alone would drop them.
         explicit_state = self._explicit_state(agent_result)
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+
+        # A run that produced no state artifact keeps framing nothing (a live
+        # turn), as before: the recorded state is then just the previous one,
+        # whose stale failure verdict must not frame this run (#1288 review).
+        recorded_state = self._publish_state.get("state")
+        if not isinstance(recorded_state, WorkflowState) or explicit_state is None:
+            recorded_state = explicit_state
+        # The verdict is this run's alone: a carried-over previous state may
+        # still describe an earlier failure (issue #1288 review).
         engine_failed = self._engine_failed(
             explicit_state,
             self._publish_state.get("failure_reason"),
@@ -3684,10 +3947,10 @@ class Engine:
                 self._publish_state.get("failure_reason") or "engine failure",
                 phase="publish",
                 pushed=self._branch_pushed(),
-                state=explicit_state,
-            ) or explicit_state
+                state=recorded_state,
+            ) or recorded_state
         else:
-            publish_state = explicit_state
+            publish_state = recorded_state
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,

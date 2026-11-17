@@ -13,6 +13,7 @@ from nebuko.engine.models import (
     CommentEntry,
     DeterministicStep,
     ExitCode,
+    NebukoManifest,
     RunOutcome,
     SkipKind,
     SkipOutcome,
@@ -207,7 +208,24 @@ class TestStepResult:
             "duration_seconds",
             "branch",
             "head_sha",
+            "tested",
         ]
+
+    def test_records_the_tree_the_command_tested(self):
+        result = StepResult(
+            step_kind="run_script",
+            ok=True,
+            detail="",
+            affected=0,
+            branch="feature/issue-1-x",
+            head_sha="abc123",
+            tested="merge of abc123 into def456",
+        )
+        assert result.tested == "merge of abc123 into def456"
+
+    def test_defaults_to_no_tested_tree(self):
+        result = StepResult(step_kind="delete_comments", ok=True, detail="", affected=0)
+        assert result.tested == ""
 
     def test_records_the_commit_the_command_ran_on(self):
         result = StepResult(
@@ -228,6 +246,20 @@ class TestStepResult:
         result = StepResult(step_kind="delete_comments", ok=True, detail="done", affected=1)
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.ok = False
+
+
+class TestNebukoManifest:
+    def test_merge_main_defaults_to_true(self):
+        """Issue #1344: the merge-before-tests default is on for every repo."""
+        assert NebukoManifest().merge_main is True
+
+    def test_merge_main_can_be_turned_off(self):
+        assert NebukoManifest(merge_main=False).merge_main is False
+
+    def test_unknown_keys_are_ignored(self):
+        # A manifest written for a newer engine must not abort an older run.
+        manifest = NebukoManifest(unknown_key=True)
+        assert not hasattr(manifest, "unknown_key")
 
 
 class TestDeterministicStepFromResolved:

@@ -24,9 +24,28 @@ the seam itself.
 
 The reusable workflow declares the secret and exports it into the job
 environment **only when it is non-empty** (`::add-mask::`ed, never echoed), so
-an empty value can never shadow a token the runner already provides.
+an empty value can never shadow a token the runner already provides. The
+comment trigger workflow forwards it (`secrets: CLAUDE_CODE_OAUTH_TOKEN`), and
+the engine removes it from the environment of every backend except
+`claude-code` before the agent is built — an OpenHands run in the same workflow
+never has it, so a prompt-injected agent cannot exfiltrate it through the
+`terminal` tool.
 
 Then comment `/nebuko run workflow --name default` on an issue.
+
+> **Every agent that uses the claude-code provider must say
+> `backend: "claude-code"`.** That covers `CLAUDE_CODE_OAUTH_TOKEN` *and* a
+> `claude-code/*` model path, including `complexity_overrides.<tier>.model`
+> swaps. The default backend is `openhands`, so an agent that only points its
+> model at the provider is a config error. A subscription token may only be
+> exercised by the unmodified Claude Code binary (ADR 0017 rule 1); running it
+> through the OpenHands/litellm loop risks the account being banned. It is
+> enforced twice: `lint-config` rule
+> [`C12`](./lint.md#c12-claude-credentials--subscription-tokens-are-binary-only)
+> and a terminal run-time refusal (`ClaudeCredentialError`) before any provider
+> call. The metered `ANTHROPIC_API_KEY` lane is fine with `claude-code/*` model
+> paths. Detection is by env-var name and model prefix, so an unusual spelling
+> can slip through (see #1394).
 
 > **Billing.** A subscription token bills the seat that minted it. Only use it
 > in a repo where you are the triggerer; for shared/org automation use
@@ -49,7 +68,7 @@ llms:
 
 agents:
   dev:
-    backend: "claude-code"             # default: "openhands"
+    backend: "claude-code"             # required for claude-code/* models
     model: "${llms.claude-sonnet}"
 ```
 

@@ -9,8 +9,9 @@ This module is the read-only counterpart of
 :class:`nebuko.engine.lib.git.branch_scaffold.BranchScaffold`: it fetches the
 base and the session branch, deepens a shallow checkout enough for a
 three-dot diff, and checks the pushed SHA out detached. It never creates a
-branch, never merges the base and never pushes — evidence must test exactly
-what was pushed.
+branch and never pushes. With ``merge_base`` (issue #1344) it merges the base
+into the detached head locally, so a test step sees the same shape of tree CI's
+pull-request merge commit does; the merge commit is never pushed.
 
 Like the scaffold, it never raises: a failure is returned as data and the
 caller turns it into a run error. There is deliberately no fallback to the
@@ -37,12 +38,15 @@ class EvidenceCheckout:
 
     ``ok`` is the pass/fail verdict; ``branch`` is the checked-out branch (empty
     for the workflow ref, which is reported as ``branch: none``); ``head_sha``
-    is the exact commit the command will see; ``detail`` explains a failure.
+    is the exact commit the command will see; ``tested`` names the tree the
+    command runs on (issue #1344) so a reader can tell a merged run from a
+    branch-head one; ``detail`` explains a failure.
     """
 
     ok: bool
     branch: str = ""
     head_sha: str = ""
+    tested: str = ""
     detail: str = ""
 
 
@@ -66,12 +70,56 @@ def current_checkout(repo_root) -> EvidenceCheckout:
     )
 
 
+def discover_issue_branch(
+    repo_root, env: Mapping[str, str] | None, issue_number: int
+) -> list[str]:
+    """Remote branches named ``feature/issue-<n>-*`` (issue #1397).
+
+    The evidence checkout reads the session branch from the state, but a state
+    written before the branch was recorded (a standalone ``--step git_diff``
+    run, or a comment posted by an older engine) carries none — and the run
+    then silently reported ``branch: none`` while the branch existed on the
+    remote. This is the read-only recovery probe: it never moves the checkout
+    and returns ``[]`` when the remote cannot be listed.
+    """
+    if not issue_number:
+        return []
+    result = subprocess.run(
+        [
+            "git",
+            "ls-remote",
+            "--heads",
+            "origin",
+            f"refs/heads/feature/issue-{issue_number}-*",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        env=git_subprocess_env(env),
+    )
+    if result.returncode != 0:
+        logger.warning(
+            "evidence checkout: could not list the remote branches for issue "
+            "#%s: %s",
+            issue_number,
+            (result.stderr or result.stdout).strip(),
+        )
+        return []
+    branches = []
+    for line in result.stdout.splitlines():
+        ref = line.split("\t")[-1].strip()
+        if ref.startswith("refs/heads/"):
+            branches.append(ref.removeprefix("refs/heads/"))
+    return sorted(branches)
+
+
 def resolve_evidence_checkout(
     repo_root,
     env: Mapping[str, str] | None,
     *,
     mode: str = "session",
     branch: str = "",
+    merge_base: bool = False,
 ) -> EvidenceCheckout:
     """The checkout an evidence command runs on, by mode (issue #1327).
 
@@ -79,6 +127,11 @@ def resolve_evidence_checkout(
     session branch out detached; with no session branch yet (a script before
     any agent scaffolded one) it runs on the workflow ref and reports no
     branch, rather than treating the absent branch as unreachable.
+
+    ``merge_base`` merges the base branch into the detached head locally
+    (issue #1344): CI tests GitHub's pull-request merge commit, so a step that
+    runs tests must see the same tree or it reports failures ``main`` already
+    fixed. The merge commit is never pushed.
     """
     if mode != "session" or not branch:
         current = current_checkout(repo_root)
@@ -86,7 +139,9 @@ def resolve_evidence_checkout(
             # No branch yet: the workflow ref, reported as ``branch: none``.
             return EvidenceCheckout(ok=True, branch="", head_sha=current.head_sha)
         return current
-    return EvidenceCheckoutResolver(repo_root, env, branch=branch).resolve()
+    return EvidenceCheckoutResolver(
+        repo_root, env, branch=branch, merge_base=merge_base
+    ).resolve()
 
 
 class EvidenceCheckoutResolver:
@@ -96,13 +151,23 @@ class EvidenceCheckoutResolver:
         repo_root: The session checkout the command runs in.
         env: The run's environment, read for the base-ref override and the
             git token (the same handling as :class:`GitSessionGuard`).
-        branch: The session branch recorded by ``_record_scaffold_branch``.
+        branch: The session branch recorded by ``_record_scaffold_branch`` in
+            ``GitInfo.branch_name``.
+        merge_base: Merge the base branch into the detached head (issue #1344),
+            so a test step sees CI's pull-request merge tree.
     """
 
-    def __init__(self, repo_root, env: Mapping[str, str] | None = None, branch: str = "") -> None:
+    def __init__(
+        self,
+        repo_root,
+        env: Mapping[str, str] | None = None,
+        branch: str = "",
+        merge_base: bool = False,
+    ) -> None:
         self.repo_root = repo_root
         self.env = dict(env or {})
         self.branch = branch
+        self.merge_base = merge_base
 
     def resolve(self) -> EvidenceCheckout:
         """Fetch and check out the pushed SHA; never raises."""
@@ -149,11 +214,33 @@ class EvidenceCheckoutResolver:
         problem = self._detach(self.branch)
         if problem:
             return EvidenceCheckout(ok=False, detail=problem)
-        head = _git(self.repo_root, ["rev-parse", "HEAD"]) or ""
+        branch_head = _git(self.repo_root, ["rev-parse", "HEAD"]) or ""
+        head = branch_head
+        tested = f"branch head {head}"
+        if self.merge_base:
+            base_sha = _git(self.repo_root, ["rev-parse", f"origin/{base}"]) or ""
+            merged, problem = self._merge_base(base)
+            if problem:
+                return EvidenceCheckout(ok=False, detail=problem)
+            if merged:
+                head = _git(self.repo_root, ["rev-parse", "HEAD"]) or ""
+                tested = f"merge of {branch_head} into {base_sha}"
+            else:
+                logger.warning(
+                    "evidence checkout: %s conflicts with origin/%s; testing the "
+                    "branch head",
+                    self.branch,
+                    base,
+                )
         logger.info(
-            "evidence checkout: %s at %s", self.branch, head[:12] or "<unknown>"
+            "evidence checkout: %s at %s (%s)",
+            self.branch,
+            head[:12] or "<unknown>",
+            tested,
         )
-        return EvidenceCheckout(ok=True, branch=self.branch, head_sha=head)
+        return EvidenceCheckout(
+            ok=True, branch=self.branch, head_sha=head, tested=tested
+        )
 
     def _base_branch(self) -> str:
         override = self.env.get("GITHUB_BASE_REF", "").strip()
@@ -180,6 +267,22 @@ class EvidenceCheckoutResolver:
     def _detach(self, branch: str) -> str:
         problem = self._git("checkout", "--quiet", "--detach", f"refs/remotes/origin/{branch}")
         return f"could not check out {branch}: {problem}" if problem else ""
+
+    def _merge_base(self, base: str) -> tuple[bool, str]:
+        """Merge ``origin/<base>`` into the detached head (issue #1344).
+
+        Returns ``(merged, problem)``. A conflict is not a failure: the merge is
+        aborted and the branch head kept, so the step still runs and reports the
+        tree it actually tested. The commit is local only — nothing is pushed.
+        """
+        problem = self._git(
+            "-c", "user.name=nebuko", "-c", "user.email=nebuko@invalid",
+            "merge", "--quiet", "--no-edit", "--no-ff", f"origin/{base}",
+        )
+        if not problem:
+            return True, ""
+        self._git("merge", "--abort")
+        return False, ""
 
     def _git(self, *args: str) -> str:
         """Run git; return a problem description, or ``""`` on success."""

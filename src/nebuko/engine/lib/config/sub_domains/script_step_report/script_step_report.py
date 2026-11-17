@@ -60,6 +60,9 @@ class ScriptStepReport(BaseModel):
     # out for evidence, empty when it ran on the workflow ref.
     branch: str = ""
     head_sha: str = ""
+    # The tree the command saw (issue #1344): "merge of <head> into <base>"
+    # when the base was merged in, "branch head <sha>" otherwise.
+    tested: str = ""
 
     # Frozen: a report describes one already-finished execution (functional-first
     # value object).
@@ -95,7 +98,12 @@ class ScriptStepReport(BaseModel):
         """
         branch = self.branch or "none"
         head = f"`{self.head_sha[:12]}`" if self.head_sha else "unknown"
-        return f"branch: `{branch}` · head: {head}"
+        line = f"branch: `{branch}` · head: {head}"
+        if self.tested:
+            # Which tree the command saw (issue #1344): CI tests the PR merge
+            # commit, so a run that tested the bare branch head must say so.
+            line = f"{line} · {self.tested}"
+        return line
 
     def _banner(self) -> str:
         status = "succeeded" if self.ok else "failed"
