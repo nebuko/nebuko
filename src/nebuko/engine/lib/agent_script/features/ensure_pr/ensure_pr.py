@@ -49,6 +49,7 @@ from nebuko.engine.lib.github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
 from nebuko.engine.lib.git.git_session import git_identity_args
+from nebuko.engine.lib.repo_resolution import resolve_repo
 
 logger = get_logger(__name__)
 
@@ -893,9 +894,9 @@ def _post_patch_comment(
     refuses the write. The caller must then keep the tree dirty rather than
     discard the only copy of the work.
     """
-    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    repo = resolve_repo(os.environ, None).strip()
     if not repo:
-        logger.warning("ensure_pr: GITHUB_REPOSITORY unset — cannot post the patch")
+        logger.warning("ensure_pr: REPO_NAME/GITHUB_REPOSITORY unset — cannot post the patch")
         return ""
     target: Optional[int] = None
     if pr_url:
