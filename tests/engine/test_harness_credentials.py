@@ -6,13 +6,88 @@ import pytest
 
 from nebuko.engine.harness.credentials import (
     ClaudeCredentialError,
+    ContinuationContext,
+    authorize_bot_continuation,
     backend_credentials_error,
     enforce_backend_credentials,
+    is_bot_actor,
     is_claude_code_model,
     is_subscription_token,
     scrub_subscription_tokens,
     uses_claude_code_credentials,
 )
+
+BOT = "nebuko[bot]"
+HUMAN_ASSOC = {"alice": "OWNER"}
+
+
+def _ctx(**overrides):
+    fields = {
+        "trigger_login": BOT,
+        "trigger_type": "Bot",
+        "trusted_bots": (BOT,),
+        "comment_header": "<!-- bot-workflow-terminal --><!-- workflow-continue -->\nnext",
+        "started_by": "alice",
+        "credential_owner": None,
+    }
+    fields.update(overrides)
+    return ContinuationContext(**fields)
+
+
+def _assoc(login):
+    return HUMAN_ASSOC.get(login)
+
+
+def test_bot_continuation_with_human_started_state_is_allowed():
+    decision = authorize_bot_continuation(_ctx(), _assoc)
+    assert decision.allowed, decision
+
+
+def test_is_bot_actor_recognizes_type_and_suffix():
+    assert is_bot_actor("octocat", "Bot")
+    assert is_bot_actor("renovate[bot]", "")
+    assert not is_bot_actor("octocat", "User")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"trigger_login": "evil[bot]", "comment_header": "<!-- workflow-continue -->"},
+        {"comment_header": "quoted:\n\n> <!-- workflow-continue -->"},
+        {"comment_header": "plain comment"},
+        {"started_by": None},
+        {"started_by": BOT},
+        {"started_by": "mallory"},
+        {"credential_owner": "bob"},
+    ],
+    ids=[
+        "untrusted-bot",
+        "marker-quoted-deep",
+        "no-marker",
+        "no-state",
+        "bot-started",
+        "association-lost",
+        "owner-mismatch",
+    ],
+)
+def test_bot_continuation_refusals_name_the_failed_rule(overrides):
+    decision = authorize_bot_continuation(_ctx(**overrides), _assoc)
+    assert not decision.allowed
+    assert decision.failed_rule
+    assert decision.failed_rule in decision.refusal_message()
+
+
+def test_failed_association_lookup_refuses():
+    decision = authorize_bot_continuation(_ctx(), lambda _login: None)
+    assert not decision.allowed
+    assert decision.failed_rule == "caller-association"
+
+
+def test_api_key_lane_hint_only_where_it_applies():
+    untrusted = authorize_bot_continuation(_ctx(trigger_login="evil[bot]", trusted_bots=()), _assoc)
+    assert "API-key lane" in untrusted.refusal_message()
+    lost = authorize_bot_continuation(_ctx(started_by="mallory"), _assoc)
+    assert "API-key lane" not in lost.refusal_message()
 
 
 def test_subscription_token_is_recognized():

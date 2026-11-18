@@ -312,3 +312,13 @@ says "bring your own subscription", never "we provide Claude". Users who
 force a violation (shared secrets, custom cross-label workflows) do so as
 their own visible act against their own accounts — and guards 1–5 make the
 casual path impossible.
+
+### Bot continuations (#1424)
+
+Guard 3 refuses bot actors, schedule and actor-less runs. A bot-authored
+continuation comment (`workflow-continue` / `bot-trigger` in its first two
+lines, author in `TRUSTED_BOTS`) may run claude-code only when the previous
+WORKFLOW_STATE's `started_by` is a non-bot human who still holds a
+CALLER_AUTH association (and equals the credential owner in the per-user lane).
+The engine enforces this in `run_agent._enforce_harness_credentials`. The
+Lane D bridge (token-broker#53) needs the same rule; that is tracked there.

@@ -87,6 +87,13 @@ file, select the config for **one run** from the command itself (issue #1389):
 > banned. The default config stays `agent-config-mistral.yaml`; choosing
 > claude-code for a bot-driven workflow is a deliberate human decision (ADR-0017
 > guard 3).
+>
+> Guard 3 refuses bot actors, except a `TRUSTED_BOTS` continuation comment
+> whose first two lines carry a continuation marker. The engine then requires
+> the workflow's `started_by` to be a non-bot human who is still
+> OWNER/MEMBER/COLLABORATOR (and the credential owner in the per-user lane).
+> Lane D's bridge (token-broker#53) must apply the same rule to continuation
+> comments; it is not implemented in this repository.
 
 ---
 

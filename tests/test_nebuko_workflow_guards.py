@@ -89,6 +89,43 @@ def test_guard3_refuses_claude_backend_for_non_human_actors(tmp_path, overrides)
     assert "API-key lane" in result.stdout
 
 
+TRUSTED = '["nebuko[bot]"]'
+CONTINUE_HEADER = "<!-- bot-workflow-terminal --><!-- workflow-continue -->\nnext step"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ACTOR_TYPE": "Bot", "ACTOR_LOGIN": "nebuko[bot]", "TRIGGER_COMMENT_HEADER": CONTINUE_HEADER},
+        {"ACTOR_TYPE": "Bot", "ACTOR_LOGIN": "nebuko[bot]", "TRIGGER_COMMENT_HEADER": "<!-- bot-trigger:x -->"},
+    ],
+    ids=["workflow-continue", "bot-trigger"],
+)
+def test_guard3_defers_trusted_bot_continuation_to_engine(tmp_path, overrides):
+    result = _run(tmp_path, CLAUDE_CODE_OAUTH_TOKEN_SECRET="tok", TRUSTED_BOTS=TRUSTED, **overrides)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ACTOR_TYPE": "Bot", "ACTOR_LOGIN": "evil[bot]", "TRIGGER_COMMENT_HEADER": CONTINUE_HEADER},
+        {"ACTOR_TYPE": "Bot", "ACTOR_LOGIN": "nebuko[bot]", "TRIGGER_COMMENT_HEADER": "plain fresh run"},
+        {
+            "ACTOR_TYPE": "Bot",
+            "ACTOR_LOGIN": "nebuko[bot]",
+            "TRIGGER_COMMENT_HEADER": "intro\nmore\n> <!-- workflow-continue -->",
+        },
+        {"EVENT_NAME": "push", "ACTOR_TYPE": "Bot", "ACTOR_LOGIN": "nebuko[bot]", "TRIGGER_COMMENT_HEADER": CONTINUE_HEADER},
+    ],
+    ids=["untrusted-bot-forged-marker", "bot-no-marker", "quoted-marker-deep", "bot-non-comment-event"],
+)
+def test_guard3_refuses_untrusted_or_unmarked_bot_runs(tmp_path, overrides):
+    result = _run(tmp_path, CLAUDE_CODE_OAUTH_TOKEN_SECRET="tok", TRUSTED_BOTS=TRUSTED, **overrides)
+    assert result.returncode != 0
+    assert "API-key lane" in result.stdout or "cannot start" in result.stdout
+
+
 def test_guard3_does_not_block_non_human_actors_without_claude_token(tmp_path):
     result = _run(tmp_path, ACTOR_TYPE="Bot", ACTOR_LOGIN="dependabot[bot]")
     assert result.returncode == 0, result.stdout + result.stderr
