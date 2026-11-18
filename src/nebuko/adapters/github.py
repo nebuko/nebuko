@@ -49,6 +49,11 @@ STATUS_LABELS: tuple[str, ...] = tuple(status_label(status) for status in RunSta
 
 
 # @stub-protected
+class TargetIssueUnreadable(RuntimeError):
+    """The run's target issue could not be read from its repo (issue #1388)."""
+
+
+# @stub-protected
 class PublishError(RuntimeError):
     """A comment write could not be delivered after the transport's retries.
 
@@ -93,7 +98,14 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
         # resolves the repo from the runner environment instead of failing with
         # an opaque ``None`` deep in the REST client.
-        self._repo = repo or os.environ.get("GITHUB_REPOSITORY") or None
+        # REPO_NAME is the dispatch-exported target; it wins over GITHUB_REPOSITORY
+        # (the runner's repo) so a dispatch run reads the repo it was aimed at.
+        self._repo = (
+            repo
+            or os.environ.get("REPO_NAME")
+            or os.environ.get("GITHUB_REPOSITORY")
+            or None
+        )
         self._client = client
         self._trigger: Trigger | None = None
         # One bounded read of the thread per adapter instance. ``load_history``
@@ -160,8 +172,14 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         if getter is not None:
             try:
                 issue = getter(repo, number)
-            except Exception:  # noqa: BLE001 - best-effort metadata
+            except Exception as exc:
+                if number:
+                    raise TargetIssueUnreadable(
+                        f"could not read issue #{number} in {repo}: {exc}"
+                    ) from exc
                 issue = None
+            if issue is None and number:
+                raise TargetIssueUnreadable(f"issue #{number} not found in {repo}")
         return issue, comments
 
     # @stub-protected

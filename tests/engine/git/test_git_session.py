@@ -219,7 +219,7 @@ def test_ensure_push_auth_installs_token_after_probe_failure(checkout):
 
 
 def test_finalize_passes_a_clean_pushed_tree(checkout):
-    result = _local_guard(checkout).finalize()
+    result = _local_guard(checkout).finalize(expected_branch="main")
 
     assert result.ok and not result.skipped
 
@@ -357,9 +357,9 @@ def test_finalize_reports_when_no_new_commit_was_made(checkout):
     guard = _local_guard(checkout)
     before = guard.head_sha()
 
-    unchanged = guard.finalize(head_before=before)
+    unchanged = guard.finalize(expected_branch="main", head_before=before)
     (checkout / "new.txt").write_text("n\n", encoding="utf-8")
-    committed = guard.finalize(head_before=before)
+    committed = guard.finalize(expected_branch="main", head_before=before)
 
     assert "no new commit" in unchanged.detail
     assert committed.ok and "no new commit" not in committed.detail
@@ -388,7 +388,7 @@ def test_finalize_respects_gitignore(checkout, remote):
     (checkout / "debug.log").write_text("noise\n", encoding="utf-8")
     (checkout / "kept.txt").write_text("keep\n", encoding="utf-8")
 
-    result = _local_guard(checkout).finalize()
+    result = _local_guard(checkout).finalize(expected_branch="main")
 
     assert result.ok, result.detail
     assert (checkout / "debug.log").exists()
@@ -455,7 +455,7 @@ def test_finalize_reports_actionable_detail_when_auth_cannot_be_restored(checkou
     guard._push_branch = lambda branch: pushed.append(branch) or ""  # type: ignore[method-assign]
     (checkout / "left.txt").write_text("left\n", encoding="utf-8")
 
-    result = guard.finalize()
+    result = guard.finalize(expected_branch="main")
 
     assert not result.ok
     assert "cannot authenticate" in result.detail
@@ -488,7 +488,7 @@ def test_run_git_disables_terminal_prompt(checkout, monkeypatch):
 def test_finalize_reports_the_commit_it_made_for_leftovers(checkout):
     (checkout / "leftover.txt").write_text("wip\n", encoding="utf-8")
 
-    result = _local_guard(checkout).finalize()
+    result = _local_guard(checkout).finalize(expected_branch="main")
 
     assert result.ok, result.detail
     assert result.auto_commit
@@ -496,7 +496,7 @@ def test_finalize_reports_the_commit_it_made_for_leftovers(checkout):
 
 
 def test_finalize_reports_no_commit_on_a_clean_tree(checkout):
-    result = _local_guard(checkout).finalize()
+    result = _local_guard(checkout).finalize(expected_branch="main")
 
     assert result.ok, result.detail
     assert result.auto_commit == ""

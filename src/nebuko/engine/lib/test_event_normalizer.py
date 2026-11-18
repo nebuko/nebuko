@@ -202,6 +202,7 @@ class TestRepositoryDispatch:
 
         assert (trigger.author, trigger.body, trigger.number) == ("alice", "@@dev do it", 1388)
         assert trigger.type == "repository_dispatch"
+        assert trigger.org_repo == "acme/app"
 
     def test_missing_issue_number_defaults_to_zero(self):
         trigger = normalize_trigger({"client_payload": {"actor": "alice", "prompt_body": "x"}})
