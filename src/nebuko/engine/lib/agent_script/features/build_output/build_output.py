@@ -60,6 +60,7 @@ from nebuko.engine.lib.agent_script.features.extract_recovery_trace.extract_reco
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
+from nebuko.engine.harness.base import warn_if_hold_means_done
 from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
 from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
@@ -1308,6 +1309,9 @@ def build_output(
 
     # ── Extract the turn outcome + function_call from agent output ─────
     turn_outcome, prefs, function_call = _resolve_outcome(conversation)
+    warn_if_hold_means_done(
+        workflow_step, os.environ.get("CONFIG_MODEL", ""), turn_outcome
+    )
 
     # Failure is engine-measured (issue #978): a crashed run stated nothing, so
     # the no-action default above (INCOMPLETE/NO_OUTCOME) must not stand in for
