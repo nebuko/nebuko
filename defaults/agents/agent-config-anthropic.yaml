@@ -1,0 +1,105 @@
+# ── Providers: Claude Code (claude-agent-sdk) ──
+# Every role runs through Claude Code (`backend: claude-code`), not the OpenHands
+# model loop: Claude Code brings its own tools, context management and model
+# calls, so `temperature` and sampling fields below are ignored. `tools` is not:
+# each entry maps to the Claude Code built-in that serves the same role
+# (terminal→Bash, read→Read, ...) or, for the engine tools, to the in-process
+# `mcp__nebuko__*` server. Skills are injected into the prompt (this backend has
+# no skill-discovery tool).
+# `api_url` is unused; only `api_token_env` matters. Generate the token with
+# `claude setup-token` (subscription) and expose it as CLAUDE_CODE_OAUTH_TOKEN:
+# as a repository secret, or in the environment of your self-hosted runner
+# (`nebuko init anthropic-local-runner`).
+providers:
+  claude-code:
+    api_url: "https://api.anthropic.com"
+    api_token_env: "CLAUDE_CODE_OAUTH_TOKEN"
+
+# ── LLMs: the last path segment is the Claude Code model alias ──
+# (sonnet, opus, opus[1m], haiku or a full id such as claude-opus-5)
+llms:
+  claude-haiku:
+    model_path: "claude-code/haiku"
+    provider: "${providers.claude-code}"
+  claude-sonnet:
+    model_path: "claude-code/sonnet"
+    provider: "${providers.claude-code}"
+  claude-opus:
+    model_path: "claude-code/opus"
+    provider: "${providers.claude-code}"
+
+# ── MCP servers: reusable catalog, referenced by agents via ${mcp_servers.<name>} ──
+mcp_servers:
+  brave-search:
+    name: "brave-search"
+    command: "npx"
+    args:
+      - "-y"
+      - "@brave/brave-search-mcp-server@2.1.4"
+      - "--enabled-tools"
+      - "brave_web_search"
+      - "brave_news_search"
+    env:
+      BRAVE_API_KEY: "BRAVE_API_KEY"
+
+# ── Agents: role → model + prompt + skills + tools ──
+# Claude Code owns its tools; the `tools` lists below only mirror the roles of the
+# other profiles and are ignored by this backend.
+agents:
+  architect:
+    backend: "claude-code"
+    model: "${llms.claude-sonnet}"
+    role: "Principal software engineer — analysis, architecture, planning, and delegation; never writes code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/architect.md"
+    skills:
+      - inject: ["call-agent", "planning", "complexity", "posting-contract"]
+    tools: ["think", "finish", "finalize", "complexity_review", "fetch_comment_bodies"]
+    complexity_overrides:
+      low:
+        model: "${llms.claude-sonnet}"
+        reasoning_effort: "low"
+      high:
+        model: "${llms.claude-opus}"
+        temperature: 0.6
+
+  dev:
+    backend: "claude-code"
+    model: "${llms.claude-haiku}"
+    role: "Implementation engineer — writes code, runs tests, manages branches, commits, and PRs."
+    temperature: 0.1
+    prompt_file: "defaults/prompts/dev.md"
+    skills:
+      - inject: ["complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "report_scaffold_branch", "complexity_review"]
+
+  context:
+    backend: "claude-code"
+    model: "${llms.claude-haiku}"
+    role: "Read-only context collector — gathers and compiles codebase facts for other agents."
+    temperature: 0.1
+    prompt_file: "defaults/prompts/context.md"
+    skills:
+      - inject: ["call-agent", "context-research", "complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "read", "edit", "write", "task_tracker", "think", "finish", "finalize", "complexity_review"]
+    mcp_servers:
+      - "${mcp_servers.brave-search}"
+
+  review:
+    backend: "claude-code"
+    model: "${llms.claude-sonnet}"
+    role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
+    temperature: 0.4
+    prompt_file: "defaults/prompts/review.md"
+    skills:
+      - inject: ["plan-review", "retrospective", "complexity", "posting-contract"]
+    tools: ["terminal", "terminal_batch", "think", "finish", "finalize", "complexity_review"]
+
+  po:
+    backend: "claude-code"
+    model: "${llms.claude-sonnet}"
+    role: "Product owner — triages and refines issues into actionable specs; never modifies code."
+    prompt_file: "defaults/prompts/po.md"
+    skills:
+      - inject: ["call-agent", "issue-refinement", "complexity", "posting-contract"]
+    tools: ["think", "finish", "finalize", "complexity_review"]

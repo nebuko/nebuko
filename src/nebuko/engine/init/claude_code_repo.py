@@ -66,8 +66,12 @@ jobs:
     uses: {REUSABLE_WORKFLOW_REPO}/.github/workflows/nebuko-workflow.yaml@{reusable_sha}
     with:
       prompt_body: ${{{{ github.event.client_payload.prompt_body }}}}
+      org_repo: ${{{{ github.event.client_payload.org_repo }}}}
+      issue_number: ${{{{ github.event.client_payload.issue_number }}}}
+      agent_config_path: agent-config-anthropic.yaml
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{{{ secrets.{TOKEN_SECRET} }}}}
+      GH_PAT: ${{{{ github.event.client_payload.gh_token }}}}
     permissions:
       contents: write
       pull-requests: write
