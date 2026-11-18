@@ -792,6 +792,7 @@ class TestGitSeamsAnchorAtCallerWorkspace:
         self, tmp_path, monkeypatch
     ):
         caller = self._caller_checkout(tmp_path)
+        self._git(caller, "checkout", "-q", "-b", "feature/work")
         engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
         (caller / "work.txt").write_text("work\n", encoding="utf-8")
 
@@ -805,9 +806,21 @@ class TestGitSeamsAnchorAtCallerWorkspace:
             str(tmp_path / "caller-origin.git"),
             "log",
             "--oneline",
-            "main",
+            "feature/work",
         )
         assert "work" in pushed or "nebuko" in pushed
+
+    def test_the_finalize_guard_refuses_to_push_the_base_branch(
+        self, tmp_path, monkeypatch
+    ):
+        caller = self._caller_checkout(tmp_path)
+        engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
+        (caller / "work.txt").write_text("work\n", encoding="utf-8")
+
+        result = engine._git_session_finalize()
+
+        assert not result.ok
+        assert "base branch" in result.detail
 
     def test_the_agent_host_receives_the_caller_checkout(self, tmp_path, monkeypatch):
         from nebuko.engine import agent_runner

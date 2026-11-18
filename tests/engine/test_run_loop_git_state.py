@@ -7,6 +7,8 @@ the PR it opens, and the dirty-tree auto-commit — in the persisted state's
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from nebuko.engine.lib.git import branch_scaffold, git_session, pr_finalize
@@ -45,11 +47,13 @@ def _issue_trigger(number: int = 590, title: str = "Fix it"):
     )
 
 
-def _stub_flow(monkeypatch, root, *, scaffold=None, pr=None, finalize=None, trigger=None):
+def _stub_flow(
+    monkeypatch, root, *, scaffold=None, pr=None, finalize=None, trigger=None, env=None
+):
     """A full engine.run() pass with the git machinery stubbed at the seams."""
     from nebuko.engine.run_loop import Engine
 
-    engine = _engine_at_root(root.parent, root, trigger=trigger)
+    engine = _engine_at_root(root.parent, root, trigger=trigger, env=env)
     _stub_resolved(monkeypatch, _resolved_with_hooks())
 
     def _scaffold_stub(self):
@@ -248,7 +252,9 @@ class TestPostedCommentCarriesEngineRecords:
     def test_the_comment_carries_the_branch_the_pr_and_the_issue(
         self, tmp_path, monkeypatch, root
     ):
-        engine = _stub_flow(monkeypatch, root, trigger=_issue_trigger())
+        engine = _stub_flow(
+            monkeypatch, root, trigger=_issue_trigger(), env={"GITHUB_REPOSITORY": ""}
+        )
 
         state = self._posted_state(engine)
 
@@ -262,6 +268,31 @@ class TestPostedCommentCarriesEngineRecords:
         assert state.issue.title == "Fix it"
         assert state.issue.author == "olivier-norture"
         assert state.issue.repo == "o/r"
+
+    def test_a_dispatch_targets_the_exported_repo_not_the_caller(
+        self, tmp_path, monkeypatch, root
+    ):
+        base = _issue_trigger()
+        trigger = replace(
+            base,
+            type="repository_dispatch",
+            payload={
+                **base.payload,
+                "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+                "client_payload": {"org_repo": "nebuko/nebuko", "issue_number": 590},
+            },
+        )
+        engine = _stub_flow(
+            monkeypatch,
+            root,
+            trigger=trigger,
+            env={"REPO_NAME": "nebuko/nebuko", "GITHUB_REPOSITORY": "nebuko/nebuko"},
+        )
+
+        state = self._posted_state(engine)
+
+        assert state.issue is not None
+        assert state.issue.repo == "nebuko/nebuko"
 
     def test_a_trigger_without_an_issue_payload_records_no_issue(
         self, tmp_path, monkeypatch, root

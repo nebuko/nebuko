@@ -139,6 +139,9 @@ class Trigger:
     payload: Mapping[str, Any] = field(default_factory=dict)
     # body of the issue this event belongs to ("" when unavailable)
     issue_body: str = ""
+    # repo the issue lives in, for dispatches forwarded by another repo ("" when
+    # unset; ``payload.repository`` is then the forwarding caller)
+    org_repo: str = ""
 
 
 # @stub-protected

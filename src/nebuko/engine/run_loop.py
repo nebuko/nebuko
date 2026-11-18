@@ -29,6 +29,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
     branch_scaffold,
@@ -586,10 +587,7 @@ def _ensure_child_identity(
     the child's comment-based recovery silently returns nothing on a missing
     value, which resets ``history`` to a single entry (issue #739).
     """
-    repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
-    if not repo and trigger is not None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        repo = payload_repo.get("full_name")
+    repo = resolve_repo(env, trigger)
     if not repo:
         raise ValueError(
             "no repository for the agent child's state recovery: set REPO_NAME or "
@@ -1160,6 +1158,12 @@ class Engine:
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
+            log.info(
+                "[repo] targeting %s#%s",
+                self._repo(trigger) or "<unresolved>",
+                trigger.number or "-",
+            )
+            self._check_target_readable(trigger)
 
             self._enter(phases, "resolve_config")
             resolved = self.resolve(trigger)
@@ -3617,13 +3621,9 @@ class Engine:
         )
 
     def _payload_repo(self, payload: Mapping[str, Any]) -> str:
-        """``owner/name`` from the event payload, else the run's env."""
-        repository = payload.get("repository") or {}
-        return str(
-            repository.get("full_name")
-            or self.env.get("GITHUB_REPOSITORY")
-            or self.env.get("REPO_NAME")
-            or ""
+        """``owner/name`` the run targets, read from the env before the payload."""
+        return resolve_repo(
+            self.env, Trigger(author="", body="", type="", number=0, payload=payload)
         )
 
     def _artifacts(self) -> RunArtifactStager:
@@ -4207,8 +4207,18 @@ class Engine:
     # ── internals ────────────────────────────────────────────────────
 
     def _repo(self, trigger: Trigger) -> str | None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
+        return resolve_repo(self.env, trigger) or None
+
+    def _check_target_readable(self, trigger: Trigger) -> None:
+        """Fail before the agent starts when the targeted issue cannot be read.
+
+        A run on an unreadable issue would start with an empty prompt and then
+        fail its own notices against the same repo (issue #1099).
+        """
+        loader = getattr(self.adapter, "load_raw_thread", None)
+        if loader is None or not trigger.number:
+            return
+        loader()
 
     def _agent_start_notice(self, trigger: Trigger) -> AgentStartNotice:
         """Build the acknowledgment for this run's agent.

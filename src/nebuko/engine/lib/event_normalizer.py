@@ -106,6 +106,7 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
             type="repository_dispatch",
             number=int(client_payload.get("issue_number") or 0),
             payload=payload,
+            org_repo=str(client_payload.get("org_repo") or ""),
         )
 
     inputs = payload.get("inputs")

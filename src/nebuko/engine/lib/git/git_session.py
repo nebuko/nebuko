@@ -203,6 +203,14 @@ class GitSessionGuard:
                 return GuardResult(ok=False, detail=problem)
             branch = self._current_branch()
             reattached = branch == expected_branch
+        if not expected_branch and self._is_base_branch(branch):
+            return GuardResult(
+                ok=False,
+                detail=(
+                    f"refusing to push the base branch {branch!r}: the session is "
+                    "not on a feature branch"
+                ),
+            )
         if expected_branch and branch != expected_branch:
             detached = " (detached HEAD)" if branch in ("", "HEAD") else ""
             return GuardResult(
@@ -552,12 +560,19 @@ class GitSessionGuard:
             return ("<uninspectable>",)
         return tuple(line for line in out.splitlines() if line.strip())
 
+    def _is_base_branch(self, branch: str) -> bool:
+        """True for the repo's base branch (``NEBUKO_BASE_BRANCH``, else main/master)."""
+        base = str(self.env.get("NEBUKO_BASE_BRANCH") or "").strip()
+        return branch in {base, "main", "master"} - {""}
+
     def _push_branch(self, branch: str) -> str:
         """Push ``HEAD`` to ``refs/heads/<branch>``. Returns a problem or ``""``.
 
         ``HEAD:refs/heads/<branch>`` needs no upstream, so it works on the first
-        push of a fresh branch as well.
+        push of a fresh branch as well. The base branch is never pushed.
         """
+        if self._is_base_branch(branch):
+            return f"refusing to push the base branch {branch!r}"
         try:
             self._run_git(
                 ["push", self.remote, f"HEAD:refs/heads/{branch}"],

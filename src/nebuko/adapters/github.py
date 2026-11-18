@@ -71,6 +71,10 @@ def _github_client() -> Any:
 
 
 # @stub-protected
+class TargetIssueUnreadable(RuntimeError):
+    """The issue a run targets cannot be read, so the run must not start."""
+
+
 class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     """Adapter composed of the existing ``gh``/REST clients."""
 
@@ -93,7 +97,14 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
         # resolves the repo from the runner environment instead of failing with
         # an opaque ``None`` deep in the REST client.
-        self._repo = repo or os.environ.get("GITHUB_REPOSITORY") or None
+        # REPO_NAME first: a repository_dispatch carries the caller's repo in
+        # its payload, and the workflow exports the repo the issue lives in.
+        self._repo = (
+            repo
+            or os.environ.get("REPO_NAME")
+            or os.environ.get("GITHUB_REPOSITORY")
+            or None
+        )
         self._client = client
         self._trigger: Trigger | None = None
         # One bounded read of the thread per adapter instance. ``load_history``
@@ -144,7 +155,8 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         The ledger reconciles the *whole* thread (so a vanished id is safely
         detected as deleted), not the bounded recency snapshot. The snapshot is
         reused when it was already fetched unbounded; otherwise the full list is
-        fetched once. The issue object is best-effort (``None`` on failure).
+        fetched once. For a targeted issue (``number`` set) an unreadable issue
+        raises :class:`TargetIssueUnreadable`; without a number it is ``None``.
         """
         client = self._client_handle()
         repo = self._require_repo()
@@ -160,8 +172,14 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         if getter is not None:
             try:
                 issue = getter(repo, number)
-            except Exception:  # noqa: BLE001 - best-effort metadata
+            except Exception as exc:
+                if number:
+                    raise TargetIssueUnreadable(
+                        f"could not read {repo}#{number}: {exc}"
+                    ) from exc
                 issue = None
+            if issue is None and number:
+                raise TargetIssueUnreadable(f"{repo}#{number} returned no issue")
         return issue, comments
 
     # @stub-protected

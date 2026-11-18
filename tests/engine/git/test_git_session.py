@@ -52,6 +52,8 @@ def checkout(tmp_path, remote):
     _git(path, "add", "a.txt")
     _git(path, "commit", "-m", "initial")
     _git(path, "push", "-u", "origin", "main")
+    _git(path, "checkout", "-b", "feature/test")
+    _git(path, "push", "-u", "origin", "feature/test")
     return path
 
 
@@ -501,3 +503,11 @@ def test_finalize_reports_no_commit_on_a_clean_tree(checkout):
     assert result.ok, result.detail
     assert result.auto_commit == ""
 
+
+def test_finalize_refuses_to_push_the_base_branch(checkout):
+    _git(checkout, "checkout", "main")
+
+    result = _local_guard(checkout).finalize()
+
+    assert not result.ok
+    assert "base branch" in result.detail
