@@ -1140,8 +1140,10 @@ def _ensure_pr_impl(
     issue_number = _issue_number_from_env()
     if not pr_url and not no_push:
         title = pr_title(issue_number, issue_title) or branch
+        # The PR goes to the target repo, not the checkout's remote (a dispatch
+        # session's checkout may point at the per-user repo, issue #1432).
         pr_url = _open_pr(
-            repo,
+            resolve_repo(os.environ, None).strip(),
             branch,
             base,
             title,
