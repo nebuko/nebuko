@@ -38,6 +38,16 @@ on:
         required: false
         type: string
         default: ''
+      org_repo:
+        description: 'owner/repo the agent works on for a repository_dispatch caller (ADR-0017 Lane D). Empty: the caller repository. Its checkout and token come from GH_PAT, never from this input.'
+        required: false
+        type: string
+        default: ''
+      issue_number:
+        description: 'Issue number in org_repo that the agent answers on (repository_dispatch callers only)'
+        required: false
+        type: string
+        default: ''
       checkout_ref:
         description: 'Explicit ref (SHA, tag, or branch) for the workspace checkout. When empty, the checkout follows the workflow''s own commit if the workflow is checking out its own repository; otherwise the event default.'
         required: false
@@ -134,7 +144,7 @@ on:
         description: 'Brave Search API key (optional — only needed for the Brave Search MCP web-search tool)'
         required: false
       GH_PAT:
-        description: 'Optional fallback GitHub token, used only when the OIDC token broker fails or is not configured'
+        description: 'GitHub token for the engine. Set by a repository_dispatch caller (org-repo token, ADR-0017 Lane D) and used before the OIDC broker; otherwise an optional fallback used only when the broker fails or is not configured'
         required: false
       EXTRA_SECRET_1_VALUE:
         description: 'Value for the env var named by the EXTRA_SECRET_1_NAME input (issue #834)'
@@ -189,6 +199,8 @@ jobs:
           github.event.action != 'closed' &&
           (
             github.event_name == 'workflow_call' ||
+            (github.event_name == 'repository_dispatch' &&
+             github.event.action == 'nebuko-run') ||
             (github.event_name == 'issues' &&
              (inputs.CALLER_AUTH == 'off' ||
               contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
@@ -262,8 +274,6 @@ jobs:
                 ACTOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login || github.actor || '' }}
                 ACTOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type || '' }}
                 CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-                TRUSTED_BOTS: ${{ inputs.TRUSTED_BOTS || '["nebuko[bot]"]' }}
-                TRIGGER_COMMENT_HEADER: ${{ github.event.comment.body }}
               run: |
                 # Guard 1 + 2: per-user runners hold the Claude Code token in
                 # their own environment; a shared secret or a nebuko-* label
@@ -277,41 +287,12 @@ jobs:
                     nebuko-*) echo "::error::runner_strategy=per-user computes nebuko-<user> labels; a static runs_on starting with nebuko- ('$RUNS_ON') is not allowed"; exit 1 ;;
                   esac
                 fi
-                # Guard 3: schedule and actor-less runs have no user whose
-                # subscription should pay for the claude-code backend. A bot
-                # actor is refused unless it is a trusted bot continuing a
-                # comment that carries a continuation marker in its header; the
-                # engine then checks the human-started state behind it (ADR 0017).
-                API_LANE="Use the API-key lane instead: a provider API key secret with a non-claude-code backend in the agent config."
+                # Guard 3: bot, schedule and actor-less runs have no user whose
+                # subscription should pay for the claude-code backend.
                 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN_SECRET" ]; then
-                  if [ "$EVENT_NAME" = "schedule" ] || [ -z "$ACTOR_LOGIN" ]; then
-                    echo "::error::The claude-code backend cannot run for schedule or actor-less events ($EVENT_NAME, actor '${ACTOR_LOGIN:-none}'). $API_LANE"
+                  if [ "$EVENT_NAME" = "schedule" ] || [ -z "$ACTOR_LOGIN" ] || [ "$ACTOR_TYPE" = "Bot" ] || [[ "$ACTOR_LOGIN" == *"[bot]" ]]; then
+                    echo "::error::The claude-code backend cannot run for bot, schedule or actor-less events ($EVENT_NAME, actor '${ACTOR_LOGIN:-none}'). Use the API-key lane instead: a provider API key secret with a non-claude-code backend in the agent config."
                     exit 1
-                  fi
-                  if [ "$ACTOR_TYPE" = "Bot" ] || [[ "$ACTOR_LOGIN" == *"[bot]" ]]; then
-                    if [ "$EVENT_NAME" != "issue_comment" ]; then
-                      echo "::error::Bot actor '$ACTOR_LOGIN' on $EVENT_NAME cannot start a claude-code run. $API_LANE"
-                      exit 1
-                    fi
-                    if ! jq -e --arg a "$ACTOR_LOGIN" 'index($a) != null' <<<"$TRUSTED_BOTS" >/dev/null 2>&1; then
-                      echo "::error::Rule 'trusted-bot' failed: bot '$ACTOR_LOGIN' is not in TRUSTED_BOTS. $API_LANE"
-                      exit 1
-                    fi
-                    HEADER=$(printf '%s\n' "$TRIGGER_COMMENT_HEADER" | head -n 2)
-                    if ! grep -Fq -e '<!-- workflow-continue -->' -e '<!-- bot-trigger:' <<<"$HEADER"; then
-                      echo "::error::Rule 'continuation-marker' failed: bot comment '$ACTOR_LOGIN' has no continuation marker in its first two lines, so it is a fresh bot-initiated run. $API_LANE"
-                      exit 1
-                    fi
-                    # The header is handed to the engine, which checks the
-                    # human-started WORKFLOW_STATE behind this continuation.
-                    if [ -n "${GITHUB_ENV:-}" ]; then
-                      {
-                        echo "TRIGGER_COMMENT_HEADER<<NEBUKO_HEADER_EOF"
-                        printf '%s\n' "$HEADER"
-                        echo "NEBUKO_HEADER_EOF"
-                        echo "TRUSTED_BOTS=$TRUSTED_BOTS"
-                      } >> "$GITHUB_ENV"
-                    fi
                   fi
                 fi
 
@@ -397,8 +378,22 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v5
               with:
+                repository: ${{ inputs.org_repo || github.repository }}
+                token: ${{ inputs.org_repo && secrets.GH_PAT || github.token }}
                 ref: ${{ inputs.checkout_ref || (job.workflow_repository == github.repository && job.workflow_sha) || '' }}
                 persist-credentials: false
+
+            # A repository_dispatch caller works on org_repo: the engine's repo
+            # and issue come from these exports, not from the caller repository.
+            - name: Target org repository issue
+              if: inputs.org_repo != ''
+              env:
+                ORG_REPO: ${{ inputs.org_repo }}
+                ISSUE_NUMBER: ${{ inputs.issue_number }}
+              run: |
+                echo "REPO_NAME=$ORG_REPO" >> "$GITHUB_ENV"
+                echo "GITHUB_REPOSITORY=$ORG_REPO" >> "$GITHUB_ENV"
+                echo "TARGET_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
 
             # Always a separate checkout, nebuko's own runs included: the engine
             # creates, merges and commits the feature branch in the workspace,
