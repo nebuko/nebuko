@@ -53,6 +53,26 @@ Then comment `/nebuko run workflow --name default` on an issue.
 > alternatives and the compliance rules are in
 > [ADR-0017](./adr/0017-claude-code-subscription-credential-strategies.md).
 
+## Per-user credential repo (`nebuko init claude-code-repo`)
+
+To keep your subscription token out of a shared repository, run the setup
+command from a terminal where `gh` is logged in as the account that owns the
+runs:
+
+```bash
+nebuko init claude-code-repo               # --pin-ref <ref> (default: main)
+```
+
+It creates a private `<your-login>/nebuko-claude-code` repository, asks for
+your `claude setup-token` value and stores it only as that repo's
+`CLAUDE_CODE_OAUTH_TOKEN` secret (piped to `gh secret set`; Nebuko never stores
+or logs it), writes a thin workflow pinned to the reusable workflow's commit
+SHA, and prints the GitHub App installation link to finish the setup.
+
+The generated workflow refuses to run unless the triggering actor is the
+repository owner, so only you can start a run in that repo. An existing repo is
+refused before anything is written; a missing token creates nothing.
+
 ## Per-role switch
 
 ```yaml
