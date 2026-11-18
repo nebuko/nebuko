@@ -76,6 +76,7 @@ from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collecto
     install,
     maybe_register_langfuse,
 )
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     skill_context_from_env,
 )
@@ -577,7 +578,7 @@ def _caller_association(login: str) -> str | None:
 
     ``None`` on any lookup failure, which the continuation rule refuses.
     """
-    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    repo = resolve_repo(os.environ, None).strip()
     if not repo or not login:
         return None
     try:

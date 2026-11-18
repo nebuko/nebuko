@@ -133,3 +133,70 @@ def test_unreadable_target_issue_raises(monkeypatch):
 
     with pytest.raises(TargetIssueUnreadable):
         _adapter_for(client, monkeypatch).load_raw_thread()
+
+
+class TestMainTargetsTheDispatchRepo:
+    """Issue #1388 follow-up: ``main()`` must hand the adapter the org repo."""
+
+    @pytest.fixture
+    def adapter_kwargs(self, monkeypatch, mocker):
+        import nebuko.adapters as adapters
+        import nebuko.engine.boot as boot
+        import nebuko.engine.run_loop as run_loop
+
+        captured: dict = {}
+
+        def fake_build(kind, **kwargs):
+            captured["kind"] = kind
+            captured.update(kwargs)
+            return mocker.Mock()
+
+        monkeypatch.setattr(adapters, "build_adapter", fake_build)
+        monkeypatch.setattr(boot, "prewarm_agent_sdk", lambda env: None)
+        mocker.patch.object(
+            run_loop.Engine, "run", autospec=True, return_value=mocker.Mock(exit_code=0)
+        )
+        return captured
+
+    def _run(self, monkeypatch, env, argv=()):
+        import nebuko.engine.run_loop as run_loop
+
+        monkeypatch.delenv("REPO_NAME", raising=False)
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return run_loop.main(["--adapter", "github", *argv])
+
+    def test_dispatch_env_targets_the_org_repo_not_the_caller(self, monkeypatch, adapter_kwargs):
+        self._run(
+            monkeypatch,
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+        )
+
+        assert adapter_kwargs["repo"] == "nebuko/nebuko"
+
+    def test_explicit_repo_flag_wins(self, monkeypatch, adapter_kwargs):
+        self._run(
+            monkeypatch,
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+            argv=("--repo", "someone/else"),
+        )
+
+        assert adapter_kwargs["repo"] == "someone/else"
+
+    def test_github_repository_is_the_default_without_repo_name(self, monkeypatch, adapter_kwargs):
+        self._run(monkeypatch, {"GITHUB_REPOSITORY": "nebuko/nebuko"})
+
+        assert adapter_kwargs["repo"] == "nebuko/nebuko"
+
+    def test_resolved_repo_is_logged_once(self, monkeypatch, adapter_kwargs, caplog):
+        caplog.set_level("INFO", logger="nebuko.engine.run_loop")
+
+        self._run(
+            monkeypatch,
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+        )
+
+        markers = [r.getMessage() for r in caplog.records if "[phase:repo]" in r.getMessage()]
+        assert len(markers) == 1
+        assert "target repo nebuko/nebuko" in markers[0]

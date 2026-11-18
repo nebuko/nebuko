@@ -3533,8 +3533,7 @@ class Engine:
             url=pr_result.pr_url,
             title=os.environ.get("PR_TITLE", ""),
             author=os.environ.get("PR_AUTHOR", ""),
-            repo=os.environ.get("GITHUB_REPOSITORY", "")
-            or os.environ.get("REPO_NAME", ""),
+            repo=resolve_repo(self.env, None),
         )
         updated = state.model_copy(update={"pull_request": pr})
         try:
@@ -5067,7 +5066,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("github", "local"),
     )
     parser.add_argument("--run-dir", default=os.environ.get("ENGINE_RUN_DIR"))
-    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    parser.add_argument("--repo", default=None, help="Override the target owner/name")
     args = parser.parse_args(raw_args)
 
     from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
@@ -5084,7 +5083,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         kwargs["run_dir"] = Path(args.run_dir)
     else:
-        kwargs["repo"] = args.repo
+        repo = args.repo or resolve_repo(os.environ, None)
+        log.info(
+            "[phase:repo] target repo %s (REPO_NAME=%s, GITHUB_REPOSITORY=%s)",
+            repo or "<unresolved>",
+            os.environ.get("REPO_NAME", ""),
+            os.environ.get("GITHUB_REPOSITORY", ""),
+        )
+        kwargs["repo"] = repo
 
     adapter = build_adapter(args.adapter, **kwargs)
     from nebuko.engine.lib.config import HistoryWindowConfig
