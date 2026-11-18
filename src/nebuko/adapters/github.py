@@ -49,6 +49,11 @@ STATUS_LABELS: tuple[str, ...] = tuple(status_label(status) for status in RunSta
 
 
 # @stub-protected
+class TargetIssueUnreadable(RuntimeError):
+    """The run's target issue could not be read from its repo (issue #1388)."""
+
+
+# @stub-protected
 class PublishError(RuntimeError):
     """A comment write could not be delivered after the transport's retries.
 
@@ -71,10 +76,6 @@ def _github_client() -> Any:
 
 
 # @stub-protected
-class TargetIssueUnreadable(RuntimeError):
-    """The issue a run targets cannot be read, so the run must not start."""
-
-
 class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
     """Adapter composed of the existing ``gh``/REST clients."""
 
@@ -97,8 +98,8 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         # Mirror ``run_loop.main``'s default so a bare ``GitHubAdapter()`` still
         # resolves the repo from the runner environment instead of failing with
         # an opaque ``None`` deep in the REST client.
-        # REPO_NAME first: a repository_dispatch carries the caller's repo in
-        # its payload, and the workflow exports the repo the issue lives in.
+        # REPO_NAME is the dispatch-exported target; it wins over GITHUB_REPOSITORY
+        # (the runner's repo) so a dispatch run reads the repo it was aimed at.
         self._repo = (
             repo
             or os.environ.get("REPO_NAME")
@@ -155,8 +156,7 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         The ledger reconciles the *whole* thread (so a vanished id is safely
         detected as deleted), not the bounded recency snapshot. The snapshot is
         reused when it was already fetched unbounded; otherwise the full list is
-        fetched once. For a targeted issue (``number`` set) an unreadable issue
-        raises :class:`TargetIssueUnreadable`; without a number it is ``None``.
+        fetched once. The issue object is best-effort (``None`` on failure).
         """
         client = self._client_handle()
         repo = self._require_repo()
@@ -175,11 +175,11 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
             except Exception as exc:
                 if number:
                     raise TargetIssueUnreadable(
-                        f"could not read {repo}#{number}: {exc}"
+                        f"could not read issue #{number} in {repo}: {exc}"
                     ) from exc
                 issue = None
             if issue is None and number:
-                raise TargetIssueUnreadable(f"{repo}#{number} returned no issue")
+                raise TargetIssueUnreadable(f"issue #{number} not found in {repo}")
         return issue, comments
 
     # @stub-protected

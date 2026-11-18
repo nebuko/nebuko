@@ -1158,12 +1158,8 @@ class Engine:
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
-            log.info(
-                "[repo] targeting %s#%s",
-                self._repo(trigger) or "<unresolved>",
-                trigger.number or "-",
-            )
-            self._check_target_readable(trigger)
+
+            self._require_readable_target(trigger)
 
             self._enter(phases, "resolve_config")
             resolved = self.resolve(trigger)
@@ -3601,7 +3597,7 @@ class Engine:
             url=str(issue.get("html_url") or ""),
             title=str(issue.get("title") or ""),
             author=str((issue.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _pull_request_info_from_trigger(self) -> PullRequestInfo | None:
@@ -3617,13 +3613,7 @@ class Engine:
             url=str(pull_request.get("html_url") or ""),
             title=str(pull_request.get("title") or ""),
             author=str((pull_request.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
-        )
-
-    def _payload_repo(self, payload: Mapping[str, Any]) -> str:
-        """``owner/name`` the run targets, read from the env before the payload."""
-        return resolve_repo(
-            self.env, Trigger(author="", body="", type="", number=0, payload=payload)
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _artifacts(self) -> RunArtifactStager:
@@ -4209,16 +4199,18 @@ class Engine:
     def _repo(self, trigger: Trigger) -> str | None:
         return resolve_repo(self.env, trigger) or None
 
-    def _check_target_readable(self, trigger: Trigger) -> None:
-        """Fail before the agent starts when the targeted issue cannot be read.
+    def _require_readable_target(self, trigger: Trigger) -> None:
+        """Abort before the agent starts when the targeted issue cannot be read.
 
-        A run on an unreadable issue would start with an empty prompt and then
-        fail its own notices against the same repo (issue #1099).
+        An unreadable issue (wrong repo, missing token scope) would otherwise
+        run the agent on an empty prompt (issue #1388).
         """
-        loader = getattr(self.adapter, "load_raw_thread", None)
-        if loader is None or not trigger.number:
-            return
-        loader()
+        repo = self._repo(trigger)
+        if trigger.number:
+            log.info("[phase:normalize] target repo %s, issue #%s", repo, trigger.number)
+            loader = getattr(self.adapter, "load_raw_thread", None)
+            if loader is not None:
+                loader()
 
     def _agent_start_notice(self, trigger: Trigger) -> AgentStartNotice:
         """Build the acknowledgment for this run's agent.
