@@ -416,6 +416,7 @@ jobs:
 
             # A repository_dispatch caller works on org_repo: the engine's repo
             # and issue come from these exports, not from the caller repository.
+            # GITHUB_REPOSITORY is left as the caller's: it is the run-URL repo.
             - name: Target org repository issue
               if: inputs.org_repo != ''
               env:
@@ -423,7 +424,6 @@ jobs:
                 ISSUE_NUMBER: ${{ inputs.issue_number }}
               run: |
                 echo "REPO_NAME=$ORG_REPO" >> "$GITHUB_ENV"
-                echo "GITHUB_REPOSITORY=$ORG_REPO" >> "$GITHUB_ENV"
                 echo "TARGET_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
 
             # Always a separate checkout, nebuko's own runs included: the engine
