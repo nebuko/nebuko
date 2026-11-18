@@ -792,6 +792,7 @@ class TestGitSeamsAnchorAtCallerWorkspace:
         self, tmp_path, monkeypatch
     ):
         caller = self._caller_checkout(tmp_path)
+        self._git(caller, "checkout", "-b", "feature/work")
         engine = self._caller_anchored_engine(tmp_path, monkeypatch, caller)
         (caller / "work.txt").write_text("work\n", encoding="utf-8")
 
@@ -805,7 +806,7 @@ class TestGitSeamsAnchorAtCallerWorkspace:
             str(tmp_path / "caller-origin.git"),
             "log",
             "--oneline",
-            "main",
+            "feature/work",
         )
         assert "work" in pushed or "nebuko" in pushed
 

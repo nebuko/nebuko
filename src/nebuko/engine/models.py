@@ -139,6 +139,8 @@ class Trigger:
     payload: Mapping[str, Any] = field(default_factory=dict)
     # body of the issue this event belongs to ("" when unavailable)
     issue_body: str = ""
+    # ``owner/name`` the dispatch targets (``client_payload.org_repo``, "" otherwise)
+    org_repo: str = ""
 
 
 # @stub-protected
