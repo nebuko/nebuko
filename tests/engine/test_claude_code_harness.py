@@ -395,3 +395,74 @@ def test_live_claude_finalize_tool() -> None:  # pragma: no cover - opt-in
     )
     result = harness.make_closing_channel().elicit(built.session, None)
     assert isinstance(result.outcome, TurnOutcomePayload)
+
+
+_TOKEN = "sk-ant-oat01-SECRET-VALUE"
+
+
+class _ErrorResultClient(_FakeClient):
+    """Replays one claude-code error result per turn, counting the turns."""
+
+    def __init__(self, text: str, *, is_error: bool = True) -> None:
+        super().__init__()
+        self.turns = 0
+        self._text = text
+        self._is_error = is_error
+
+    async def receive_response(self):
+        from claude_agent_sdk import ResultMessage
+
+        self.turns += 1
+        yield ResultMessage(
+            subtype="error",
+            duration_ms=10,
+            duration_api_ms=10,
+            is_error=self._is_error,
+            num_turns=1,
+            session_id="s1",
+            total_cost_usd=0.0,
+            usage={},
+            result=self._text,
+        )
+
+
+def test_401_result_raises_terminal_auth_error_once() -> None:
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        HarnessAuthError,
+        ProviderFailure,
+    )
+
+    session = ClaudeCodeSession(options=None, sink=FinalizeSink())
+    client = _ErrorResultClient(
+        "Failed to authenticate. API Error: 401 OAuth access token is invalid."
+    )
+    session._client = client
+
+    with pytest.raises(HarnessAuthError) as raised:
+        session.run(timeout_s=5)
+
+    assert isinstance(raised.value, ProviderFailure)
+    assert client.turns == 1
+    assert _TOKEN not in str(raised.value)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in str(raised.value)
+
+
+def test_other_error_results_do_not_raise_auth_error() -> None:
+    session = ClaudeCodeSession(options=None, sink=FinalizeSink())
+    session._client = _ErrorResultClient("tool crashed")
+
+    session.run(timeout_s=5)
+
+
+def test_auth_failure_notice_names_the_secret_and_omits_the_token(monkeypatch) -> None:
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        harness_auth_message,
+    )
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", _TOKEN)
+    message = harness_auth_message("acme/widgets")
+
+    assert message.startswith("claude-code authentication failed (401)")
+    assert "claude setup-token" in message
+    assert message.endswith("update the secret in acme/widgets.")
+    assert _TOKEN not in message

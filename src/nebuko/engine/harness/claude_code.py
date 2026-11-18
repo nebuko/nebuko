@@ -189,13 +189,40 @@ class ClaudeCodeSession:
 
     async def _receive(self) -> None:
         """Consume one turn's messages, emitting normalised events."""
+        auth_refused = False
         async for message in self._client.receive_response():
+            auth_refused = auth_refused or _is_auth_error(message)
             for event in _events_of(message):
                 self._emit(event)
+        if auth_refused:
+            # Lazy: the runtime-only failure module is not needed to import this one.
+            from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+                HarnessAuthError,
+            )
+
+            raise HarnessAuthError()
 
     def _emit(self, event: HarnessEvent) -> None:
         for callback in self._callbacks:
             callback(event)
+
+
+#: Lower-cased fragments of a claude-code error result that mean the credential
+#: was refused (issue #1434). Matched only on ``is_error`` results.
+_AUTH_REFUSAL_MARKERS = (
+    "api error: 401",
+    "failed to authenticate",
+    "oauth access token",
+    "invalid x-api-key",
+)
+
+
+def _is_auth_error(message: Any) -> bool:
+    """True when ``message`` is an error result refusing the credential."""
+    if not getattr(message, "is_error", False):
+        return False
+    text = str(getattr(message, "result", "") or "").lower()
+    return any(marker in text for marker in _AUTH_REFUSAL_MARKERS)
 
 
 def _events_of(message: Any) -> list[HarnessEvent]:

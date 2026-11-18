@@ -2000,9 +2000,14 @@ class Engine:
         """
         error = str(failure.provider_error or "the LLM provider failed")
         from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            HarnessAuthError,
+            harness_auth_message,
             redact_secrets,
         )
 
+        if isinstance(failure, HarnessAuthError):
+            # Fixed notice, never the backend's raw text (issue #1434).
+            error = harness_auth_message(str(self.env.get("GITHUB_REPOSITORY") or ""))
         error = redact_secrets(error, self._provider_secrets())
         phase = str(failure.agent_phase or "agent")
         pushed = False
