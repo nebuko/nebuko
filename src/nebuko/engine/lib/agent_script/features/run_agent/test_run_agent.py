@@ -799,6 +799,30 @@ class TestClaudeCredentialGate(unittest.TestCase):
 
         _enforce_harness_credentials(self._agent(backend="claude-code"))
 
+    def test_bot_continuation_on_claude_code_runs_only_with_human_started_state(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError, ContinuationContext
+        from nebuko.engine.lib.agent_script.features.run_agent import run_agent as ra
+
+        ctx = ContinuationContext(
+            trigger_login="nebuko[bot]",
+            trigger_type="Bot",
+            trusted_bots=("nebuko[bot]",),
+            comment_header="<!-- workflow-continue -->",
+            started_by="alice",
+        )
+        agent = self._agent(backend="claude-code")
+        original = ra._caller_association
+        ra._caller_association = lambda login: "OWNER" if login == "alice" else None
+        try:
+            ra._enforce_harness_credentials(agent, continuation=ctx)
+            with self.assertRaises(ClaudeCredentialError) as refused:
+                ra._enforce_harness_credentials(
+                    agent, continuation=ContinuationContext(**{**ctx.__dict__, "started_by": None})
+                )
+        finally:
+            ra._caller_association = original
+        self.assertIn("human-started-state", str(refused.exception))
+
     def test_a_tier_swap_is_checked_too(self):
         from nebuko.engine.harness.credentials import ClaudeCredentialError
         from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (
