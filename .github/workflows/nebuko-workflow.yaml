@@ -48,6 +48,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      runner_strategy:
+        description: '"static" (default) runs jobs on runs_on. "per-user" runs them on a runner labelled nebuko-<event author login>, so each user brings their own Claude Code token; it rejects the shared CLAUDE_CODE_OAUTH_TOKEN secret and a runs_on starting with nebuko-'
+        required: false
+        type: string
+        default: 'static'
       CALLER_AUTH:
         description: 'When "on" (default), only OWNER/MEMBER/COLLABORATOR authors can trigger the workflow from issues/comments'
         required: false
@@ -171,7 +176,7 @@ concurrency:
 
 jobs:
     run-task:
-        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner_strategy == 'per-user' && format('nebuko-{0}', github.event.comment.user.login || github.event.issue.user.login || github.actor) || inputs.runs_on || 'ubuntu-latest' }}
         # actions: write lets setup-uv's post step save the uv cache; the
         # top-level token may be a broker App token without that scope.
         permissions:
@@ -247,13 +252,62 @@ jobs:
             TRIGGER_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association || github.event.issue.author_association }}
             TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
         steps:
+            # Runner-strategy and credential guards (ADR-0008: secrets reach
+            # steps through env, never through `with:` inputs).
+            - name: Validate runner strategy and Claude Code credentials
+              env:
+                EVENT_NAME: ${{ github.event_name }}
+                RUNNER_STRATEGY: ${{ inputs.runner_strategy || 'static' }}
+                RUNS_ON: ${{ inputs.runs_on || '' }}
+                ACTOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login || github.actor || '' }}
+                ACTOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type || '' }}
+                CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+              run: |
+                # Guard 1 + 2: per-user runners hold the Claude Code token in
+                # their own environment; a shared secret or a nebuko-* label
+                # would defeat that isolation.
+                if [ "$RUNNER_STRATEGY" = "per-user" ]; then
+                  if [ -n "$CLAUDE_CODE_OAUTH_TOKEN_SECRET" ]; then
+                    echo "::error::runner_strategy=per-user rejects the shared CLAUDE_CODE_OAUTH_TOKEN secret: export the token in each user's runner environment, or set runner_strategy=static"
+                    exit 1
+                  fi
+                  case "$RUNS_ON" in
+                    nebuko-*) echo "::error::runner_strategy=per-user computes nebuko-<user> labels; a static runs_on starting with nebuko- ('$RUNS_ON') is not allowed"; exit 1 ;;
+                  esac
+                fi
+                # Guard 3: bot, schedule and actor-less runs have no user whose
+                # subscription should pay for the claude-code backend.
+                if [ -n "$CLAUDE_CODE_OAUTH_TOKEN_SECRET" ]; then
+                  if [ "$EVENT_NAME" = "schedule" ] || [ -z "$ACTOR_LOGIN" ] || [ "$ACTOR_TYPE" = "Bot" ] || [[ "$ACTOR_LOGIN" == *"[bot]" ]]; then
+                    echo "::error::The claude-code backend cannot run for bot, schedule or actor-less events ($EVENT_NAME, actor '${ACTOR_LOGIN:-none}'). Use the API-key lane instead: a provider API key secret with a non-claude-code backend in the agent config."
+                    exit 1
+                  fi
+                fi
+
             - name: Clean global git config
               run:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
 
+            # A caller-provided GH_PAT skips the OIDC broker, which would
+            # otherwise overwrite it with a token for the wrong repository.
+            - name: Use caller-provided GH_PAT
+              id: caller_pat
+              env:
+                CALLER_PAT: ${{ secrets.GH_PAT }}
+              run: |
+                if [ -n "$CALLER_PAT" ]; then
+                  echo "::add-mask::$CALLER_PAT"
+                  echo "GH_TOKEN=$CALLER_PAT" >> "$GITHUB_ENV"
+                  echo "present=true" >> "$GITHUB_OUTPUT"
+                  echo "::notice::GitHub token resolved via caller-provided GH_PAT"
+                else
+                  echo "present=false" >> "$GITHUB_OUTPUT"
+                fi
+
             - name: Acquire GitHub token (OIDC broker)
               id: gh_token
+              if: steps.caller_pat.outputs.present != 'true'
               env:
                 BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev/token' }}
                 FALLBACK_PAT: ${{ secrets.GH_PAT }}
@@ -466,7 +520,7 @@ jobs:
                 retention-days: 7
 
     agent-metrics:
-        runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner_strategy == 'per-user' && format('nebuko-{0}', github.event.comment.user.login || github.event.issue.user.login || github.actor) || inputs.runs_on || 'ubuntu-latest' }}
         if: |
           github.event_name == 'issues' &&
           github.event.action == 'closed' &&
@@ -477,8 +531,25 @@ jobs:
                 git config --global --unset-all http.https://github.com/.extraheader || true
                 git config --global --unset-all credential.helper || true
 
+            # A caller-provided GH_PAT skips the OIDC broker, which would
+            # otherwise overwrite it with a token for the wrong repository.
+            - name: Use caller-provided GH_PAT
+              id: caller_pat
+              env:
+                CALLER_PAT: ${{ secrets.GH_PAT }}
+              run: |
+                if [ -n "$CALLER_PAT" ]; then
+                  echo "::add-mask::$CALLER_PAT"
+                  echo "GH_TOKEN=$CALLER_PAT" >> "$GITHUB_ENV"
+                  echo "present=true" >> "$GITHUB_OUTPUT"
+                  echo "::notice::GitHub token resolved via caller-provided GH_PAT"
+                else
+                  echo "present=false" >> "$GITHUB_OUTPUT"
+                fi
+
             - name: Acquire GitHub token (OIDC broker)
               id: gh_token
+              if: steps.caller_pat.outputs.present != 'true'
               env:
                 BROKER_URL: ${{ vars.NEBUKO_BROKER_URL || 'https://token-broker.nebuko.dev/token' }}
                 FALLBACK_PAT: ${{ secrets.GH_PAT }}
