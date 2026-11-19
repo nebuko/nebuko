@@ -28,6 +28,7 @@ from .base import (
     ClosingResult,
     HarnessCapabilities,
     HarnessEvent,
+    build_closing_prompt,
     drive_turn,
 )
 from .engine_tools import MCP_SERVER_NAME, TOOL_PREFIX, EngineToolServer, FinalizeSink
@@ -68,16 +69,7 @@ ENGINE_TOOL_NAMES = frozenset(
     }
 )
 
-CLOSING_PROMPT = (
-    "Engine finalize turn - the work phase is over; do not call any work tool. "
-    "Call the `finalize` tool once. Put your COMPLETE, self-contained report in "
-    "its `report` argument (never a one-line note) and your turn outcome in "
-    "`turn_outcome`.\n\n"
-    "{sections}\n"
-    "Set `turn_outcome.appreciation` ('approved' | 'rejected' | 'hold') and "
-    "`turn_outcome.hold_kind` = 'awaiting_input' with a hold. Where the "
-    "workflow goes next is engine topology, never your choice."
-)
+CLOSING_PROMPT = build_closing_prompt(finalize_tool=FINALIZE_TOOL)
 
 
 class _ToolPolicy:
