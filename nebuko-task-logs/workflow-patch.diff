@@ -1,8 +1,7 @@
 diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
-index afe855c..b2d43ba 100644
 --- a/.github/workflows/nebuko-workflow.yaml
 +++ b/.github/workflows/nebuko-workflow.yaml
-@@ -374,6 +374,22 @@ jobs:
+@@ -485,6 +485,22 @@
                    [ "$VENV_CACHE_HIT" = "true" ] && COMPILE=
                    uv sync --project "$NEBUKO_ROOT" --extra runtime --locked --no-dev $COMPILE
  
