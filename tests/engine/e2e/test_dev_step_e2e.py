@@ -346,7 +346,13 @@ def test_dev_step_e2e_branch_push_and_finalize_retry(tmp_path, monkeypatch) -> N
     _install_scripted_pipeline(monkeypatch, conversation)
 
     def _fake_ensure_pr(
-        dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
+        dry_run: bool = False,
+        *,
+        issue_title: str = "",
+        interrupted: bool = False,
+        issue_number: int | None = None,
+        repo: str = "",
+        issue_repo: str = "",
     ):
         from nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr import EnsurePrResult
 

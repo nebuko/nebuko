@@ -62,6 +62,7 @@ from nebuko.engine.lib.git import branch_scaffold
 from nebuko.engine.lib.git import git_session
 from nebuko.engine.lib.git import pr_finalize
 from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.workflow_state import extract_state_from_body
 from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
@@ -5358,8 +5359,19 @@ class TestPrFinalizerWiring:
         seen: dict[str, object] = {}
 
         class _Finalizer:
-            def __init__(self, issue_title="", *, interrupted=False):
+            def __init__(
+                self,
+                issue_title="",
+                *,
+                interrupted=False,
+                issue_number=None,
+                repo="",
+                issue_repo="",
+            ):
                 seen["interrupted"] = interrupted
+                seen["issue_number"] = issue_number
+                seen["repo"] = repo
+                seen["issue_repo"] = issue_repo
 
             def finalize(self):
                 return pr_finalize.PrFinalizeResult(ok=True, skipped=True)
@@ -5369,6 +5381,10 @@ class TestPrFinalizerWiring:
         engine._pr_finalize(agent_result)
 
         assert seen["interrupted"] is interrupted
+        trigger = engine._active_trigger()
+        expected_number = trigger.number if trigger is not None and trigger.number > 0 else None
+        assert seen["issue_number"] == expected_number
+        assert seen["repo"] == resolve_repo(engine.env, trigger)
 
     def _run(self, monkeypatch, root, *, pr=None, invoke=None):
         engine = _engine_at_root(root.parent, root)

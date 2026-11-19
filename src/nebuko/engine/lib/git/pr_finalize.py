@@ -49,11 +49,24 @@ class PrFinalizer:
     ``issue_title`` names the commit and the PR (``<title> (#N)``); when empty
     ``ensure_pr`` looks it up on GitHub, then falls back to the branch name.
     ``interrupted`` marks a gracefully timed-out run in the commit and PR body.
+    ``issue_number``, ``repo`` and ``issue_repo`` come from the engine's trigger
+    so the PR links its issue without relying on ``TARGET_NUMBER``.
     """
 
-    def __init__(self, issue_title: str = "", *, interrupted: bool = False) -> None:
+    def __init__(
+        self,
+        issue_title: str = "",
+        *,
+        interrupted: bool = False,
+        issue_number: int | None = None,
+        repo: str = "",
+        issue_repo: str = "",
+    ) -> None:
         self.issue_title = issue_title
         self.interrupted = interrupted
+        self.issue_number = issue_number
+        self.repo = repo
+        self.issue_repo = issue_repo
 
     # @stub-protected
     def finalize(self) -> PrFinalizeResult:
@@ -75,6 +88,9 @@ class PrFinalizer:
                 dry_run=False,
                 issue_title=self.issue_title,
                 interrupted=self.interrupted,
+                issue_number=self.issue_number,
+                repo=self.repo,
+                issue_repo=self.issue_repo,
             )
         except Exception as exc:  # noqa: BLE001 - never crash the host
             logger.error("pr finalize: ensure_pr crashed: %s", exc)
