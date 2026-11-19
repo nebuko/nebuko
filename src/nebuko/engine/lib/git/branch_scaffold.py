@@ -100,7 +100,8 @@ def branch_slug(title: str) -> str:
 
 def feature_branch_name(issue_number: int, title: str) -> str:
     """The dev session's branch: ``feature/issue-<n>-<slug>``."""
-    return f"feature/issue-{issue_number}-{branch_slug(title)}"
+    slug = branch_slug(title)
+    return f"feature/issue-{issue_number}-{slug}" if slug else f"feature/issue-{issue_number}"
 
 
 def issue_title_from_payload(payload: object) -> str:
