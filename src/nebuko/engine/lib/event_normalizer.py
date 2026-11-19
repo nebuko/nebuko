@@ -95,6 +95,20 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
             issue_body=issue_body,
         )
 
+    client_payload = payload.get("client_payload")
+    if client_payload is not None:
+        # repository_dispatch (ADR-0017 Lane D): the per-user repo forwards the
+        # dispatched fields; the actor is already asserted by its owner guard.
+        client_payload = client_payload or {}
+        return Trigger(
+            author=client_payload.get("actor", "") or "",
+            body=client_payload.get("prompt_body", "") or "",
+            type="repository_dispatch",
+            number=int(client_payload.get("issue_number") or 0),
+            payload=payload,
+            org_repo=str(client_payload.get("org_repo") or ""),
+        )
+
     inputs = payload.get("inputs")
     if inputs is not None:
         # workflow_call / workflow_dispatch carry their (possibly empty) inputs
@@ -154,6 +168,11 @@ def normalize_event(
         trigger_author = triggering_actor or actor
         target_number = 0
         event_type = "workflow_call"
+    elif event_name == "repository_dispatch":
+        trigger_body = prompt_body
+        trigger_author = triggering_actor or actor
+        target_number = issue_number
+        event_type = "repository_dispatch"
     else:
         print(f"Unknown event type: {event_name}", file=sys.stderr)
         sys.exit(1)

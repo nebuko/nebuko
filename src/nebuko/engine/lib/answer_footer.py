@@ -130,16 +130,17 @@ class AnswerFooter:
         current step is bold; pending steps are plain. Separator: ``" -> "``.
         """
         if not steps:
-            # Dedupe: a retried step must show once, at its first position.
-            steps = list(dict.fromkeys([entry.step for entry in state.history] + [state.step]))
-        return " -> ".join(self._render_step(state, step) for step in steps)
+            steps = [entry.step for entry in state.history] + [state.step]
+        # Repeated visits (and the current step, already in history) collapse to one entry.
+        unique_steps = dict.fromkeys(steps)
+        return " -> ".join(self._render_step(state, step) for step in unique_steps)
 
     def _render_step(self, state: WorkflowState, step: str) -> str:
+        if step == state.step:
+            return f"**{step}**"
         url = self.resolver.url_for(step) if self.resolver is not None else ""
         if url:
             return f"[{step}]({url})"
-        if step == state.step:
-            return f"**{step}**"
         return step
 
     # @stub-protected: signature defined by architect — do not modify

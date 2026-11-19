@@ -29,12 +29,18 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
     branch_scaffold,
     evidence_checkout,
     git_session,
     pr_finalize,
+)
+from nebuko.engine.lib.redaction import scan_text
+from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+    SecretScan,
 )
 from nebuko.engine.hook_runner import (
     HookPhase,
@@ -78,6 +84,7 @@ from nebuko.engine.paths import (
     LIB_DIR,
     NebukoPaths,
     repo_root,
+    secret_scan_enabled,
 )
 
 from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
@@ -586,10 +593,7 @@ def _ensure_child_identity(
     the child's comment-based recovery silently returns nothing on a missing
     value, which resets ``history`` to a single entry (issue #739).
     """
-    repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
-    if not repo and trigger is not None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        repo = payload_repo.get("full_name")
+    repo = resolve_repo(env, trigger)
     if not repo:
         raise ValueError(
             "no repository for the agent child's state recovery: set REPO_NAME or "
@@ -1161,6 +1165,8 @@ class Engine:
             self._enter(phases, "normalize")
             trigger = self.normalize()
 
+            self._require_readable_target(trigger)
+
             self._enter(phases, "resolve_config")
             resolved = self.resolve(trigger)
             self._run_resolved[_RUN_RESOLVED_KEY] = resolved
@@ -1486,6 +1492,17 @@ class Engine:
                         commit_id=finalize_result.auto_commit,
                         detail="committed work the agent left uncommitted",
                     )
+                if finalize_result.secret_findings:
+                    # A pre-push redaction is permanent for the run (#1347):
+                    # the record makes every later comment warn about it.
+                    state = self._merge_secret_scan(
+                        state, list(finalize_result.secret_findings)
+                    )
+                    if state is not None:
+                        # The comment framed below embeds the agent's own state
+                        # artifact, so the record is carried to the publish
+                        # seam explicitly.
+                        self._publish_state["secret_scan"] = state.secret_scan
                 # The pushed tip is the branch's head from here on (issue #1397).
                 state = self._record_head_sha(state)
                 if not finalize_result.ok:
@@ -2000,9 +2017,14 @@ class Engine:
         """
         error = str(failure.provider_error or "the LLM provider failed")
         from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            HarnessAuthError,
+            harness_auth_message,
             redact_secrets,
         )
 
+        if isinstance(failure, HarnessAuthError):
+            # Fixed notice, never the backend's raw text (issue #1434).
+            error = harness_auth_message(str(self.env.get("GITHUB_REPOSITORY") or ""))
         error = redact_secrets(error, self._provider_secrets())
         phase = str(failure.agent_phase or "agent")
         pushed = False
@@ -3356,21 +3378,43 @@ class Engine:
         returned as data and the caller turns it into a run error.
         """
         trigger = self._active_trigger()
-        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+        # A dispatch names its target issue by number only, so it scaffolds the
+        # same branch as a comment run once the issue is read (issue #1432).
+        targets_issue = trigger is not None and (
+            trigger.type in ("issue", "issue_comment")
+            or (trigger.type == "repository_dispatch" and trigger.number > 0)
+        )
+        if trigger is None or not targets_issue:
             # Branch mechanics only make sense for an issue-driven dev session;
-            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            # a PR-review or workflow_dispatch trigger carries no issue to scaffold for.
             result = branch_scaffold.ScaffoldResult(
                 ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            log.info(
+                "[phase:prompt] branch scaffold skipped: trigger=%s number=%s",
+                trigger.type if trigger is not None else "none",
+                trigger.number if trigger is not None else 0,
             )
             self._scaffold_state["result"] = result
             return result
         issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        title_source = "payload"
+        if not issue_title and trigger.type == "repository_dispatch":
+            # A dispatch payload carries no issue title, so the target issue is read.
+            issue_title = self._fetched_issue_title(trigger)
+            title_source = "issue"
         if not issue_title:
-            # An issue-comment trigger carries no payload title: the request
-            # body, minus the markers and the @@mention that routed it, is the
-            # only title the branch can be named after.
+            # Still no title: the request body, minus the markers and the
+            # @@mention that routed it, is the last name the branch can take.
             body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
             issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
+            title_source = "body"
+        log.info(
+            "[phase:prompt] branch scaffold decision: trigger=%s issue=#%s title_source=%s",
+            trigger.type,
+            trigger.number,
+            title_source if issue_title else "none (issue-<N> fallback)",
+        )
         scaffold = branch_scaffold.BranchScaffold(
             self._caller_root(),
             self._session_env(),
@@ -3384,6 +3428,24 @@ class Engine:
         else:
             log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
         return result
+
+    def _fetched_issue_title(self, trigger: Trigger) -> str:
+        """The target issue's title, read from GitHub; ``""`` when unreadable.
+
+        Best-effort: a dispatch payload carries no title, and a failed read
+        falls back to the request body rather than failing the scaffold.
+        """
+        repo = resolve_repo(self.env, trigger)
+        if not repo or trigger.number <= 0:
+            return ""
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the title is optional context
+            log.warning("[phase:prompt] could not read issue #%s: %s", trigger.number, exc)
+            return ""
+        return str((issue or {}).get("title") or "")
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
@@ -3419,8 +3481,22 @@ class Engine:
         interrupted = (
             self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
+        issue_number = (
+            trigger.number if trigger is not None and trigger.number > 0 else None
+        )
+        if trigger is None:
+            issue_repo = ""
+        elif trigger.type == "repository_dispatch":
+            issue_repo = trigger.org_repo
+        else:
+            repository = (trigger.payload or {}).get("repository") or {}
+            issue_repo = str(repository.get("full_name") or "")
         result = pr_finalize.PrFinalizer(
-            issue_title=issue_title, interrupted=interrupted
+            issue_title=issue_title,
+            interrupted=interrupted,
+            issue_number=issue_number,
+            repo=resolve_repo(self.env, trigger),
+            issue_repo=issue_repo,
         ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
@@ -3461,6 +3537,63 @@ class Engine:
             branch_name=result.branch,
             base_branch=str(self.env.get("NEBUKO_BASE_BRANCH") or "main"),
         )
+
+    def _secret_scan_enabled(self) -> bool:
+        """Whether the secret-scan guard is on for the caller repo (issue #1347).
+
+        Opt-in via ``features.secret_scan`` in ``.nebuko/nebuko.yaml``; a
+        missing or invalid manifest reads as disabled.
+        """
+        return secret_scan_enabled(self._caller_root())
+
+    def _scan_comment_sources(
+        self, *, answer: str, final_message: str, console_log: str
+    ) -> list[SecretFinding]:
+        """Credential matches in the text that becomes the posted comment (#1347).
+
+        Scans the sources rather than the framed body so the findings can be
+        recorded on the state (the body is redacted again at the framing seam,
+        which is what actually removes the value).
+        """
+        findings: list[SecretFinding] = []
+        for label, text in (
+            ("answer", answer),
+            ("final_message", final_message),
+            ("console_log", console_log),
+        ):
+            if not text:
+                continue
+            for finding in scan_text(text, label):
+                findings.append(finding.as_state())
+        return findings
+
+    def _merge_secret_scan(
+        self,
+        state: WorkflowState | None,
+        findings: Sequence[SecretFinding],
+        *,
+        persist: bool = True,
+    ) -> WorkflowState | None:
+        """Merge redaction findings into the persisted ``secret_scan`` record.
+
+        The record is what renders the warning on this and every later comment.
+        ``persist=False`` returns the updated state without saving it — the
+        publish seam does that, because the state it frames is not the one the
+        post-publish merge saves. Best-effort: a write hiccup must not break
+        publication.
+        """
+        if state is None or not findings:
+            return state
+        step = str(self._get(self._resolved_config(), "WORKFLOW_STEP") or "")
+        merged = (state.secret_scan or SecretScan()).merge(list(findings), at=step)
+        updated = state.model_copy(update={"secret_scan": merged})
+        if not persist:
+            return updated
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the secret scan record")
+        return updated
 
     def _record_git_action(
         self,
@@ -3554,8 +3687,7 @@ class Engine:
             url=pr_result.pr_url,
             title=os.environ.get("PR_TITLE", ""),
             author=os.environ.get("PR_AUTHOR", ""),
-            repo=os.environ.get("GITHUB_REPOSITORY", "")
-            or os.environ.get("REPO_NAME", ""),
+            repo=resolve_repo(self.env, None),
         )
         updated = state.model_copy(update={"pull_request": pr})
         try:
@@ -3618,7 +3750,7 @@ class Engine:
             url=str(issue.get("html_url") or ""),
             title=str(issue.get("title") or ""),
             author=str((issue.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _pull_request_info_from_trigger(self) -> PullRequestInfo | None:
@@ -3634,17 +3766,7 @@ class Engine:
             url=str(pull_request.get("html_url") or ""),
             title=str(pull_request.get("title") or ""),
             author=str((pull_request.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
-        )
-
-    def _payload_repo(self, payload: Mapping[str, Any]) -> str:
-        """``owner/name`` from the event payload, else the run's env."""
-        repository = payload.get("repository") or {}
-        return str(
-            repository.get("full_name")
-            or self.env.get("GITHUB_REPOSITORY")
-            or self.env.get("REPO_NAME")
-            or ""
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _artifacts(self) -> RunArtifactStager:
@@ -3979,6 +4101,32 @@ class Engine:
             ledger[0] if ledger else (),
             publish_state.history if publish_state is not None else (),
         )
+        # Comment-body secret scan (issue #1347): a comment is a public artifact
+        # and a pasted log is the likeliest leak channel, so the sources are
+        # scanned before framing. The findings are merged into the run's
+        # ``secret_scan`` record (warning + persistence), never the values.
+        # Opt-in via ``features.secret_scan`` (disabled by default).
+        scan_enabled = self._secret_scan_enabled()
+        comment_findings = (
+            self._scan_comment_sources(
+                answer=answer, final_message=final_message, console_log=console_log
+            )
+            if scan_enabled
+            else []
+        )
+        recorded_scan = self._publish_state.get("secret_scan")
+        if recorded_scan is not None and publish_state is not None:
+            publish_state = publish_state.model_copy(
+                update={"secret_scan": recorded_scan}
+            )
+        if comment_findings:
+            publish_state = self._merge_secret_scan(
+                publish_state, comment_findings, persist=False
+            )
+            # The state was persisted before publish, so the record rides
+            # ``_publish_state`` and is folded in by the post-publish merge.
+            if publish_state is not None:
+                self._publish_state["secret_scan"] = publish_state.secret_scan
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3993,6 +4141,8 @@ class Engine:
             workflow_steps=self._workflow_step_names(
                 str(getattr(publish_state, "workflow", "") or "")
             ),
+            secret_findings=comment_findings,
+            secret_scan=scan_enabled,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).
@@ -4063,6 +4213,12 @@ class Engine:
         if state is None:
             return None
         merged = self._backfill_step_output(state)
+        scan = self._publish_state.get("secret_scan")
+        if scan is not None and merged.secret_scan != scan:
+            # The comment-body scan ran after ``persist`` (issue #1347); the
+            # record must survive the merge or the next comment loses the
+            # warning and the run could re-introduce the value.
+            merged = merged.model_copy(update={"secret_scan": scan})
         if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
@@ -4239,8 +4395,20 @@ class Engine:
     # ── internals ────────────────────────────────────────────────────
 
     def _repo(self, trigger: Trigger) -> str | None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
+        return resolve_repo(self.env, trigger) or None
+
+    def _require_readable_target(self, trigger: Trigger) -> None:
+        """Abort before the agent starts when the targeted issue cannot be read.
+
+        An unreadable issue (wrong repo, missing token scope) would otherwise
+        run the agent on an empty prompt (issue #1388).
+        """
+        repo = self._repo(trigger)
+        if trigger.number:
+            log.info("[phase:normalize] target repo %s, issue #%s", repo, trigger.number)
+            loader = getattr(self.adapter, "load_raw_thread", None)
+            if loader is not None:
+                loader()
 
     def _agent_start_notice(self, trigger: Trigger) -> AgentStartNotice:
         """Build the acknowledgment for this run's agent.
@@ -5097,7 +5265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("github", "local"),
     )
     parser.add_argument("--run-dir", default=os.environ.get("ENGINE_RUN_DIR"))
-    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    parser.add_argument("--repo", default=None, help="Override the target owner/name")
     args = parser.parse_args(raw_args)
 
     from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
@@ -5114,7 +5282,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         kwargs["run_dir"] = Path(args.run_dir)
     else:
-        kwargs["repo"] = args.repo
+        repo = args.repo or resolve_repo(os.environ, None)
+        log.info(
+            "[phase:repo] target repo %s (REPO_NAME=%s, GITHUB_REPOSITORY=%s)",
+            repo or "<unresolved>",
+            os.environ.get("REPO_NAME", ""),
+            os.environ.get("GITHUB_REPOSITORY", ""),
+        )
+        kwargs["repo"] = repo
 
     adapter = build_adapter(args.adapter, **kwargs)
     from nebuko.engine.lib.config import HistoryWindowConfig

@@ -39,11 +39,11 @@ class TestManifestFields:
     def test_unknown_key_is_ignored(self):
         # A manifest written for a newer engine must not abort an older run.
         manifest = NebukoManifest.model_validate(
-            {"circuit_breaker_threshold": 15, "features": {"foo": True}}
+            {"circuit_breaker_threshold": 15, "future_setting": True}
         )
 
         assert manifest.circuit_breaker_threshold == 15
-        assert not hasattr(manifest, "features")
+        assert not hasattr(manifest, "future_setting")
 
     def test_threshold_below_one_is_rejected(self):
         with pytest.raises(ValidationError):

@@ -18,7 +18,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 # Import the Metrics schema
@@ -1264,13 +1264,21 @@ def post_comment(repo, issue_number, token, body):
 
 
 def parse_iso_datetime(value):
-    """Parse a GitHub ISO-8601 timestamp (e.g. '2024-01-01T00:00:00Z')."""
+    """Parse an ISO-8601 timestamp (e.g. '2024-01-01T00:00:00Z').
+
+    Always returns a timezone-aware datetime: agent metric ``start_time`` values
+    are written naive (UTC), and mixing them with GitHub's ``Z`` timestamps
+    would raise ``TypeError`` on comparison, so naive inputs are read as UTC.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _metric_field(metric, name, default):

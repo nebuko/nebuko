@@ -330,8 +330,13 @@ part fired its own run, issue #994).
 
 ### Step 21: Upload Logs as Artifacts (unzipped)
 
-**Input:** the staged `console.txt` and `app.txt` files under `${{ runner.temp }}/nebuko-task-logs`.  
-**Output:** two GitHub Actions artifacts named `console.txt` and `app.txt` (7-day retention).
+**Input:** the staged `console.txt`, `app.txt`, `events.jsonl` and `timings.json` files under `${{ runner.temp }}/nebuko-task-logs`.  
+**Output:** up to four GitHub Actions artifacts named after those files (7-day retention).
+
+There is one upload step per entry of `RunArtifactStager.artifact_files`;
+`tests/engine/test_artifacts.py` pins the workflow half to that manifest. The
+last three are optional — every step runs with `if-no-files-found: ignore`, so a
+file the run never staged yields no artifact instead of failing the job.
 
 Each log is uploaded as its **own unzipped artifact** via
 `actions/upload-artifact@v7` with `archive: false` (issue #779), so it can be

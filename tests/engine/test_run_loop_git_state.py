@@ -7,6 +7,8 @@ the PR it opens, and the dirty-tree auto-commit — in the persisted state's
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from nebuko.engine.lib.git import branch_scaffold, git_session, pr_finalize
@@ -45,11 +47,13 @@ def _issue_trigger(number: int = 590, title: str = "Fix it"):
     )
 
 
-def _stub_flow(monkeypatch, root, *, scaffold=None, pr=None, finalize=None, trigger=None):
+def _stub_flow(
+    monkeypatch, root, *, scaffold=None, pr=None, finalize=None, trigger=None, env=None
+):
     """A full engine.run() pass with the git machinery stubbed at the seams."""
     from nebuko.engine.run_loop import Engine
 
-    engine = _engine_at_root(root.parent, root, trigger=trigger)
+    engine = _engine_at_root(root.parent, root, trigger=trigger, env=env)
     _stub_resolved(monkeypatch, _resolved_with_hooks())
 
     def _scaffold_stub(self):
@@ -248,7 +252,9 @@ class TestPostedCommentCarriesEngineRecords:
     def test_the_comment_carries_the_branch_the_pr_and_the_issue(
         self, tmp_path, monkeypatch, root
     ):
-        engine = _stub_flow(monkeypatch, root, trigger=_issue_trigger())
+        engine = _stub_flow(
+            monkeypatch, root, trigger=_issue_trigger(), env={"GITHUB_REPOSITORY": ""}
+        )
 
         state = self._posted_state(engine)
 
@@ -262,6 +268,31 @@ class TestPostedCommentCarriesEngineRecords:
         assert state.issue.title == "Fix it"
         assert state.issue.author == "olivier-norture"
         assert state.issue.repo == "o/r"
+
+    def test_a_dispatch_targets_the_exported_repo_not_the_caller(
+        self, tmp_path, monkeypatch, root
+    ):
+        base = _issue_trigger()
+        trigger = replace(
+            base,
+            type="repository_dispatch",
+            payload={
+                **base.payload,
+                "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+                "client_payload": {"org_repo": "nebuko/nebuko", "issue_number": 590},
+            },
+        )
+        engine = _stub_flow(
+            monkeypatch,
+            root,
+            trigger=trigger,
+            env={"REPO_NAME": "nebuko/nebuko", "GITHUB_REPOSITORY": "nebuko/nebuko"},
+        )
+
+        state = self._posted_state(engine)
+
+        assert state.issue is not None
+        assert state.issue.repo == "nebuko/nebuko"
 
     def test_a_trigger_without_an_issue_payload_records_no_issue(
         self, tmp_path, monkeypatch, root
@@ -304,3 +335,86 @@ class TestGitStatePersists:
         from nebuko.engine.lib.workflow_state import WorkflowState
 
         assert WorkflowState.model_validate({"run_id": 1}).git is None
+
+
+def _dispatch_trigger(number: int = 1388, body: str = "/nebuko run workflow"):
+    """A ``repository_dispatch`` trigger: the target issue by number, no payload title."""
+    from nebuko.engine.models import Trigger
+
+    return Trigger(
+        author="olivier-norture",
+        body=body,
+        type="repository_dispatch",
+        number=number,
+        payload={
+            "client_payload": {"issue_number": number, "prompt_body": body},
+            "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+        },
+    )
+
+
+class TestDispatchScaffold:
+    """A dispatch naming an issue scaffolds the same branch as a comment run (issue #1432)."""
+
+    @pytest.fixture()
+    def scaffolded(self, monkeypatch):
+        calls: list[tuple[int, str]] = []
+
+        def _scaffold(self):
+            calls.append((self.issue_number, self.issue_title))
+            return branch_scaffold.ScaffoldResult(
+                ok=True, branch=branch_scaffold.feature_branch_name(self.issue_number, self.issue_title)
+            )
+
+        monkeypatch.setattr(branch_scaffold.BranchScaffold, "scaffold", _scaffold)
+        return calls
+
+    def _scaffold_for(self, tmp_path, root, monkeypatch, trigger, issue_title):
+        import nebuko.engine.lib.github_client as github_client
+
+        monkeypatch.setattr(
+            github_client,
+            "get_issue",
+            lambda repo, number, **kw: {"title": issue_title} if issue_title else None,
+        )
+        from nebuko.engine.run_loop import Engine
+
+        engine = _engine_at_root(
+            tmp_path,
+            root,
+            trigger=trigger,
+            env={"REPO_NAME": "nebuko/nebuko", "GITHUB_REPOSITORY": "nebuko/nebuko"},
+        )
+        monkeypatch.setattr(Engine, "_active_trigger", lambda self: trigger)
+        monkeypatch.setattr(Engine, "_caller_root", lambda self: root)
+        return engine._branch_scaffold()
+
+    def test_the_fetched_issue_title_names_the_branch(
+        self, tmp_path, monkeypatch, root, scaffolded
+    ):
+        result = self._scaffold_for(
+            tmp_path, root, monkeypatch, _dispatch_trigger(), "Lane D: dispatch branch"
+        )
+
+        assert result.ok
+        assert scaffolded == [(1388, "Lane D: dispatch branch")]
+
+    def test_the_body_names_the_branch_when_the_issue_is_unreadable(
+        self, tmp_path, monkeypatch, root, scaffolded
+    ):
+        self._scaffold_for(tmp_path, root, monkeypatch, _dispatch_trigger(), "")
+
+        assert scaffolded == [(1388, "/nebuko run workflow")]
+
+    def test_a_dispatch_without_an_issue_number_is_not_scaffolded(
+        self, tmp_path, monkeypatch, root, scaffolded
+    ):
+        result = self._scaffold_for(
+            tmp_path, root, monkeypatch, _dispatch_trigger(number=0), "Unused"
+        )
+
+        assert result.skipped
+        assert scaffolded == []
+
+    def test_an_empty_title_falls_back_to_the_issue_number(self):
+        assert branch_scaffold.feature_branch_name(1388, "") == "feature/issue-1388"

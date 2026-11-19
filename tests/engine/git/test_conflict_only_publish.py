@@ -57,6 +57,7 @@ def publish_repo(tmp_path: Path, monkeypatch) -> Path:
     _git(work, "checkout", "-q", "-b", "feature/issue-1242", "origin/main")
     _commit(work, "work.txt", "work\n", "agent work")
     monkeypatch.setenv("GFA_REPO_ROOT", str(work))
+    monkeypatch.delenv("REPO_NAME", raising=False)
     return work
 
 

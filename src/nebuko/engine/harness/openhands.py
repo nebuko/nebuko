@@ -33,6 +33,7 @@ from .base import (
     HarnessAdapter,
     HarnessCapabilities,
     HarnessEvent,
+    build_closing_prompt,
     drive_turn,
 )
 
@@ -56,24 +57,7 @@ log = logging.getLogger(__name__)
 #: (issues #830, #1033), mirroring how ``run_agent`` stows ``run_outcome``.
 FINALIZE_BODY_ATTR = "nebuko_finalize_body"
 
-FINALIZE_PROMPT = (
-    "Engine finalize turn - the work phase is over; do not call any work tool "
-    "(no terminal, read, edit, write, think, ...). Call the `finalize` tool "
-    "once. Put "
-    "your COMPLETE, self-contained report in its `report` argument - the full "
-    "deliverable that must be posted on the issue (never a one-line note) - and "
-    "your turn outcome in `turn_outcome`.\n\n"
-    "{sections}\n"
-    "Set `turn_outcome.appreciation` ('approved' when the "
-    "work meets this step's goal, 'rejected' when it does not, 'hold' only "
-    "when you are blocked and need information from a human), plus "
-    "`turn_outcome.hold_kind` = 'awaiting_input' with a hold, "
-    "`turn_outcome.agent_call` = {{agent_name, task}} when you are imperatively "
-    "naming the exact agent to run next, and "
-    "`turn_outcome.round`/`note`/`complexity`/`pin` when they apply. "
-    "Where the workflow goes next is engine topology, never your choice. "
-    "Nothing is posted if `report` is empty."
-)
+FINALIZE_PROMPT = build_closing_prompt(finalize_tool="finalize")
 
 FINALIZE_RETRY_PROMPT = (
     "Your previous finalize call carried no report, so nothing could be "

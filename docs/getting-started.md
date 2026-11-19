@@ -173,7 +173,7 @@ You'll see a sequence of comments on the issue:
 Where to look when something goes wrong:
 
 - **GHA run logs** — the run for the triggering event, job `run-task`.
-- **Run artifacts** — each run publishes `console.txt` and `app.txt` as separate unzipped artifacts (direct fetch, no unzip; the `.txt` extension renders inline in a browser).
+- **Run artifacts** — each run publishes `console.txt`, `app.txt`, `events.jsonl` and `timings.json` as separate unzipped artifacts (direct fetch, no unzip; the `.txt` extension renders inline in a browser). The last three are optional and appear only when the run staged them.
 - **Metrics** — every agent comment's `workflow_state` snapshot carries the
   per-step metrics in its `history` entries; on issue close, `agent-metrics`
   posts an aggregated table.

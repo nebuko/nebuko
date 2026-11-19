@@ -53,6 +53,7 @@ class TestTrigger:
             "number",
             "payload",
             "issue_body",
+            "org_repo",
         ]
 
     def test_issue_body_defaults_to_empty(self):

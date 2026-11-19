@@ -180,6 +180,35 @@ class ProviderFailure(Exception):  # @stub-protected
         self.requires_config_fix = requires_config_fix
 
 
+def harness_auth_message(repo: str) -> str:
+    """The fixed, actionable notice for a rejected claude-code credential (#1434).
+
+    Never built from the backend's raw text, so the token cannot leak into it.
+    """
+    target = repo or "the repository"
+    return (
+        "claude-code authentication failed (401): the CLAUDE_CODE_OAUTH_TOKEN "
+        "secret is invalid or expired. Run `claude setup-token` and update the "
+        f"secret in {target}."
+    )
+
+
+class HarnessAuthError(ProviderFailure):
+    """The claude-code backend rejected its credential (issue #1434).
+
+    A terminal provider failure: the run stops at the first refusal, with no
+    recall, no answer post and no routing. The raw backend text is not kept.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            harness_auth_message(""),
+            provider="claude-code",
+            requires_config_fix=True,
+        )
+        self.backend = "claude-code"
+
+
 def _has_token(detail: str, tokens: Iterable[str]) -> bool:
     """Whether raw text carries any of ``tokens`` (wrapper-proof)."""
     lowered = detail.lower()

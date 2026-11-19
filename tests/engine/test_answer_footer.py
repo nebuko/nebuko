@@ -179,6 +179,22 @@ class TestStepsSegment(unittest.TestCase):
         steps = AnswerFooter().render_steps(state, None)
         self.assertEqual(steps, "plan -> **spec**")
 
+    def test_current_step_in_history_is_shown_once(self):
+        """Given the history's last entry is the current step (a gated step
+        after its own turn), when rendering, then it appears once, bold."""
+        state = _state(step="plan", workflow="dev-review-loop", history=[_entry("analyze"), _entry("plan")])
+        footer = format_answer_footer(state)
+        self.assertEqual(footer.split(" | ")[1], "analyze -> **plan**")
+
+    def test_repeated_visits_collapse_to_one_linked_entry(self):
+        """Given a step visited twice, when rendering with a resolver, then it
+        appears once, linked to its latest comment."""
+        thread = [_agent_record(1, "https://x/1"), _agent_record(2, "https://x/2")]
+        history = [_entry("plan", [1]), _entry("implement"), _entry("plan", [2])]
+        state = _state(step="implement", history=history)
+        steps = AnswerFooter(StepLinkResolver(thread, history)).render_steps(state, None)
+        self.assertEqual(steps, "[plan](https://x/2) -> **implement**")
+
 
 class TestStatusResolution(unittest.TestCase):
     def test_open_circuit_breaker_wins_over_everything(self):

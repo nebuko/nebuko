@@ -12,11 +12,13 @@ daemon thread, a private event loop and a queue.
 from __future__ import annotations
 
 import asyncio
+import json
 import contextlib
 import logging
 import os
 import threading
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
@@ -27,6 +29,7 @@ from .base import (
     ClosingResult,
     HarnessCapabilities,
     HarnessEvent,
+    build_closing_prompt,
     drive_turn,
 )
 from .engine_tools import MCP_SERVER_NAME, TOOL_PREFIX, EngineToolServer, FinalizeSink
@@ -67,16 +70,7 @@ ENGINE_TOOL_NAMES = frozenset(
     }
 )
 
-CLOSING_PROMPT = (
-    "Engine finalize turn - the work phase is over; do not call any work tool. "
-    "Call the `finalize` tool once. Put your COMPLETE, self-contained report in "
-    "its `report` argument (never a one-line note) and your turn outcome in "
-    "`turn_outcome`.\n\n"
-    "{sections}\n"
-    "Set `turn_outcome.appreciation` ('approved' | 'rejected' | 'hold') and "
-    "`turn_outcome.hold_kind` = 'awaiting_input' with a hold. Where the "
-    "workflow goes next is engine topology, never your choice."
-)
+CLOSING_PROMPT = build_closing_prompt(finalize_tool=FINALIZE_TOOL)
 
 
 class _ToolPolicy:
@@ -109,6 +103,9 @@ class ClaudeCodeSession:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._callbacks: list[Callable[[HarnessEvent], None]] = []
+        # Wall-clock window of the run's SDK queries (ISO-8601, UTC).
+        self.started_at: str | None = None
+        self.finished_at: str | None = None
 
     # ── HarnessSession ───────────────────────────────────────────
     def send_message(self, text: str) -> None:
@@ -117,12 +114,15 @@ class ClaudeCodeSession:
 
     def run(self, timeout_s: float | None = None) -> None:
         self._ensure_client()
+        self.started_at = self.started_at or _utc_now()
         try:
             self._submit(self._receive(), timeout=timeout_s)
         except TimeoutError:
             log.warning("[phase:agent] claude turn exceeded its budget - interrupting")
             self.interrupt()
             raise
+        finally:
+            self.finished_at = _utc_now()
 
     def interrupt(self) -> None:
         """Stop the in-flight turn, keeping the session usable for a wind-down."""
@@ -182,13 +182,40 @@ class ClaudeCodeSession:
 
     async def _receive(self) -> None:
         """Consume one turn's messages, emitting normalised events."""
+        auth_refused = False
         async for message in self._client.receive_response():
+            auth_refused = auth_refused or _is_auth_error(message)
             for event in _events_of(message):
                 self._emit(event)
+        if auth_refused:
+            # Lazy: the runtime-only failure module is not needed to import this one.
+            from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+                HarnessAuthError,
+            )
+
+            raise HarnessAuthError()
 
     def _emit(self, event: HarnessEvent) -> None:
         for callback in self._callbacks:
             callback(event)
+
+
+#: Lower-cased fragments of a claude-code error result that mean the credential
+#: was refused (issue #1434). Matched only on ``is_error`` results.
+_AUTH_REFUSAL_MARKERS = (
+    "api error: 401",
+    "failed to authenticate",
+    "oauth access token",
+    "invalid x-api-key",
+)
+
+
+def _is_auth_error(message: Any) -> bool:
+    """True when ``message`` is an error result refusing the credential."""
+    if not getattr(message, "is_error", False):
+        return False
+    text = str(getattr(message, "result", "") or "").lower()
+    return any(marker in text for marker in _AUTH_REFUSAL_MARKERS)
 
 
 def _events_of(message: Any) -> list[HarnessEvent]:
@@ -204,13 +231,18 @@ def _events_of(message: Any) -> list[HarnessEvent]:
 
     events: list[HarnessEvent] = []
     if isinstance(message, AssistantMessage):
+        model = message.model or ""
         for block in message.content or []:
             if isinstance(block, TextBlock):
-                events.append(HarnessEvent(kind="commentary", text=block.text))
+                events.append(
+                    HarnessEvent(kind="commentary", text=block.text, data={"model": model})
+                )
             elif isinstance(block, ToolUseBlock):
                 events.append(
                     HarnessEvent(
-                        kind="action", text=block.name, data={"input": block.input}
+                        kind="action",
+                        text=block.name,
+                        data={"input": block.input, "model": model, "tool_use_id": block.id},
                     )
                 )
     elif isinstance(message, UserMessage):
@@ -222,7 +254,10 @@ def _events_of(message: Any) -> list[HarnessEvent]:
                     HarnessEvent(
                         kind="observation",
                         text=_block_text(block.content),
-                        data={"is_error": bool(block.is_error)},
+                        data={
+                            "is_error": bool(block.is_error),
+                            "tool_use_id": block.tool_use_id,
+                        },
                     )
                 )
     elif isinstance(message, ResultMessage):
@@ -230,7 +265,12 @@ def _events_of(message: Any) -> list[HarnessEvent]:
             HarnessEvent(
                 kind="error" if message.is_error else "result",
                 text=message.result or "",
-                data={"session_id": getattr(message, "session_id", "")},
+                data={
+                    "session_id": getattr(message, "session_id", ""),
+                    "usage": message.usage or {},
+                    "total_cost_usd": message.total_cost_usd or 0.0,
+                    "model_usage": message.model_usage or {},
+                },
             )
         )
     return events
@@ -258,6 +298,70 @@ class ClaudeCodeClosingChannel:
             session.set_tool_policy(None)
             sink.require_report = False
         return sink.result() or ClosingResult()
+
+
+class ClaudeCodeStats:
+    """The stats surface the metrics collector and recovery trace read.
+
+    Mirrors the OpenHands ``conversation_stats.get_combined_metrics()`` shape.
+    The SDK reports session-cumulative usage and cost on each result message,
+    so the latest result replaces the totals rather than adding to them.
+    """
+
+    def __init__(self, session: "ClaudeCodeSession") -> None:
+        self._session = session
+        self.model_name = "unknown"
+        self.accumulated_cost = 0.0
+        self.accumulated_token_usage = SimpleNamespace(
+            prompt_tokens=0,
+            completion_tokens=0,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            context_window=0,
+        )
+        self.token_usages: list[Any] = []
+        self.response_latencies: list[Any] = []
+        self.cache_hit_rate: float | None = None
+        session.on_event(self._observe)
+
+    def get_combined_metrics(self) -> "ClaudeCodeStats":
+        return self
+
+    @property
+    def started_at(self) -> str | None:
+        return self._session.started_at
+
+    @property
+    def finished_at(self) -> str | None:
+        return self._session.finished_at
+
+    def _observe(self, event: HarnessEvent) -> None:
+        model = event.data.get("model")
+        if model:
+            self.model_name = model
+        if event.kind in ("result", "error") and "usage" in event.data:
+            self._record_result(event.data)
+
+    def _record_result(self, data: dict[str, Any]) -> None:
+        # Token definition (shared with the governor's high-token-burn signal):
+        # prompt_tokens = input + cache_read + cache_creation, the OpenHands
+        # convention. The split stays on cache_read_tokens / cache_write_tokens.
+        usage = data.get("usage") or {}
+        cache_read = int(usage.get("cache_read_input_tokens") or 0)
+        cache_write = int(usage.get("cache_creation_input_tokens") or 0)
+        # Anthropic reports cache buckets apart from input_tokens; the cost
+        # model expects prompt_tokens to include them (OpenAI-style).
+        self.accumulated_token_usage = SimpleNamespace(
+            prompt_tokens=int(usage.get("input_tokens") or 0) + cache_read + cache_write,
+            completion_tokens=int(usage.get("output_tokens") or 0),
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            context_window=0,
+        )
+        self.accumulated_cost = float(data.get("total_cost_usd") or 0.0)
+        model_usage = data.get("model_usage") or {}
+        if model_usage:
+            self.model_name = next(iter(model_usage))
 
 
 class ClaudeCodeConversation:
@@ -288,10 +392,23 @@ class ClaudeCodeConversation:
         )
         self.execution_status = SimpleNamespace(value="finished")
         self.run_outcome = None
+        self.conversation_stats = ClaudeCodeStats(session)
+        self._pending_actions: dict[str, Any] = {}
         session.on_event(self._record)
 
     def _record(self, event: HarnessEvent) -> None:
-        """Mirror agent text turns into the legacy event stream."""
+        """Mirror agent text turns and tool calls into the legacy event stream.
+
+        Tool uses become ``ActionEvent``s and their results ``ObservationEvent``s,
+        the shapes ``collect_llm_metrics`` counts for ``nb_tool_calls``,
+        ``tool_calls_per_tool`` and the tool error rate.
+        """
+        if event.kind == "action":
+            self._record_action(event)
+            return
+        if event.kind == "observation":
+            self._record_observation(event)
+            return
         if event.kind not in ("commentary", "result") or not event.text:
             return
         from openhands.sdk.event import MessageEvent  # noqa: PLC0415
@@ -303,6 +420,50 @@ class ClaudeCodeConversation:
                 llm_message=Message(
                     role="assistant", content=[TextContent(text=event.text)]
                 ),
+            )
+        )
+
+    def _record_action(self, event: HarnessEvent) -> None:
+        from openhands.sdk.event.llm_convertible.action import ActionEvent  # noqa: PLC0415
+        from openhands.sdk.llm.message import MessageToolCall  # noqa: PLC0415
+
+        tool_call_id = str(event.data.get("tool_use_id") or uuid.uuid4().hex)
+        action = ActionEvent(
+            source="agent",
+            thought=[],
+            tool_name=event.text,
+            tool_call_id=tool_call_id,
+            tool_call=MessageToolCall(
+                id=tool_call_id,
+                name=event.text,
+                arguments=json.dumps(event.data.get("input") or {}, default=str),
+                origin="completion",
+            ),
+            llm_response_id=tool_call_id,
+        )
+        self._pending_actions[tool_call_id] = action
+        self.state.events.append(action)
+
+    def _record_observation(self, event: HarnessEvent) -> None:
+        from openhands.sdk.event.llm_convertible.observation import (  # noqa: PLC0415
+            ObservationEvent,
+        )
+        from openhands.sdk.mcp.definition import MCPToolObservation  # noqa: PLC0415
+
+        tool_use_id = str(event.data.get("tool_use_id") or "")
+        action = self._pending_actions.pop(tool_use_id, None)
+        tool_name = action.tool_name if action else "unknown"
+        self.state.events.append(
+            ObservationEvent(
+                source="environment",
+                tool_name=tool_name,
+                tool_call_id=tool_use_id or uuid.uuid4().hex,
+                # Generic tool-result carrier: the SDK base ``Observation`` is abstract
+                # for pydantic's discriminator; ``is_error`` is what the metrics read.
+                observation=MCPToolObservation(
+                    tool_name=tool_name, is_error=bool(event.data.get("is_error"))
+                ),
+                action_id=action.id if action else uuid.uuid4().hex,
             )
         )
 
@@ -387,6 +548,10 @@ class ClaudeCodeHarness:
 
     def make_closing_channel(self) -> ClaudeCodeClosingChannel:
         return ClaudeCodeClosingChannel()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _declared_tools(agent_cfg: Any) -> tuple[list[str], list[str]]:

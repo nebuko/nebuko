@@ -16,6 +16,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Sequence
 
+from nebuko.engine.init.claude_code_repo import (
+    DEFAULT_PIN_REF,
+    USER_REPO_NAME,
+    run_claude_code_repo,
+)
 from nebuko.engine.init.core import SecretTarget
 from nebuko.engine.init.ports import (
     InitAnswers,
@@ -128,6 +133,9 @@ class NonInteractivePrompter(InitPrompter):
 # @stub-protected
 def main(argv: Sequence[str] | None = None) -> int:
     """Collect the answers and run the setup flow; return the exit code."""
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if raw[:1] == ["claude-code-repo"]:
+        return _run_claude_code_repo(raw[1:])
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
@@ -138,6 +146,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SetupError as exc:
         print(f"nebuko init: {exc}", file=sys.stderr)
         return EXIT_ERRORS
+
+
+def _run_claude_code_repo(argv: Sequence[str]) -> int:
+    """``nebuko init claude-code-repo``: the per-user Lane D credential repo (ADR-0017)."""
+    parser = argparse.ArgumentParser(
+        prog="nebuko init claude-code-repo",
+        description=f"Create a private {USER_REPO_NAME} repo with your Claude Code token and workflow.",
+    )
+    parser.add_argument(
+        "--pin-ref",
+        dest="pin_ref",
+        default=DEFAULT_PIN_REF,
+        help=f"nebuko ref whose commit SHA the workflow pins (default: {DEFAULT_PIN_REF})",
+    )
+    args = parser.parse_args(list(argv))
+    print(WORDMARK)
+    code, message = run_claude_code_repo(args.pin_ref)
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
 
 
 def _run(args: argparse.Namespace) -> int:

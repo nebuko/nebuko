@@ -1,0 +1,30 @@
+# gitleaks configuration (issue #1347).
+#
+# The engine scans unpublished commits (`gitleaks git --log-opts
+# origin/<branch>..HEAD`) before pushing and scans comment bodies before
+# posting. Both use this file, so the allowlist here is the single place that
+# keeps known fake fixtures out of the way.
+#
+# Only *added* lines are scanned (gitleaks' default for `git`), and the
+# allowlist below is deliberately narrow: a path or regex that is not a
+# documented fixture must not be allowlisted.
+
+title = "nebuko"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known fake credentials used by the engine's own tests"
+paths = [
+  # Test fixtures: fake-but-pattern-matching tokens that must never be treated
+  # as a leak (they are the input of the redaction tests themselves).
+  '''tests/.*/fixtures/.*''',
+  '''tests/engine/test_secret_scan.*\.py''',
+  '''src/nebuko/engine/lib/redaction/test_.*\.py''',
+  '''src/nebuko/engine/lib/workflow_state/sub_domains/secret_scan/test_.*\.py''',
+]
+regexes = [
+  # Documentation placeholders, never real credentials.
+  '''<REDACTED:[a-z-]+>''',
+]
