@@ -462,6 +462,8 @@ def _run_harness_agent(
         )
     elif error is not None:
         conversation.execution_status = SimpleNamespace(value="error")
+        if isinstance(error, ProviderFailure):
+            raise error
         failure = classify_failure(error)
         _raise_if_provider_failure(failure, llm_config or {})
         outcome = RunOutcome(status=OutcomeStatus.FAILURE, failure=failure)
