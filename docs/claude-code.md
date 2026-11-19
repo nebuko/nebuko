@@ -144,6 +144,18 @@ unchanged; the warning only makes a parked finished step visible.
   install is needed — `uv sync --extra runtime` is enough.
 - The live `claude` smoke test is opt-in (`NEBUKO_LIVE_CLAUDE=1`) and never
   runs in CI.
+- Metrics parity with OpenHands:
+  - `input_tokens` is the total prompt side, `input + cache_read + cache_creation`,
+    matching OpenHands where prompt tokens include cached ones. The governor's
+    `high-token-burn` threshold reads this value. The raw split is kept in
+    `cache_hit_tokens` (cache reads) and the cache-write field.
+  - Each Claude Code `tool_use` is recorded as an action and its `tool_result` as
+    an observation, so `nb_tool_calls`, `tool_calls_per_tool` and the tool error
+    rate are counted the same way as for OpenHands. The governor's `large-scope`
+    threshold therefore fires for this backend.
+  - The analyze/finalize summary is the agent's final text, truncated to 300
+    characters, as on OpenHands. Neither backend has a separate summary field, so
+    the engine does not fill a default. A bare summary means the agent gave none.
 
 ## Self-hosted runners
 

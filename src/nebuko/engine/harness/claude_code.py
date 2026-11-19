@@ -12,6 +12,7 @@ daemon thread, a private event loop and a queue.
 from __future__ import annotations
 
 import asyncio
+import json
 import contextlib
 import logging
 import os
@@ -241,7 +242,7 @@ def _events_of(message: Any) -> list[HarnessEvent]:
                     HarnessEvent(
                         kind="action",
                         text=block.name,
-                        data={"input": block.input, "model": model},
+                        data={"input": block.input, "model": model, "tool_use_id": block.id},
                     )
                 )
     elif isinstance(message, UserMessage):
@@ -253,7 +254,10 @@ def _events_of(message: Any) -> list[HarnessEvent]:
                     HarnessEvent(
                         kind="observation",
                         text=_block_text(block.content),
-                        data={"is_error": bool(block.is_error)},
+                        data={
+                            "is_error": bool(block.is_error),
+                            "tool_use_id": block.tool_use_id,
+                        },
                     )
                 )
     elif isinstance(message, ResultMessage):
@@ -339,6 +343,9 @@ class ClaudeCodeStats:
             self._record_result(event.data)
 
     def _record_result(self, data: dict[str, Any]) -> None:
+        # Token definition (shared with the governor's high-token-burn signal):
+        # prompt_tokens = input + cache_read + cache_creation, the OpenHands
+        # convention. The split stays on cache_read_tokens / cache_write_tokens.
         usage = data.get("usage") or {}
         cache_read = int(usage.get("cache_read_input_tokens") or 0)
         cache_write = int(usage.get("cache_creation_input_tokens") or 0)
@@ -386,10 +393,22 @@ class ClaudeCodeConversation:
         self.execution_status = SimpleNamespace(value="finished")
         self.run_outcome = None
         self.conversation_stats = ClaudeCodeStats(session)
+        self._pending_actions: dict[str, Any] = {}
         session.on_event(self._record)
 
     def _record(self, event: HarnessEvent) -> None:
-        """Mirror agent text turns into the legacy event stream."""
+        """Mirror agent text turns and tool calls into the legacy event stream.
+
+        Tool uses become ``ActionEvent``s and their results ``ObservationEvent``s,
+        the shapes ``collect_llm_metrics`` counts for ``nb_tool_calls``,
+        ``tool_calls_per_tool`` and the tool error rate.
+        """
+        if event.kind == "action":
+            self._record_action(event)
+            return
+        if event.kind == "observation":
+            self._record_observation(event)
+            return
         if event.kind not in ("commentary", "result") or not event.text:
             return
         from openhands.sdk.event import MessageEvent  # noqa: PLC0415
@@ -401,6 +420,50 @@ class ClaudeCodeConversation:
                 llm_message=Message(
                     role="assistant", content=[TextContent(text=event.text)]
                 ),
+            )
+        )
+
+    def _record_action(self, event: HarnessEvent) -> None:
+        from openhands.sdk.event.llm_convertible.action import ActionEvent  # noqa: PLC0415
+        from openhands.sdk.llm.message import MessageToolCall  # noqa: PLC0415
+
+        tool_call_id = str(event.data.get("tool_use_id") or uuid.uuid4().hex)
+        action = ActionEvent(
+            source="agent",
+            thought=[],
+            tool_name=event.text,
+            tool_call_id=tool_call_id,
+            tool_call=MessageToolCall(
+                id=tool_call_id,
+                name=event.text,
+                arguments=json.dumps(event.data.get("input") or {}, default=str),
+                origin="completion",
+            ),
+            llm_response_id=tool_call_id,
+        )
+        self._pending_actions[tool_call_id] = action
+        self.state.events.append(action)
+
+    def _record_observation(self, event: HarnessEvent) -> None:
+        from openhands.sdk.event.llm_convertible.observation import (  # noqa: PLC0415
+            ObservationEvent,
+        )
+        from openhands.sdk.mcp.definition import MCPToolObservation  # noqa: PLC0415
+
+        tool_use_id = str(event.data.get("tool_use_id") or "")
+        action = self._pending_actions.pop(tool_use_id, None)
+        tool_name = action.tool_name if action else "unknown"
+        self.state.events.append(
+            ObservationEvent(
+                source="environment",
+                tool_name=tool_name,
+                tool_call_id=tool_use_id or uuid.uuid4().hex,
+                # Generic tool-result carrier: the SDK base ``Observation`` is abstract
+                # for pydantic's discriminator; ``is_error`` is what the metrics read.
+                observation=MCPToolObservation(
+                    tool_name=tool_name, is_error=bool(event.data.get("is_error"))
+                ),
+                action_id=action.id if action else uuid.uuid4().hex,
             )
         )
 
