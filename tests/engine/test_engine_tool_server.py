@@ -68,6 +68,31 @@ def test_engine_tool_server_finalize_error_is_returned_to_the_agent():
     assert "finalize rejected" in result["content"][0]["text"]
 
 
+def _walk(node):
+    yield node
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk(value)
+
+
+def test_engine_tool_specs_have_no_unresolved_refs():
+    for name, _description, schema in EngineToolServer.tool_specs():
+        for node in _walk(schema):
+            if isinstance(node, dict):
+                assert "$defs" not in node, name
+                assert "$ref" not in node, name
+
+
+def test_finalize_spec_exposes_agent_call_inline():
+    finalize = next(s for s in EngineToolServer.tool_specs() if s[0] == "finalize")
+    turn_outcome = finalize[2]["properties"]["turn_outcome"]
+    agent_call = turn_outcome["properties"]["agent_call"]
+    assert "agent_name" in agent_call["anyOf"][0]["properties"]
+
+
 def test_engine_tool_server_as_sdk_server_returns_server():
     pytest.importorskip("claude_agent_sdk")
     server = _server(_sink()).as_sdk_server()

@@ -53,6 +53,26 @@ Then comment `/nebuko run workflow --name default` on an issue.
 > alternatives and the compliance rules are in
 > [ADR-0017](./adr/0017-claude-code-subscription-credential-strategies.md).
 
+## Per-user credential repo (`nebuko init claude-code-repo`)
+
+To keep your subscription token out of a shared repository, run the setup
+command from a terminal where `gh` is logged in as the account that owns the
+runs:
+
+```bash
+nebuko init claude-code-repo               # --pin-ref <ref> (default: main)
+```
+
+It creates a private `<your-login>/nebuko-claude-code` repository, asks for
+your `claude setup-token` value and stores it only as that repo's
+`CLAUDE_CODE_OAUTH_TOKEN` secret (piped to `gh secret set`; Nebuko never stores
+or logs it), writes a thin workflow pinned to the reusable workflow's commit
+SHA, and prints the GitHub App installation link to finish the setup.
+
+The generated workflow refuses to run unless the triggering actor is the
+repository owner, so only you can start a run in that repo. An existing repo is
+refused before anything is written; a missing token creates nothing.
+
 ## Per-role switch
 
 ```yaml
@@ -123,3 +143,21 @@ instead of a GitHub secret (ADR-0017's Lane R), is **not implemented yet** —
 `nebuko init anthropic-local-runner` is tracked as a follow-up (#1393). Until
 then use the hosted path above, or a normal `runs_on: "self-hosted"` runner that
 exports `CLAUDE_CODE_OAUTH_TOKEN` in its own environment.
+
+## Runner strategy (`runner_strategy`)
+
+The reusable workflow's `runner_strategy` input picks where jobs run:
+
+- `static` (default): jobs run on `runs_on`.
+- `per-user`: jobs run on a runner labelled `nebuko-<event author login>`, so
+  each user's Claude Code token stays in that user's runner environment.
+
+The workflow refuses these combinations with an error:
+
+- `per-user` together with the shared `CLAUDE_CODE_OAUTH_TOKEN` secret.
+- `per-user` with a static `runs_on` starting with `nebuko-`.
+- The claude-code backend (a `CLAUDE_CODE_OAUTH_TOKEN` is passed) for bot,
+  schedule or actor-less events. Use the API-key lane for those runs.
+
+Credentials reach steps through `env`, never through `with:` inputs (ADR-0008).
+A caller-provided `GH_PAT` is used directly and skips the OIDC token broker.

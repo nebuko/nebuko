@@ -324,6 +324,62 @@ class TestBuildStateScaffoldBranch(unittest.TestCase):
         self.assertIsNone(state.scaffold_branch)
 
 
+class TestBuildStateAgentConfig(unittest.TestCase):
+    """Per-run agent config selection persists across transitions (issue #1389)."""
+
+    def test_initial_state_has_no_agent_config(self):
+        state = build_state(None, workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(state.agent_config)
+
+    def test_build_state_records_agent_config(self):
+        state = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            agent_config="agent-config-anthropic.yaml",
+        )
+        self.assertEqual(state.agent_config, "agent-config-anthropic.yaml")
+
+    def test_agent_config_persists_when_not_repeated(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            agent_config="agent-config-anthropic.yaml",
+        )
+        next_state = build_state(prev, workflow="default", step="plan", agent="architect")
+        self.assertEqual(next_state.agent_config, "agent-config-anthropic.yaml")
+
+    def test_explicit_agent_config_overrides_persisted_one(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            agent_config="agent-config-anthropic.yaml",
+        )
+        next_state = build_state(
+            prev,
+            workflow="default",
+            step="plan",
+            agent="architect",
+            agent_config="agent-config-mistral.yaml",
+        )
+        self.assertEqual(next_state.agent_config, "agent-config-mistral.yaml")
+
+    def test_go_next_threads_agent_config(self):
+        state = go_next(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            agent_config="agent-config-anthropic.yaml",
+        )
+        self.assertEqual(state.agent_config, "agent-config-anthropic.yaml")
+
+
 class TestHistoryEntryTurnOutcome(unittest.TestCase):
     """History entries record the factual turn outcome of their step (issue #964).
 

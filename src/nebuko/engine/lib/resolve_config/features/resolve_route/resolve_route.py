@@ -676,7 +676,9 @@ def _gate_hold_rejection_reason(
 
     Fail-closed: a missing state, a step not held at a gate, an unauthorized
     author, or a hold that already carries a decision (single-shot replay) all
-    yield a reason and the command becomes inert.
+    yield a reason and the command becomes inert. A decision binds one hold
+    instance only (issue #1294): a later hold at the same step — a loop back
+    into the gated step — accepts a fresh decision.
     """
     if prev_state is None:
         return "gate: no prior workflow state found"
@@ -689,11 +691,75 @@ def _gate_hold_rejection_reason(
         )
     position = list(prev_state.position or [])
     if any(
-        decision.is_for(prev_state.workflow, prev_state.step, position)
+        _decision_binds_current_hold(decision, prev_state, position)
         for decision in (prev_state.gate_history or [])
     ):
         return "gate: this hold already has a recorded decision (single-shot)"
     return None
+
+
+def _decision_binds_current_hold(
+    decision: GateDecision,
+    prev_state: "WorkflowState",
+    position: list[StepRef],
+) -> bool:
+    """True iff ``decision`` was recorded for the hold now blocking the step.
+
+    ``GateDecision.is_for`` matches every hold at a step in a loop, so it is
+    not enough on its own (issue #1294). A hold begins when the gated step's
+    latest run completes (``apply_gate_lock`` arms the lock there), and GitHub
+    comment ids are monotonic, so a decision recorded *before* that run's
+    output comments belongs to an earlier hold instance. Without comparable
+    ids (legacy state, or CI did not forward the deciding comment id) fall
+    back to counting hold instances, which fails closed on a replay.
+    """
+    if not decision.is_for(prev_state.workflow, prev_state.step, position):
+        return False
+    hold_start = _hold_start_comment_id(prev_state, position)
+    if hold_start is not None and decision.comment_id is not None:
+        return decision.comment_id > hold_start
+    return _decisions_for_hold(prev_state, position) >= _hold_completions(
+        prev_state, position
+    )
+
+
+def _hold_start_comment_id(
+    prev_state: "WorkflowState", position: list[StepRef]
+) -> Optional[int]:
+    """Highest comment id of the run that began the current hold, if known."""
+    for entry in reversed(prev_state.history or []):
+        if entry.step != prev_state.step or list(entry.position or []) != position:
+            continue
+        return max(entry.comment_ids) if entry.comment_ids else None
+    return None
+
+
+def _decisions_for_hold(
+    prev_state: "WorkflowState", position: list[StepRef]
+) -> int:
+    """Recorded decisions targeting this (workflow, step, position)."""
+    return sum(
+        1
+        for decision in (prev_state.gate_history or [])
+        if decision.is_for(prev_state.workflow, prev_state.step, position)
+    )
+
+
+def _hold_completions(prev_state: "WorkflowState", position: list[StepRef]) -> int:
+    """Runs of the gated step at this position — one hold instance each.
+
+    Legacy history entries may carry no position, so fall back to matching the
+    step alone rather than reporting zero holds (which would read as decided).
+    """
+    entries = [
+        entry
+        for entry in (prev_state.history or [])
+        if entry.step == prev_state.step
+    ]
+    at_position = [
+        entry for entry in entries if list(entry.position or []) == position
+    ]
+    return len(at_position) or len(entries)
 
 
 def _build_gate_decision(
@@ -2160,6 +2226,80 @@ def _default_workflow_name() -> str:
     except Exception as e:  # noqa: BLE001 - routing must not crash on a bad manifest
         print(f"Warning: unreadable .nebuko/nebuko.yaml ({e}); using default", file=sys.stderr)
     return "default"
+
+
+def _agent_config_param(wf_cmd: Optional[WorkflowCommand]) -> Optional[str]:
+    """The ``--config`` value of a ``/nebuko run workflow`` command (issue #1389).
+
+    Returns ``None`` when the command is not a ``run`` or carries no flag; the
+    grammar already rejects a bare ``--config`` as a command attempt.
+    """
+    if wf_cmd is None or wf_cmd.action != "run":
+        return None
+    value = (wf_cmd.params.get("config") or "").strip()
+    return value or None
+
+
+def _agent_config_roots(caller_root: Optional[Path]) -> tuple[Path, Path]:
+    """The two agent-config search roots, most specific first.
+
+    ``.nebuko/agents`` is the caller's own override layer (anchored at the
+    caller workspace, not the engine checkout — issue #930);
+    ``defaults/agents`` is the tree shipped with Nebuko.
+    """
+    from nebuko.engine.lib.default_paths import checkout_root
+
+    root = caller_root if caller_root is not None else Path.cwd()
+    return root / ".nebuko" / "agents", checkout_root() / "defaults" / "agents"
+
+
+def _resolve_agent_config_value(
+    value: str, caller_root: Optional[Path] = None
+) -> Optional[str]:
+    """Resolve a ``--config`` value to an existing agent-config file (issue #1389).
+
+    A bare file name is looked up through the layered precedence
+    ``.nebuko/agents`` → ``defaults/agents``; a value containing a path
+    separator is caller-workspace-relative (the same anchor
+    ``ConfigPathAnchor.resolve`` applies to ``AGENT_CONFIG_PATH``).
+
+    Returns:
+        The absolute path of the matching file, or ``None`` when no root holds
+        it (the caller turns that into a usage reply listing the available
+        configs).
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    separators = {os.sep, "/"}
+    if os.altsep:
+        separators.add(os.altsep)
+    if os.path.isabs(raw) or any(sep in raw for sep in separators):
+        candidate = Path(raw) if os.path.isabs(raw) else (caller_root or Path.cwd()) / raw
+        return str(candidate) if candidate.is_file() else None
+    for root in _agent_config_roots(caller_root):
+        candidate = root / raw
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _available_agent_configs(caller_root: Optional[Path] = None) -> list[str]:
+    """File names of every agent config reachable from the two search roots.
+
+    Used by the unknown-value usage reply so a human sees the valid choices
+    (issue #1389). Sorted and de-duplicated across layers.
+    """
+    names: set[str] = set()
+    for root in _agent_config_roots(caller_root):
+        if not root.is_dir():
+            continue
+        names.update(
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_file() and entry.suffix in (".yaml", ".yml")
+        )
+    return sorted(names)
 
 
 def _resolve_human_path(

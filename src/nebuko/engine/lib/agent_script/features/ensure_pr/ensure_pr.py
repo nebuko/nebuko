@@ -49,6 +49,7 @@ from nebuko.engine.lib.github_client import GitHubTransport, ensure_bot_marker
 from openhands.sdk import get_logger
 
 from nebuko.engine.lib.git.git_session import git_identity_args
+from nebuko.engine.lib.repo_resolution import resolve_repo
 
 logger = get_logger(__name__)
 
@@ -731,12 +732,22 @@ def _fetch_pr_body(
         return ""
 
 
-def _append_closes_line(body: str, issue_number: int) -> str:
+def _closing_ref(issue_number: int, pr_repo: str, issue_repo: str) -> str:
+    """``Closes #N`` for an issue in the PR's repo, ``Closes owner/repo#N``
+    when the issue lives elsewhere."""
+    if issue_repo and issue_repo != pr_repo:
+        return f"Closes {issue_repo}#{issue_number}"
+    return f"Closes #{issue_number}"
+
+
+def _append_closes_line(
+    body: str, issue_number: int, *, pr_repo: str = "", issue_repo: str = ""
+) -> str:
     """Append ``Closes #<issue_number>`` unless a closing reference already
     exists; never removes existing content."""
     if _CLOSING_RE.search(body):
         return body
-    link = f"Closes #{issue_number}"
+    link = _closing_ref(issue_number, pr_repo, issue_repo)
     if body and not body.endswith("\n"):
         body += "\n"
     return f"{body}\n{link}" if body else link
@@ -747,6 +758,7 @@ def ensure_issue_link(
     issue_number: Optional[int],
     *,
     repo: str = "",
+    issue_repo: str = "",
     transport: Optional[GitHubTransport] = None,
 ) -> bool:
     """Idempotently ensure the PR body carries a closing reference to the issue.
@@ -767,7 +779,9 @@ def ensure_issue_link(
             return False
         if _CLOSING_RE.search(body):
             return True
-        new_body = _append_closes_line(body, issue_number)
+        new_body = _append_closes_line(
+            body, issue_number, pr_repo=repo, issue_repo=issue_repo
+        )
         _run_gh(
             ["pr", "edit", pr_number, "--repo", repo, "--body", new_body],
             transport=transport,
@@ -789,6 +803,7 @@ def _open_pr(
     *,
     interrupted: bool = False,
     patch_path: str = "",
+    issue_repo: str = "",
     transport: Optional[GitHubTransport] = None,
 ) -> str:
     if interrupted:
@@ -809,7 +824,7 @@ def _open_pr(
         ]
     if issue_number:
         body_lines.append("")
-        body_lines.append(f"Closes #{issue_number}")
+        body_lines.append(_closing_ref(issue_number, repo, issue_repo))
     args = [
         "pr",
         "create",
@@ -893,9 +908,9 @@ def _post_patch_comment(
     refuses the write. The caller must then keep the tree dirty rather than
     discard the only copy of the work.
     """
-    repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    repo = resolve_repo(os.environ, None).strip()
     if not repo:
-        logger.warning("ensure_pr: GITHUB_REPOSITORY unset — cannot post the patch")
+        logger.warning("ensure_pr: REPO_NAME/GITHUB_REPOSITORY unset — cannot post the patch")
         return ""
     target: Optional[int] = None
     if pr_url:
@@ -995,7 +1010,12 @@ def _stage_patch_commit_file(diff: str) -> str:
 
 
 def _ensure_pr_impl(
-    dry_run: bool, issue_title: str = "", interrupted: bool = False
+    dry_run: bool,
+    issue_title: str = "",
+    interrupted: bool = False,
+    issue_number: Optional[int] = None,
+    repo: str = "",
+    issue_repo: str = "",
 ) -> EnsurePrResult:
     """The real ``ensure_pr`` body (wrapped by the public entry point)."""
     # One transport for the whole flow so the PR lookup, the PR creation and
@@ -1133,20 +1153,25 @@ def _ensure_pr_impl(
 
     existing = _find_pr_for_branch(branch, transport=transport)
     pr_url = existing or ""
-    # Resolved lazily: paths that never link (no PR URL) must not fail on a
-    # missing remote.
-    repo = _run_git(["remote", "get-url", remote]) if pr_url else ""
-    issue_number = _issue_number_from_env()
+    # The engine's own issue number and repo win; the env is the fallback.
+    # Resolved lazily: paths that never link (no PR and nothing to open) must
+    # not fail on a missing remote.
+    issue_number = issue_number or _issue_number_from_env()
+    if not repo and (pr_url or not no_push):
+        repo = _run_git(["remote", "get-url", remote])
     if not pr_url and not no_push:
         title = pr_title(issue_number, issue_title) or branch
+        # The PR goes to the target repo, not the checkout's remote (a dispatch
+        # session's checkout may point at the per-user repo, issue #1432).
         pr_url = _open_pr(
-            repo,
+            resolve_repo(os.environ, None).strip(),
             branch,
             base,
             title,
             issue_number,
             interrupted=interrupted,
             patch_path=patch_commit_path,
+            issue_repo=issue_repo,
             transport=transport,
         )
         logger.info(f"ensure_pr: opened PR {pr_url}")
@@ -1156,7 +1181,9 @@ def _ensure_pr_impl(
         logger.info(f"ensure_pr: PR already exists for '{branch}': {existing}")
 
     if pr_url:
-        ensure_issue_link(pr_url, issue_number, repo=repo, transport=transport)
+        ensure_issue_link(
+            pr_url, issue_number, repo=repo, issue_repo=issue_repo, transport=transport
+        )
 
     if pushed:
         _report_base_conflict(
@@ -1231,7 +1258,13 @@ def pr_title(issue_number: Optional[int], issue_title: str) -> str:
 
 
 def ensure_pr(
-    dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
+    dry_run: bool = False,
+    *,
+    issue_title: str = "",
+    interrupted: bool = False,
+    issue_number: Optional[int] = None,
+    repo: str = "",
+    issue_repo: str = "",
 ) -> EnsurePrResult:
     """Commit/push/open a PR for the current branch — idempotent.
 
@@ -1252,12 +1285,24 @@ def ensure_pr(
             commit message and the PR title. Looked up on GitHub when empty.
         interrupted: True when the agent run was cut short (graceful
             timeout); only the commit message and PR body change.
+        issue_number: The triggering issue number, from the engine's trigger.
+            Falls back to ``TARGET_NUMBER`` when omitted.
+        repo: ``owner/name`` the PR is opened in. Falls back to the git remote.
+        issue_repo: ``owner/name`` the issue lives in; ``Closes owner/repo#N``
+            is written when it differs from ``repo``.
 
     Returns:
         EnsurePrResult describing what happened.
     """
     try:
-        return _ensure_pr_impl(dry_run, issue_title, interrupted)
+        return _ensure_pr_impl(
+            dry_run,
+            issue_title,
+            interrupted,
+            issue_number=issue_number,
+            repo=repo,
+            issue_repo=issue_repo,
+        )
     except Exception as e:
         detail = format_failure_detail(e)
         logger.exception("ensure_pr failed: %s", detail)

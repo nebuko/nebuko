@@ -181,3 +181,49 @@ class TestNormalizeTriggerIssueBody:
         )
 
         assert trigger.issue_body == ""
+
+
+class TestRepositoryDispatch:
+    """The per-user repo's repository_dispatch payload (ADR-0017 Lane D)."""
+
+    def test_client_payload_maps_actor_body_and_issue(self):
+        trigger = normalize_trigger(
+            {
+                "action": "nebuko-run",
+                "client_payload": {
+                    "actor": "alice",
+                    "org_repo": "acme/app",
+                    "issue_number": 1388,
+                    "prompt_body": "@@dev do it",
+                    "gh_token": "ghp_x",
+                },
+            }
+        )
+
+        assert (trigger.author, trigger.body, trigger.number) == ("alice", "@@dev do it", 1388)
+        assert trigger.type == "repository_dispatch"
+        assert trigger.org_repo == "acme/app"
+
+    def test_missing_issue_number_defaults_to_zero(self):
+        trigger = normalize_trigger({"client_payload": {"actor": "alice", "prompt_body": "x"}})
+
+        assert trigger.number == 0
+
+    def test_normalize_event_accepts_repository_dispatch(self):
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump({"action": "nebuko-run", "client_payload": {}}, f)
+        f.close()
+        path = f.name
+        try:
+            result = normalize_event(
+                path, "repository_dispatch", issue_number=7, prompt_body="hi", actor="bob"
+            )
+        finally:
+            os.unlink(path)
+
+        assert result == {
+            "TARGET_NUMBER": "7",
+            "TRIGGER_BODY": "hi",
+            "TRIGGER_AUTHOR": "bob",
+            "EVENT_TYPE": "repository_dispatch",
+        }

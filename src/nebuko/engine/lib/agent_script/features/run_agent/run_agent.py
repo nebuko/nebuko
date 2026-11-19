@@ -11,14 +11,18 @@ import asyncio
 import dataclasses
 import json
 import os
+import subprocess
 import uuid
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from openhands.sdk import Agent, Conversation, LLM, get_logger
 from openhands.sdk.context import AgentContext
 from openhands.sdk.conversation import get_agent_final_response
 from openhands.sdk.mcp import MCPServer
+
+if TYPE_CHECKING:
+    from nebuko.engine.harness.credentials import ContinuationContext
 
 from nebuko.engine.agent_runner import EngineAgentUnavailable
 from nebuko.engine.harness.mcp import build_mcp_servers as _build_mcp_servers
@@ -72,6 +76,7 @@ from nebuko.engine.lib.agent_script.sub_domains.metrics.token_telemetry_collecto
     install,
     maybe_register_langfuse,
 )
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.resolve_config.features.skill_context.skill_context import (
     skill_context_from_env,
 )
@@ -457,6 +462,8 @@ def _run_harness_agent(
         )
     elif error is not None:
         conversation.execution_status = SimpleNamespace(value="error")
+        if isinstance(error, ProviderFailure):
+            raise error
         failure = classify_failure(error)
         _raise_if_provider_failure(failure, llm_config or {})
         outcome = RunOutcome(status=OutcomeStatus.FAILURE, failure=failure)
@@ -554,7 +561,69 @@ def _harness_system_prompt(role_name: str) -> str:
     return f"{_SYSTEM_PROMPT}\n\n{context}" if context else _SYSTEM_PROMPT
 
 
-def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None) -> None:
+_CALLER_PERMISSIONS_AUTHORIZED = frozenset({"admin", "maintain", "write"})
+
+
+def _previous_started_by() -> str | None:
+    """``started_by`` of the persisted WORKFLOW_STATE, or None when unreadable."""
+    from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
+
+    try:
+        state = WorkflowStateCodec().load_prev().state
+    except Exception:  # noqa: BLE001 - an unreadable state is "no human-started workflow"
+        return None
+    return getattr(state, "started_by", None) or None
+
+
+def _caller_association(login: str) -> str | None:
+    """Map a login's repository permission onto a CALLER_AUTH association.
+
+    ``None`` on any lookup failure, which the continuation rule refuses.
+    """
+    repo = resolve_repo(os.environ, None).strip()
+    if not repo or not login:
+        return None
+    try:
+        permission = subprocess.run(
+            ["gh", "api", f"repos/{repo}/collaborators/{login}/permission", "--jq", ".permission"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return "COLLABORATOR" if permission in _CALLER_PERMISSIONS_AUTHORIZED else None
+
+
+def _continuation_from_env() -> "ContinuationContext | None":
+    """The bot-trigger facts behind this run, or None for a human-triggered run."""
+    from nebuko.engine.harness.credentials import ContinuationContext, is_bot_actor  # noqa: PLC0415
+
+    login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
+    actor_type = (os.environ.get("TRIGGER_AUTHOR_TYPE") or "").strip()
+    if not is_bot_actor(login, actor_type):
+        return None
+    try:
+        parsed = json.loads(os.environ.get("TRUSTED_BOTS") or '["nebuko[bot]"]')
+    except ValueError:
+        parsed = []
+    trusted = tuple(str(item) for item in parsed) if isinstance(parsed, list) else ()
+    return ContinuationContext(
+        trigger_login=login,
+        trigger_type=actor_type,
+        trusted_bots=trusted,
+        comment_header=os.environ.get("TRIGGER_COMMENT_HEADER") or "",
+        started_by=_previous_started_by(),
+        credential_owner=(os.environ.get("CLAUDE_CREDENTIAL_OWNER") or "").strip() or None,
+    )
+
+
+def _enforce_harness_credentials(
+    agent_cfg: Any,
+    llm_config: dict | None = None,
+    continuation: "ContinuationContext | None" = None,
+) -> None:
     """Refuse a backend/credential pairing the linter would reject (ADR 0017).
 
     An Anthropic subscription token (``CLAUDE_CODE_OAUTH_TOKEN``) or a
@@ -570,6 +639,7 @@ def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None)
     if agent_cfg is None:
         return
     from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        CLAUDE_CODE_BACKEND,
         enforce_backend_credentials,
         is_subscription_token,
     )
@@ -603,6 +673,20 @@ def _enforce_harness_credentials(agent_cfg: Any, llm_config: dict | None = None)
             ),
             subscription_token,
         )
+
+    if backend == CLAUDE_CODE_BACKEND or subscription_token is not None:
+        # ADR 0017 / #1424: a bot-triggered run may spend the subscription only
+        # as a continuation of a human-started, still-authorized workflow.
+        ctx = continuation if continuation is not None else _continuation_from_env()
+        if ctx is not None:
+            from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+                ClaudeCredentialError,
+                authorize_bot_continuation,
+            )
+
+            decision = authorize_bot_continuation(ctx, _caller_association)
+            if not decision.allowed:
+                raise ClaudeCredentialError(decision.refusal_message())
 
 
 def run_agent(

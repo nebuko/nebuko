@@ -29,6 +29,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
     branch_scaffold,
@@ -592,10 +593,7 @@ def _ensure_child_identity(
     the child's comment-based recovery silently returns nothing on a missing
     value, which resets ``history`` to a single entry (issue #739).
     """
-    repo = env.get("REPO_NAME") or env.get("GITHUB_REPOSITORY")
-    if not repo and trigger is not None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        repo = payload_repo.get("full_name")
+    repo = resolve_repo(env, trigger)
     if not repo:
         raise ValueError(
             "no repository for the agent child's state recovery: set REPO_NAME or "
@@ -1166,6 +1164,8 @@ class Engine:
         try:
             self._enter(phases, "normalize")
             trigger = self.normalize()
+
+            self._require_readable_target(trigger)
 
             self._enter(phases, "resolve_config")
             resolved = self.resolve(trigger)
@@ -2017,9 +2017,14 @@ class Engine:
         """
         error = str(failure.provider_error or "the LLM provider failed")
         from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            HarnessAuthError,
+            harness_auth_message,
             redact_secrets,
         )
 
+        if isinstance(failure, HarnessAuthError):
+            # Fixed notice, never the backend's raw text (issue #1434).
+            error = harness_auth_message(str(self.env.get("GITHUB_REPOSITORY") or ""))
         error = redact_secrets(error, self._provider_secrets())
         phase = str(failure.agent_phase or "agent")
         pushed = False
@@ -3352,21 +3357,43 @@ class Engine:
         returned as data and the caller turns it into a run error.
         """
         trigger = self._active_trigger()
-        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+        # A dispatch names its target issue by number only, so it scaffolds the
+        # same branch as a comment run once the issue is read (issue #1432).
+        targets_issue = trigger is not None and (
+            trigger.type in ("issue", "issue_comment")
+            or (trigger.type == "repository_dispatch" and trigger.number > 0)
+        )
+        if trigger is None or not targets_issue:
             # Branch mechanics only make sense for an issue-driven dev session;
-            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            # a PR-review or workflow_dispatch trigger carries no issue to scaffold for.
             result = branch_scaffold.ScaffoldResult(
                 ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            log.info(
+                "[phase:prompt] branch scaffold skipped: trigger=%s number=%s",
+                trigger.type if trigger is not None else "none",
+                trigger.number if trigger is not None else 0,
             )
             self._scaffold_state["result"] = result
             return result
         issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        title_source = "payload"
+        if not issue_title and trigger.type == "repository_dispatch":
+            # A dispatch payload carries no issue title, so the target issue is read.
+            issue_title = self._fetched_issue_title(trigger)
+            title_source = "issue"
         if not issue_title:
-            # An issue-comment trigger carries no payload title: the request
-            # body, minus the markers and the @@mention that routed it, is the
-            # only title the branch can be named after.
+            # Still no title: the request body, minus the markers and the
+            # @@mention that routed it, is the last name the branch can take.
             body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
             issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
+            title_source = "body"
+        log.info(
+            "[phase:prompt] branch scaffold decision: trigger=%s issue=#%s title_source=%s",
+            trigger.type,
+            trigger.number,
+            title_source if issue_title else "none (issue-<N> fallback)",
+        )
         scaffold = branch_scaffold.BranchScaffold(
             self._caller_root(),
             self._session_env(),
@@ -3380,6 +3407,24 @@ class Engine:
         else:
             log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
         return result
+
+    def _fetched_issue_title(self, trigger: Trigger) -> str:
+        """The target issue's title, read from GitHub; ``""`` when unreadable.
+
+        Best-effort: a dispatch payload carries no title, and a failed read
+        falls back to the request body rather than failing the scaffold.
+        """
+        repo = resolve_repo(self.env, trigger)
+        if not repo or trigger.number <= 0:
+            return ""
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the title is optional context
+            log.warning("[phase:prompt] could not read issue #%s: %s", trigger.number, exc)
+            return ""
+        return str((issue or {}).get("title") or "")
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
@@ -3415,8 +3460,22 @@ class Engine:
         interrupted = (
             self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
+        issue_number = (
+            trigger.number if trigger is not None and trigger.number > 0 else None
+        )
+        if trigger is None:
+            issue_repo = ""
+        elif trigger.type == "repository_dispatch":
+            issue_repo = trigger.org_repo
+        else:
+            repository = (trigger.payload or {}).get("repository") or {}
+            issue_repo = str(repository.get("full_name") or "")
         result = pr_finalize.PrFinalizer(
-            issue_title=issue_title, interrupted=interrupted
+            issue_title=issue_title,
+            interrupted=interrupted,
+            issue_number=issue_number,
+            repo=resolve_repo(self.env, trigger),
+            issue_repo=issue_repo,
         ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
@@ -3607,8 +3666,7 @@ class Engine:
             url=pr_result.pr_url,
             title=os.environ.get("PR_TITLE", ""),
             author=os.environ.get("PR_AUTHOR", ""),
-            repo=os.environ.get("GITHUB_REPOSITORY", "")
-            or os.environ.get("REPO_NAME", ""),
+            repo=resolve_repo(self.env, None),
         )
         updated = state.model_copy(update={"pull_request": pr})
         try:
@@ -3671,7 +3729,7 @@ class Engine:
             url=str(issue.get("html_url") or ""),
             title=str(issue.get("title") or ""),
             author=str((issue.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _pull_request_info_from_trigger(self) -> PullRequestInfo | None:
@@ -3687,17 +3745,7 @@ class Engine:
             url=str(pull_request.get("html_url") or ""),
             title=str(pull_request.get("title") or ""),
             author=str((pull_request.get("user") or {}).get("login") or ""),
-            repo=self._payload_repo(payload),
-        )
-
-    def _payload_repo(self, payload: Mapping[str, Any]) -> str:
-        """``owner/name`` from the event payload, else the run's env."""
-        repository = payload.get("repository") or {}
-        return str(
-            repository.get("full_name")
-            or self.env.get("GITHUB_REPOSITORY")
-            or self.env.get("REPO_NAME")
-            or ""
+            repo=resolve_repo(self.env, trigger),
         )
 
     def _artifacts(self) -> RunArtifactStager:
@@ -4315,8 +4363,20 @@ class Engine:
     # ── internals ────────────────────────────────────────────────────
 
     def _repo(self, trigger: Trigger) -> str | None:
-        payload_repo = (trigger.payload or {}).get("repository") or {}
-        return payload_repo.get("full_name") or self.env.get("REPO_NAME") or None
+        return resolve_repo(self.env, trigger) or None
+
+    def _require_readable_target(self, trigger: Trigger) -> None:
+        """Abort before the agent starts when the targeted issue cannot be read.
+
+        An unreadable issue (wrong repo, missing token scope) would otherwise
+        run the agent on an empty prompt (issue #1388).
+        """
+        repo = self._repo(trigger)
+        if trigger.number:
+            log.info("[phase:normalize] target repo %s, issue #%s", repo, trigger.number)
+            loader = getattr(self.adapter, "load_raw_thread", None)
+            if loader is not None:
+                loader()
 
     def _agent_start_notice(self, trigger: Trigger) -> AgentStartNotice:
         """Build the acknowledgment for this run's agent.
@@ -5173,7 +5233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("github", "local"),
     )
     parser.add_argument("--run-dir", default=os.environ.get("ENGINE_RUN_DIR"))
-    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    parser.add_argument("--repo", default=None, help="Override the target owner/name")
     args = parser.parse_args(raw_args)
 
     from nebuko.engine.boot import configure_logging, prewarm_agent_sdk
@@ -5190,7 +5250,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         kwargs["run_dir"] = Path(args.run_dir)
     else:
-        kwargs["repo"] = args.repo
+        repo = args.repo or resolve_repo(os.environ, None)
+        log.info(
+            "[phase:repo] target repo %s (REPO_NAME=%s, GITHUB_REPOSITORY=%s)",
+            repo or "<unresolved>",
+            os.environ.get("REPO_NAME", ""),
+            os.environ.get("GITHUB_REPOSITORY", ""),
+        )
+        kwargs["repo"] = repo
 
     adapter = build_adapter(args.adapter, **kwargs)
     from nebuko.engine.lib.config import HistoryWindowConfig

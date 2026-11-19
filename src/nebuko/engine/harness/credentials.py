@@ -13,16 +13,23 @@ implementation.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
+from dataclasses import dataclass
 
 __all__ = [
     "CLAUDE_CODE_BACKEND",
     "CLAUDE_CODE_MODEL_PREFIX",
     "DEFAULT_BACKEND",
     "SUBSCRIPTION_TOKEN_ENVS",
+    "CONTINUATION_CALLER_ASSOCIATIONS",
+    "CONTINUATION_MARKERS",
     "ClaudeCredentialError",
+    "ContinuationContext",
+    "ContinuationDecision",
+    "authorize_bot_continuation",
     "backend_credentials_error",
     "enforce_backend_credentials",
+    "is_bot_actor",
     "is_claude_code_model",
     "is_subscription_token",
     "scrub_subscription_tokens",
@@ -133,3 +140,121 @@ def enforce_backend_credentials(
     message = backend_credentials_error(backend, model_path, api_token_env)
     if message is not None:
         raise ClaudeCredentialError(message)
+
+
+#: Markers a bot-authored continuation comment must carry in its first lines.
+#: Matched on the header only: a quoted marker deeper in the body does not
+#: count (issue #1361).
+CONTINUATION_MARKERS: tuple[str, ...] = ("<!-- workflow-continue -->", "<!-- bot-trigger:")
+
+#: Lines of the trigger comment that are inspected for a continuation marker.
+CONTINUATION_HEADER_LINES = 2
+
+#: Associations that may keep a bot continuation alive (the CALLER_AUTH rule).
+CONTINUATION_CALLER_ASSOCIATIONS: frozenset[str] = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+_API_KEY_LANE_HINT = (
+    " Use the API-key lane instead: a provider API key secret with a "
+    "non-claude-code backend in the agent config."
+)
+
+
+def is_bot_actor(login: str | None, actor_type: str | None = None) -> bool:
+    """True for a GitHub ``Bot`` account or a ``*[bot]`` login."""
+    name = (login or "").strip()
+    return (actor_type or "").strip() == "Bot" or name.endswith("[bot]")
+
+
+@dataclass(frozen=True)
+class ContinuationContext:
+    """Facts behind a bot-triggered claude-code run (ADR 0017, #1424).
+
+    Attributes:
+        trigger_login: Login of the comment author that triggered the run.
+        trigger_type: GitHub account type of that author (``Bot`` / ``User``).
+        trusted_bots: Bot logins allowed to continue a human-started workflow.
+        comment_header: The trigger comment's first lines; only these are
+            searched for a continuation marker.
+        started_by: ``started_by`` of the previous WORKFLOW_STATE, if any.
+        credential_owner: Login bound to the credential in the per-user lane;
+            ``None`` in the shared lane, where no owner binding applies.
+    """
+
+    trigger_login: str
+    trigger_type: str
+    trusted_bots: tuple[str, ...]
+    comment_header: str
+    started_by: str | None
+    credential_owner: str | None = None
+
+
+@dataclass(frozen=True)
+class ContinuationDecision:
+    """Outcome of :func:`authorize_bot_continuation`.
+
+    ``failed_rule`` names the first rule that refused the run; empty when
+    allowed. ``api_key_lane_applies`` is set only where the API-key lane is the
+    right answer (untrusted author, or no human-started workflow behind it).
+    """
+
+    allowed: bool
+    failed_rule: str = ""
+    api_key_lane_applies: bool = False
+    detail: str = ""
+
+    def refusal_message(self) -> str:
+        """The terminal message for a refused run; names the failed rule."""
+        hint = _API_KEY_LANE_HINT if self.api_key_lane_applies else ""
+        return (
+            f"claude-code run refused for bot trigger: rule '{self.failed_rule}' "
+            f"failed ({self.detail}).{hint}"
+        )
+
+
+def authorize_bot_continuation(
+    ctx: ContinuationContext,
+    association_of: Callable[[str], str | None],
+) -> ContinuationDecision:
+    """Decide whether a bot-triggered claude-code run may proceed.
+
+    Allowed only when the author is a trusted bot, the header carries a
+    continuation marker, the previous state was started by a non-bot human who
+    still holds a CALLER_AUTH association, and (per-user lane) that human is the
+    credential owner. ``association_of`` maps a login to its association or
+    ``None`` when the lookup fails; a failed lookup refuses.
+    """
+    if not is_bot_actor(ctx.trigger_login, ctx.trigger_type) or ctx.trigger_login not in ctx.trusted_bots:
+        return ContinuationDecision(
+            False, "trusted-bot", True, f"author '{ctx.trigger_login}' is not a trusted bot"
+        )
+
+    header = "\n".join(ctx.comment_header.splitlines()[:CONTINUATION_HEADER_LINES])
+    if not any(marker in header for marker in CONTINUATION_MARKERS):
+        return ContinuationDecision(
+            False, "continuation-marker", False, "no continuation marker in the comment header"
+        )
+
+    started_by = (ctx.started_by or "").strip()
+    if not started_by or is_bot_actor(started_by):
+        return ContinuationDecision(
+            False, "human-started-state", True, "no human-started workflow state behind the comment"
+        )
+
+    association = association_of(started_by)
+    if association is None or association not in CONTINUATION_CALLER_ASSOCIATIONS:
+        return ContinuationDecision(
+            False,
+            "caller-association",
+            False,
+            f"'{started_by}' is no longer OWNER/MEMBER/COLLABORATOR (association {association or 'unknown'})",
+        )
+
+    if ctx.credential_owner is not None and ctx.credential_owner != started_by:
+        return ContinuationDecision(
+            False,
+            "credential-owner",
+            False,
+            f"started_by '{started_by}' differs from the credential owner '{ctx.credential_owner}'",
+        )
+
+    return ContinuationDecision(True)

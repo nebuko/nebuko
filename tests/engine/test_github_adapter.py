@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from nebuko.adapters.github import GitHubAdapter
+from nebuko.adapters.github import GitHubAdapter, TargetIssueUnreadable
 from nebuko.engine.models import Trigger
 
 from _facts import approved_outcome as _approved_outcome
@@ -755,3 +755,17 @@ class TestHistoryIncrementRegression:
         assert state.run_id == 1
         assert len(state.history) == 1
         assert state.history[0].step == ""
+
+
+class TestTargetIssueUnreadable:
+    """A targeted issue that cannot be read must stop the run (issue #1099)."""
+
+    def test_an_unreadable_target_issue_raises(self, tmp_path):
+        class _NoIssueClient(FakeGhClient):
+            def get_issue(self, repo, issue_number, token=None, dry_run=False):
+                raise RuntimeError("gh: Not Found (HTTP 404)")
+
+        adapter = _adapter(tmp_path, _NoIssueClient())
+
+        with pytest.raises(TargetIssueUnreadable, match="HTTP 404"):
+            adapter.load_raw_thread()

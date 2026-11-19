@@ -232,6 +232,14 @@ class GitSessionGuard:
             )
         if branch in ("", "HEAD"):
             return GuardResult(ok=True, skipped=True, detail="detached HEAD")
+        if not expected_branch and self._is_base_branch(branch):
+            return GuardResult(
+                ok=False,
+                detail=(
+                    f"refusing to push the base branch {branch!r}: the session is "
+                    "not on a feature branch"
+                ),
+            )
 
         self._configure_identity()
 
@@ -692,6 +700,18 @@ class GitSessionGuard:
             # into a failure instead of reading it as "clean".
             return ("<uninspectable>",)
         return tuple(line for line in out.splitlines() if line.strip())
+
+    def _is_base_branch(self, branch: str) -> bool:
+        """Whether ``branch`` is a protected base branch that must never be pushed.
+
+        ``main``/``master`` are always protected; ``NEBUKO_BASE_BRANCH`` in the run's
+        environment adds the repo's configured base.
+        """
+        protected = {"main", "master"}
+        configured = (self.env.get("NEBUKO_BASE_BRANCH") or "").strip()
+        if configured:
+            protected.add(configured)
+        return branch in protected
 
     def _push_branch(self, branch: str) -> str:
         """Push ``HEAD`` to ``refs/heads/<branch>``. Returns a problem or ``""``.

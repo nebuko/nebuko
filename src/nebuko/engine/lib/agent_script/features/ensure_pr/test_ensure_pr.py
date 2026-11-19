@@ -387,6 +387,66 @@ class TestIssueLinking(unittest.TestCase):
             )
         )
 
+    def test_engine_issue_number_links_new_pr_without_env(self):
+        # The trigger's number reaches ensure_pr directly: TARGET_NUMBER unset.
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return ""
+            if joined.startswith("pr create"):
+                return "https://github.com/acme/repo/pull/102"
+            return ""
+
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", {"GITHUB_BASE_REF": "main"}):
+            os.environ.pop("TARGET_NUMBER", None)
+            result = ensure_pr(issue_number=489, repo="acme/repo")
+        self.assertFalse(result.error)
+        create = next(c for c in gh_mock.call_args_list if c.args[0][:2] == ["pr", "create"])
+        body = create.args[0][create.args[0].index("--body") + 1]
+        self.assertIn("Closes #489", body)
+
+    def test_issue_in_another_repo_is_linked_qualified(self):
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return ""
+            if joined.startswith("pr create"):
+                return "https://github.com/acme/repo/pull/102"
+            return ""
+
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", {"GITHUB_BASE_REF": "main"}):
+            os.environ.pop("TARGET_NUMBER", None)
+            ensure_pr(issue_number=489, repo="acme/repo", issue_repo="acme/other")
+        create = next(c for c in gh_mock.call_args_list if c.args[0][:2] == ["pr", "create"])
+        body = create.args[0][create.args[0].index("--body") + 1]
+        self.assertIn("Closes acme/other#489", body)
+
+    def test_existing_pr_without_link_repaired_from_engine_number(self):
+        def gh_out(args, **k):
+            joined = " ".join(args)
+            if joined.startswith("pr list"):
+                return "https://github.com/acme/repo/pull/101"
+            if joined.startswith("pr view"):
+                return "_Opened by the nebuko engine for the agent's work._"
+            return ""
+
+        git_p, gh_p = TestEnsurePr._mock_runners(
+            unittest.TestCase(), git_out=_default_git_response, gh_out=gh_out
+        )
+        with git_p, gh_p as gh_mock, patch.dict("os.environ", {"GITHUB_BASE_REF": "main"}):
+            os.environ.pop("TARGET_NUMBER", None)
+            result = ensure_pr(issue_number=489, repo="acme/repo")
+        self.assertFalse(result.error)
+        edit = next(c for c in gh_mock.call_args_list if c.args and c.args[0][:2] == ["pr", "edit"])
+        body = edit.args[0][edit.args[0].index("--body") + 1]
+        self.assertIn("Closes #489", body)
+
 
 class TestDirtyPaths(unittest.TestCase):
     def test_engine_owned_handoff_path_is_never_agent_work(self):

@@ -20,11 +20,20 @@ def ensure_pr_result(monkeypatch):
     holder: dict[str, EnsurePrResult | Exception] = {}
 
     def _fake(
-        dry_run: bool = False, *, issue_title: str = "", interrupted: bool = False
+        dry_run: bool = False,
+        *,
+        issue_title: str = "",
+        interrupted: bool = False,
+        issue_number: int | None = None,
+        repo: str = "",
+        issue_repo: str = "",
     ) -> EnsurePrResult:
         calls.append(dry_run)
         holder["issue_title"] = issue_title
         holder["interrupted"] = interrupted
+        holder["issue_number"] = issue_number
+        holder["repo"] = repo
+        holder["issue_repo"] = issue_repo
         outcome = holder.get("result")
         if isinstance(outcome, Exception):
             raise outcome
@@ -117,6 +126,16 @@ class TestPrFinalizer:
 
         assert holder["issue_title"] == "Fix it"
         assert holder["interrupted"] is True
+
+    def test_issue_number_and_repos_reach_ensure_pr(self, ensure_pr_result):
+        holder, _ = ensure_pr_result
+        holder["result"] = EnsurePrResult(pr_url="https://github.com/o/r/pull/1")
+
+        PrFinalizer(issue_number=7, repo="o/r", issue_repo="o/other").finalize()
+
+        assert holder["issue_number"] == 7
+        assert holder["repo"] == "o/r"
+        assert holder["issue_repo"] == "o/other"
 
 
 class TestPrNumberFromUrl:

@@ -47,7 +47,7 @@ class TestTables:
 
     def test_flags_by_action(self):
         assert FLAGS_BY_ACTION == {
-            "run": {"name", "step"},
+            "run": {"name", "step", "config"},
             "force-step": {"name"},
             "resume": {"feedback"},
             "delete": {"issue", "from"},
@@ -88,6 +88,17 @@ class TestParseValid:
             action="run",
             resource="workflow",
             params={"name": "plan-orchestration", "step": "scaffold"},
+        )
+
+    def test_run_with_config(self):
+        # Issue #1389: --config selects the agent config for this run only.
+        cmd = parse_workflow_command(
+            "/nebuko run workflow --name foo --config agent-config-anthropic.yaml"
+        )
+        assert cmd == WorkflowCommand(
+            action="run",
+            resource="workflow",
+            params={"name": "foo", "config": "agent-config-anthropic.yaml"},
         )
 
     def test_bare_run_is_valid_default_invocation(self):
@@ -395,7 +406,10 @@ class TestParseCommandTyped:
         result = parse_command("/nebuko run workflow --default")
         assert result.status == "malformed"
         assert result.detail == "unknown_flag"
-        assert result.usage == "/nebuko run workflow --name <workflow> [--step <step[.step...]>]"
+        assert result.usage == (
+            "/nebuko run workflow --name <workflow> [--step <step[.step...]>] "
+            "[--config <agent-config>]"
+        )
 
     def test_duplicate_flag(self):
         result = parse_command("/nebuko resume --feedback a --feedback b")
@@ -581,6 +595,7 @@ class TestCommandAttempts:
         "/nebuko delete comments --from abc",  # non-numeric --from
         "/nebuko force-step step",  # missing required flag
         "/nebuko run workflow --name",  # bare flag value
+        "/nebuko run workflow --config",  # bare --config value (issue #1389)
         "/nebuko resume --feedback a --feedback b",  # duplicate flag
         "/nebuko frobnicate x",  # unknown action
         "/nebuko approve --bogus",  # missing resource

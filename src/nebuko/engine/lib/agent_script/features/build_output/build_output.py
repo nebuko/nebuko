@@ -42,6 +42,7 @@ from nebuko.engine.lib.workflow_state import (
     TurnStatus,
     WorkflowState,
     workflow_ref_from_env,
+    agent_config_from_env,
 )
 from nebuko.engine.lib.workflow_state import extract_function_call
 from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
@@ -1489,6 +1490,7 @@ def build_output(
         gate_decision=_parse_gate_decision_env(),
         gate=gate,
         workflow_ref=workflow_ref_from_env(os.environ),
+        agent_config=agent_config_from_env(os.environ),
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,
         complexity_policy=_parse_complexity_policy_env(),

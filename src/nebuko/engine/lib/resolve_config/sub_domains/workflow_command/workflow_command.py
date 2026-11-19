@@ -9,7 +9,8 @@ Canonical actions (issue #635):
                    optional (omitting it runs the repo's default workflow —
                    issue #1094), ``--step`` optional (enter at a dedicated step,
                    issue #789; a dotted ``a.b`` selector descends into mounted
-                   sub-workflows, issue #822)
+                   sub-workflows, issue #822), ``--config`` optional (select the
+                   agent config for this run only, issue #1389)
   - ``resume``     no resource — resume the held step; ``--feedback`` optional
   - ``force-step`` resource ``step`` — jump to a step; ``--name`` required
                    (dotted ``a.b`` selectors accepted, issue #822)
@@ -138,7 +139,7 @@ RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
-    "run": {"name", "step"},
+    "run": {"name", "step", "config"},
     "force-step": {"name"},
     "resume": {"feedback"},
     "delete": {"issue", "from"},
@@ -328,7 +329,10 @@ def _parse_flags(
 #: (issue #804). Keyed by the invoked action (so the ``clean`` alias keeps its
 #: own spelling) with the grammar action as fallback.
 _USAGE_BY_ACTION: Dict[str, str] = {
-    "run": "/nebuko run workflow --name <workflow> [--step <step[.step...]>]",
+    "run": (
+        "/nebuko run workflow --name <workflow> [--step <step[.step...]>] "
+        "[--config <agent-config>]"
+    ),
     "resume": "/nebuko resume [--feedback <text>]",
     "force-step": "/nebuko force-step step --name <step[.step...]>",
     "delete": "/nebuko delete comments [--issue <number>] [--from <comment-id>]",
