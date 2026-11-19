@@ -3261,7 +3261,24 @@ class Engine:
             self.adapter.save_state(state)
         else:
             _clear_prev_state_handoff()
+        # ADR 0017: no trusted state but an untrusted one exists -> the guard
+        # must assume a lane may be bound (fail closed).
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
+
+        WorkflowStateCodec().mark_untrusted_handoff(
+            state is None and self._untrusted_state_only()
+        )
         return state
+
+    def _untrusted_state_only(self) -> bool:
+        """True when only untrusted state comments exist; an unknown result fails closed."""
+        probe = getattr(self.adapter, "has_untrusted_state_only", None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 - an unclassifiable thread is untrusted
+            return True
 
     def _seed_thread_ledger(self, state: WorkflowState | None) -> WorkflowState | None:
         """Fold this run's reconciled thread ledger into the hand-off state (#872).

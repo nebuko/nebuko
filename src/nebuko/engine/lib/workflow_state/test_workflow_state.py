@@ -10,6 +10,7 @@ from nebuko.engine.lib.workflow_state import (
     TurnOutcome,
     TurnStatus,
     agent_config_from_env,
+    is_fresh_run,
     workflow_ref_from_env,
 )
 from nebuko.engine.lib.workflow_state.sub_domains.gate_decision import GateDecision
@@ -570,3 +571,25 @@ class TestAgentConfigFromEnv(unittest.TestCase):
 
     def test_whitespace_only_maps_to_none(self):
         self.assertIsNone(agent_config_from_env({"AGENT_CONFIG": "   "}))
+
+
+class TestIsFreshRun(unittest.TestCase):
+    """Only a human ``run workflow`` without ``--step`` starts a new workflow (ADR 0017)."""
+
+    def _fresh(self, header):
+        return is_fresh_run({"TRIGGER_COMMENT_HEADER": header})
+
+    def test_run_workflow_with_name_is_fresh(self):
+        self.assertTrue(self._fresh("/nebuko run workflow --name dev-review-loop"))
+
+    def test_bare_run_workflow_is_fresh(self):
+        self.assertTrue(self._fresh("/nebuko run workflow"))
+
+    def test_run_workflow_with_step_continues_the_state(self):
+        self.assertFalse(self._fresh("/nebuko run workflow --step plan --config agent-config-mistral.yaml"))
+
+    def test_resume_is_not_fresh(self):
+        self.assertFalse(self._fresh("/nebuko resume"))
+
+    def test_absent_command_is_not_fresh(self):
+        self.assertFalse(self._fresh("just a comment"))

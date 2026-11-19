@@ -322,3 +322,26 @@ WORKFLOW_STATE's `started_by` is a non-bot human who still holds a
 CALLER_AUTH association (and equals the credential owner in the per-user lane).
 The engine enforces this in `run_agent._enforce_harness_credentials`. The
 Lane D bridge (token-broker#53) needs the same rule; that is tracked there.
+
+### Lane binding (user-repo continuations)
+
+A workflow started in a user's own `<login>/nebuko-claude-code` repo (Lane D)
+records `lane: user-repo` and `credential_owner: <login>` in WORKFLOW_STATE
+(login only, never a secret). The fields come from the `WORKFLOW_LANE` and
+`CLAUDE_CREDENTIAL_OWNER` env vars on the first step and are carried forward by
+every later transition.
+
+`run_agent._enforce_harness_credentials` refuses a bot continuation whose
+previous state has `lane: user-repo` unless this run is in the same lane
+(`WORKFLOW_LANE=user-repo`) for the same `credential_owner`. This applies to
+every backend: a continuation that would move the payer or the model silently
+(for example the org's shared claude-code token, or an API-key profile) is
+refused with a message to resume in `<login>/nebuko-claude-code`. Human-triggered
+runs are not continuations and are not bound by this rule.
+
+Routing continuations to the user repo is option A of the design issue. The
+bridge (token-broker#53) owns it. It must accept `nebuko[bot]` continuations
+whose `started_by` owns a `<login>/nebuko-claude-code` repo and dispatch there,
+with `client_payload` carrying `step`, `agent_config` and `lane`. Until it lands,
+Lane D continuations are refused at the first hand-off (option C), never run on
+another payer (option B is not used silently).

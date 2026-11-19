@@ -98,6 +98,8 @@ def build_state(
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
     agent_config: Optional[str] = None,
+    lane: Optional[str] = None,
+    credential_owner: Optional[str] = None,
     complexity_adjustment: Optional[ComplexityAdjustment] = None,
     complexity_review_request: Optional[ComplexityReviewRequest] = None,
     complexity_policy: Optional[ComplexityPolicy] = None,
@@ -179,6 +181,10 @@ def build_state(
             ``/nebuko run workflow --config <file>`` (issue #1389), as the raw
             flag value. None preserves the previous value, so a hand-off
             comment keeps the provider the human selected.
+        lane: Execution lane from ``WORKFLOW_LANE`` (ADR 0017). None preserves
+            the previous value, so a continuation keeps the lane it started on.
+        credential_owner: Per-user credential owner login from
+            ``CLAUDE_CREDENTIAL_OWNER``. None preserves the previous value.
         thread: The reconciled thread ledger (issue #872). Non-None replaces the
             ledger wholesale (the engine folds the full comment list into it
             before advancing); None preserves the previous ledger.
@@ -203,6 +209,10 @@ def build_state(
         base_started_by = None
         base_workflow_ref = None
         base_agent_config = None
+        base_lane = None
+        base_credential_owner = None
+        base_lane_changed_from = None
+        base_lane_changed_by = None
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
@@ -225,6 +235,10 @@ def build_state(
         base_started_by = prev_state.started_by
         base_workflow_ref = prev_state.workflow_ref
         base_agent_config = prev_state.agent_config
+        base_lane = prev_state.lane
+        base_credential_owner = prev_state.credential_owner
+        base_lane_changed_from = prev_state.lane_changed_from
+        base_lane_changed_by = prev_state.lane_changed_by
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
@@ -317,6 +331,12 @@ def build_state(
     # no flag) preserves it, so the provider does not silently revert.
     new_agent_config = (
         agent_config if agent_config is not None else base_agent_config
+    )
+    # Lane binding (ADR 0017): recorded on the first step, then carried forward
+    # so a continuation cannot silently drop the lane its workflow started on.
+    new_lane = lane if lane is not None else base_lane
+    new_credential_owner = (
+        credential_owner if credential_owner is not None else base_credential_owner
     )
 
     # Human_gate decision (issue #648): when this run was started by an
@@ -415,6 +435,10 @@ def build_state(
         started_by=new_started_by,
         workflow_ref=new_workflow_ref,
         agent_config=new_agent_config,
+        lane=new_lane,
+        credential_owner=new_credential_owner,
+        lane_changed_from=base_lane_changed_from,
+        lane_changed_by=base_lane_changed_by,
         position=position_refs,
         soft_retry=new_soft_retry,
         # Per-issue circuit-breaker policy (issue #839): carried forward

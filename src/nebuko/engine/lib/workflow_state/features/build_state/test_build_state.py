@@ -352,6 +352,24 @@ class TestBuildStateAgentConfig(unittest.TestCase):
         next_state = build_state(prev, workflow="default", step="plan", agent="architect")
         self.assertEqual(next_state.agent_config, "agent-config-anthropic.yaml")
 
+    def test_lane_and_credential_owner_persist_when_not_repeated(self):
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            lane="user-repo",
+            credential_owner="alice",
+        )
+        next_state = build_state(prev, workflow="default", step="plan", agent="architect")
+        self.assertEqual(next_state.lane, "user-repo")
+        self.assertEqual(next_state.credential_owner, "alice")
+
+    def test_legacy_state_without_lane_fields_loads_unchanged(self):
+        state = build_state(None, workflow="default", step="analyze", agent="architect")
+        self.assertIsNone(state.lane)
+        self.assertIsNone(state.credential_owner)
+
     def test_explicit_agent_config_overrides_persisted_one(self):
         prev = build_state(
             None,
