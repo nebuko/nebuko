@@ -20,10 +20,18 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
 
 from nebuko.engine.lib.answer_footer import format_answer_footer
+from nebuko.engine.lib.redaction import redact_text
 from nebuko.engine.lib.validate_output import strip_agent_run_config
+from nebuko.engine.paths import secret_scan_enabled
+from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+    SecretScan,
+    SecretScanStatus,
+)
 from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
     format_collapsed_section,
@@ -316,7 +324,49 @@ def _apply_context_collapse(cleaned: str, role_name: str | None = None) -> str:
     return cleaned if collapsed == cleaned else collapsed
 
 
-def _write_output(content: str, poster: Poster | None = None) -> None:
+def format_secret_scan_warning(scan: SecretScan | None) -> str:
+    """The short warning rendered when a run redacted a credential (#1347).
+
+    Rendered from the persisted ``secret_scan`` record, so it keeps showing on
+    every later comment of the run: the value is gone from the branch and the
+    thread, and only a human re-typing it (out of band) can restore it.
+
+    Returns:
+        A one-paragraph markdown warning, or ``""`` for a clean/absent scan.
+    """
+    if scan is None or scan.status is not SecretScanStatus.REDACTED:
+        return ""
+    locations = ", ".join(
+        f"`{f.file or 'comment'}`:{f.line} ({f.rule})" for f in scan.findings[:5]
+    )
+    if len(scan.findings) > 5:
+        locations += f", +{len(scan.findings) - 5} more"
+    where = f" in {scan.at}" if scan.at else ""
+    return (
+        f"> \u26a0\ufe0f **Secret redacted{where}.** {len(scan.findings)} value(s) "
+        "matched a credential pattern and were replaced by "
+        f"`<REDACTED:rule>` before publishing: {locations}. The original value "
+        "is not stored anywhere, so it has to be re-entered by hand if it is "
+        "still needed.\n"
+    )
+
+
+def _scan_enabled(explicit: bool | None) -> bool:
+    """Whether the comment scan runs, honouring the manifest feature flag.
+
+    ``explicit`` is the engine seam's already-resolved decision; ``None`` (the
+    GHA path) resolves ``features.secret_scan`` from the caller workspace,
+    which defaults to disabled (issue #1347).
+    """
+    if explicit is not None:
+        return explicit
+    root = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
+    return secret_scan_enabled(root)
+
+
+def _write_output(
+    content: str, poster: Poster | None = None, secret_scan: bool | None = None
+) -> None:
     """Publish content, either through the injected poster or the GHA path.
 
     Content is passed through escape_agent_triggers() so no comment posted
@@ -324,10 +374,26 @@ def _write_output(content: str, poster: Poster | None = None) -> None:
     is injected (engine seam, issue #590) the body goes through it instead of
     the peter-evans/comment hand-off file.
 
+    The body is scanned for credentials first (issue #1347): a comment is a
+    public artifact, and a pasted log is the likeliest leak channel. A hit is
+    replaced by ``<REDACTED:{rule}>`` and reported in the CI log (file/line/
+    rule only — never the value).
+
     Args:
         content: The comment body text to publish.
         poster: Optional injected poster callable (engine seam, issue #590).
+        secret_scan: Whether to scan; ``None`` resolves the manifest flag.
     """
+    if _scan_enabled(secret_scan):
+        content, findings = redact_text(content)
+    else:
+        findings = []
+    for finding in findings:
+        print(
+            f"Warning: redacted a {finding.rule} match in the comment body "
+            f"(line {finding.line})",
+            flush=True,
+        )
     content = escape_agent_triggers(content)
 
     if poster is not None:
@@ -629,6 +695,8 @@ def build_comment_body_parts(
     role_name: str | None = None,
     state: WorkflowState | None = None,
     engine_failed: bool = False,
+    secret_findings: Sequence[SecretFinding] = (),
+    secret_scan: bool | None = None,
 ) -> tuple[str, str]:
     """The posted comment as ``(header, body)``, kept separate for splitting.
 
@@ -640,6 +708,12 @@ def build_comment_body_parts(
 
     ``engine_failed`` (issue #1288) frames the comment as a notification: no
     continue token on line 1, so a failed run cannot re-trigger the workflow.
+
+    ``secret_findings`` are credential matches the caller already found in the
+    comment body (issue #1347); they are merged into the state's
+    ``secret_scan`` record so the warning renders and the record persists.
+    ``secret_scan`` is the resolved ``features.secret_scan`` flag; ``None``
+    resolves it from the manifest (disabled by default).
 
     Returns:
         ``(header, body)`` where ``header`` is the answer-comment header and
@@ -658,7 +732,31 @@ def build_comment_body_parts(
     footer = format_answer_footer(state)
     if footer:
         body = f"{body}\n\n{footer}" if body.strip() else footer
-    return (format_answer_header(role_name, state, engine_failed=engine_failed), body)
+    # A comment is a public artifact (issue #1347): the body is scanned for
+    # credentials before it is framed, and the run's recorded redactions plus
+    # this scan's findings render as a short warning above the answer. The
+    # guard is opt-in (``features.secret_scan``), so a disabled repo frames the
+    # comment untouched.
+    if _scan_enabled(secret_scan):
+        body, _ = redact_text(body)
+        warning = format_secret_scan_warning(
+            _scan_with_findings(state.secret_scan if state else None, secret_findings)
+        )
+        if warning:
+            body = warning + "\n" + body if body.strip() else warning
+    header = format_answer_header(role_name, state, engine_failed=engine_failed)
+    if _scan_enabled(secret_scan):
+        header, _ = redact_text(header)
+    return (header, body)
+
+
+def _scan_with_findings(
+    scan: SecretScan | None, findings: Sequence[SecretFinding]
+) -> SecretScan | None:
+    """The run's scan record extended with this scan's findings."""
+    if not findings:
+        return scan
+    return (scan or SecretScan()).merge(list(findings))
 
 
 def build_comment_body(
@@ -672,6 +770,7 @@ def build_comment_body(
     role_name: str | None = None,
     state: WorkflowState | None = None,
     engine_failed: bool = False,
+    secret_scan: bool | None = None,
 ) -> str:
     """The posted-comment body: answer-comment header + fallback body.
 
@@ -696,6 +795,8 @@ def build_comment_body(
         state: The agent's ``workflow_state.json`` artifact, or ``None`` when
             the run emitted none. ``None`` still emits the marker/token header
             but omits the collapsed state section.
+        secret_scan: Resolved ``features.secret_scan`` flag; ``None`` resolves
+            it from the manifest (disabled by default, issue #1347).
 
     Returns:
         The framed body to escape and publish.
@@ -710,6 +811,7 @@ def build_comment_body(
         role_name=role_name,
         state=state,
         engine_failed=engine_failed,
+        secret_scan=secret_scan,
     )
     return header + body
 

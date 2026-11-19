@@ -12,6 +12,10 @@ git-push` in the logs is expected).
 2. **Push** — `ensure_pr` pushes the branch to origin. This includes work the
    agent already committed but could not push: committed-but-unpushed plain
    work is pushed as-is, preserving the agent's commit message and history.
+   Before the push, the unpublished commits (`<remote tip>..HEAD`) are scanned
+   for credentials; a hit is redacted and the unpublished history rewritten
+   (issue #1347 — see
+   [features.md — Secret Scanning and Redaction](./features.md#secret-scanning-and-redaction-issue-1347)).
 3. **PR** — if no open PR exists for the branch, one is opened. The PR body
    contains `Closes #<TARGET_NUMBER>`, which links it to the triggering issue.
 
@@ -55,6 +59,12 @@ Each `> ⚠️ **Publication guard:**` warning line and its remediation:
   `"workflow patch delivered"`). Check the branch and the base ref.
 - **…nothing to publish** — benign: `check_publication` found a clean, pushed
   branch (or a benign skip such as no remote / detached HEAD).
+- **…could not scan the unpublished commits: …** / **…could not redact the
+  unpublished commits: …** / **…N secret(s) still match after redaction
+  (rules)** — the pre-push secret scan failed or could not clean the range, so
+  the push was skipped rather than leak the value (issue #1347). Fix the
+  offending file by hand (the marker `<REDACTED:rule>` shows where a value was
+  removed) and re-run; the original value is not stored anywhere.
 
 ## Troubleshooting
 

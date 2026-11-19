@@ -32,11 +32,27 @@ __all__ = [
     "DeterministicStep",
     "StepResult",
     "WorkflowCallFrame",
+    "NebukoFeatures",
     "NebukoManifest",
     "circuit_breaker_update_notice",
 ]
 
 log = logging.getLogger(__name__)
+
+
+# @stub-protected
+class NebukoFeatures(BaseModel):
+    """Opt-in engine features from ``.nebuko/nebuko.yaml`` (issue #1347).
+
+    Every flag defaults to ``False``: a feature ships disabled and a repo turns
+    it on explicitly, so an upgraded engine never changes what an existing
+    repository does.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Pre-push and pre-post secret scanning + redaction (issue #1347).
+    secret_scan: bool = False
 
 
 # @stub-protected
@@ -64,6 +80,7 @@ class NebukoManifest(BaseModel):
     skills_dir: str | None = None
     default_workflow: str | None = None
     merge_main: bool = True
+    features: NebukoFeatures = NebukoFeatures()
     agent_config: str | None = None
     circuit_breaker_threshold: int | None = Field(None, ge=1)
     history_comment_count: int | None = None
