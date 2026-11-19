@@ -476,17 +476,24 @@ def lane_binding_from_env(
 
 
 def is_fresh_run(env: Mapping[str, str]) -> bool:
-    """True when the trigger comment is a human ``/nebuko run workflow`` command.
+    """True when the trigger comment is a human ``/nebuko run workflow`` without ``--step``.
 
     A fresh run starts a new workflow rather than continuing the recorded one, so
-    it neither inherits nor is refused by the previous state's lane.
+    it neither inherits nor is refused by the previous state's lane. A ``run``
+    carrying ``--step`` continues the recorded state at that step, so it is not
+    fresh and the state's lane applies.
     """
     from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
         parse_workflow_command,
     )
 
     command = parse_workflow_command(env.get("TRIGGER_COMMENT_HEADER") or "")
-    return command is not None and command.action == "run"
+    return (
+        command is not None
+        and command.action == "run"
+        and command.resource == "workflow"
+        and "step" not in command.params
+    )
 
 
 def credential_owner_from_env(env: Mapping[str, str]) -> Optional[str]:

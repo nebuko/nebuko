@@ -1135,6 +1135,36 @@ class TestLaneBinding(unittest.TestCase):
         self._human("bob", header="/nebuko run workflow --name dev-review-loop")
         self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
 
+    def test_other_human_step_resume_cannot_move_the_payer(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        self._seed_user_repo_state("alice")
+        self._human("bob", header="/nebuko run workflow --step plan --config agent-config-mistral.yaml")
+        agent = self._agent(backend="openhands", model_path="mistral/mistral-large-4", token="MISTRAL_API_KEY")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(agent, {})
+        self.assertIn("lane-binding", str(refused.exception))
+
+    def test_starter_step_resume_re_baselines_the_lane(self):
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        self._seed_user_repo_state("alice")
+        self._human("alice", header="/nebuko run workflow --step plan --config agent-config-mistral.yaml")
+        agent = self._agent(backend="openhands", model_path="mistral/mistral-large-4", token="MISTRAL_API_KEY")
+        self.ra._enforce_harness_credentials(agent, {})
+        state = WorkflowStateCodec().load_prev().state
+        self.assertEqual(state.lane, "shared")
+        self.assertEqual(state.lane_changed_by, "alice")
+
+    def test_starter_step_resume_on_a_subscription_config_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        self._seed_user_repo_state("alice")
+        self._human("alice", header="/nebuko run workflow --step plan")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+        self.assertIn("rebaseline-config", str(refused.exception))
+
     def test_untrusted_only_thread_fails_closed(self):
         from nebuko.engine.harness.credentials import ClaudeCredentialError
         from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
@@ -1143,7 +1173,18 @@ class TestLaneBinding(unittest.TestCase):
         self._human("bob")
         with self.assertRaises(ClaudeCredentialError) as refused:
             self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
-        self.assertIn("user-repo lane", str(refused.exception))
+        message = str(refused.exception)
+        self.assertIn("user-repo lane", message)
+        self.assertIn("not a lane violation", message)
+        self.assertIn("nebuko[bot]", message)
+        self.assertIn("/nebuko run workflow", message)
+
+    def test_untrusted_only_thread_is_not_refused_on_a_fresh_run(self):
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        WorkflowStateCodec().mark_untrusted_handoff(True)
+        self._human("bob", header="/nebuko run workflow --name dev-review-loop")
+        self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
 
     def test_repository_dispatch_event_file_binds_the_user_repo_lane(self):
         import json

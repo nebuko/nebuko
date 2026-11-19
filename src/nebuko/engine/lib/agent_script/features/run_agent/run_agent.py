@@ -596,8 +596,8 @@ def _caller_association(login: str) -> str | None:
 def _trigger_facts_from_env() -> "ContinuationContext":
     """The trigger and lane facts behind this run, for every trigger type (ADR 0017).
 
-    A fresh ``/nebuko run workflow`` starts a workflow of its own, so it inherits
-    no lane from the previous state. An untrusted-only thread (no bot-authored
+    A fresh ``/nebuko run workflow`` (no ``--step``) starts a workflow of its own,
+    so it inherits no lane from the previous state; ``--step`` continues it. An untrusted-only thread (no bot-authored
     state) assumes a user-repo lane may exist, so the guard fails closed.
     """
     from nebuko.engine.harness.credentials import (  # noqa: PLC0415
@@ -616,7 +616,8 @@ def _trigger_facts_from_env() -> "ContinuationContext":
     previous = _previous_state()
     previous_lane = getattr(previous, "lane", None)
     previous_owner = getattr(previous, "credential_owner", None)
-    if previous is None and WorkflowStateCodec().untrusted_handoff_marked():
+    untrusted_only = previous is None and WorkflowStateCodec().untrusted_handoff_marked()
+    if untrusted_only:
         previous_lane = USER_REPO_LANE
     if is_fresh_run(os.environ):
         previous_lane, previous_owner = None, None
@@ -636,6 +637,7 @@ def _trigger_facts_from_env() -> "ContinuationContext":
         lane=lane,
         previous_lane=previous_lane,
         previous_credential_owner=previous_owner,
+        untrusted_only=untrusted_only,
     )
 
 
