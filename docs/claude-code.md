@@ -114,6 +114,15 @@ by a `PreToolUse` hook) and asks for the same `turn_outcome` the `finalize` tool
 takes (`appreciation`, `hold_kind`, `agent_call`, `round`, `note`, `complexity`,
 `pin`); it is validated and recorded identically on both backends.
 
+The closing prompt is built by `build_closing_prompt` in
+`nebuko.engine.harness.base`, the same builder the OpenHands backend uses, so
+both backends carry one outcome rule block (`CLOSING_OUTCOME_RULES`): `hold`
+means blocked and needs a human, and finished work is `approved`. The recall
+prompt states the same rule. If a step ends `hold` with a note that says the
+work is complete or delivered, the engine logs a `step … ended 'hold' but its
+note says the work is done` warning naming the step and model. Routing is
+unchanged; the warning only makes a parked finished step visible.
+
 ## Differences to know about
 
 - `temperature`, sampling and `token_budget` are ignored: Claude Code owns its

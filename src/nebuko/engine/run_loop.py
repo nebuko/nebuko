@@ -2000,9 +2000,14 @@ class Engine:
         """
         error = str(failure.provider_error or "the LLM provider failed")
         from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            HarnessAuthError,
+            harness_auth_message,
             redact_secrets,
         )
 
+        if isinstance(failure, HarnessAuthError):
+            # Fixed notice, never the backend's raw text (issue #1434).
+            error = harness_auth_message(str(self.env.get("GITHUB_REPOSITORY") or ""))
         error = redact_secrets(error, self._provider_secrets())
         phase = str(failure.agent_phase or "agent")
         pushed = False
@@ -3335,21 +3340,43 @@ class Engine:
         returned as data and the caller turns it into a run error.
         """
         trigger = self._active_trigger()
-        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+        # A dispatch names its target issue by number only, so it scaffolds the
+        # same branch as a comment run once the issue is read (issue #1432).
+        targets_issue = trigger is not None and (
+            trigger.type in ("issue", "issue_comment")
+            or (trigger.type == "repository_dispatch" and trigger.number > 0)
+        )
+        if trigger is None or not targets_issue:
             # Branch mechanics only make sense for an issue-driven dev session;
-            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            # a PR-review or workflow_dispatch trigger carries no issue to scaffold for.
             result = branch_scaffold.ScaffoldResult(
                 ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            log.info(
+                "[phase:prompt] branch scaffold skipped: trigger=%s number=%s",
+                trigger.type if trigger is not None else "none",
+                trigger.number if trigger is not None else 0,
             )
             self._scaffold_state["result"] = result
             return result
         issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        title_source = "payload"
+        if not issue_title and trigger.type == "repository_dispatch":
+            # A dispatch payload carries no issue title, so the target issue is read.
+            issue_title = self._fetched_issue_title(trigger)
+            title_source = "issue"
         if not issue_title:
-            # An issue-comment trigger carries no payload title: the request
-            # body, minus the markers and the @@mention that routed it, is the
-            # only title the branch can be named after.
+            # Still no title: the request body, minus the markers and the
+            # @@mention that routed it, is the last name the branch can take.
             body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
             issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
+            title_source = "body"
+        log.info(
+            "[phase:prompt] branch scaffold decision: trigger=%s issue=#%s title_source=%s",
+            trigger.type,
+            trigger.number,
+            title_source if issue_title else "none (issue-<N> fallback)",
+        )
         scaffold = branch_scaffold.BranchScaffold(
             self._caller_root(),
             self._session_env(),
@@ -3363,6 +3390,24 @@ class Engine:
         else:
             log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
         return result
+
+    def _fetched_issue_title(self, trigger: Trigger) -> str:
+        """The target issue's title, read from GitHub; ``""`` when unreadable.
+
+        Best-effort: a dispatch payload carries no title, and a failed read
+        falls back to the request body rather than failing the scaffold.
+        """
+        repo = resolve_repo(self.env, trigger)
+        if not repo or trigger.number <= 0:
+            return ""
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the title is optional context
+            log.warning("[phase:prompt] could not read issue #%s: %s", trigger.number, exc)
+            return ""
+        return str((issue or {}).get("title") or "")
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
@@ -3398,8 +3443,22 @@ class Engine:
         interrupted = (
             self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
+        issue_number = (
+            trigger.number if trigger is not None and trigger.number > 0 else None
+        )
+        if trigger is None:
+            issue_repo = ""
+        elif trigger.type == "repository_dispatch":
+            issue_repo = trigger.org_repo
+        else:
+            repository = (trigger.payload or {}).get("repository") or {}
+            issue_repo = str(repository.get("full_name") or "")
         result = pr_finalize.PrFinalizer(
-            issue_title=issue_title, interrupted=interrupted
+            issue_title=issue_title,
+            interrupted=interrupted,
+            issue_number=issue_number,
+            repo=resolve_repo(self.env, trigger),
+            issue_repo=issue_repo,
         ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
