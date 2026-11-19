@@ -73,6 +73,111 @@ The generated workflow refuses to run unless the triggering actor is the
 repository owner, so only you can start a run in that repo. An existing repo is
 refused before anything is written; a missing token creates nothing.
 
+## Lane D: per-user repo (manual dispatch and troubleshooting)
+
+Operator notes for the per-user repo above, from the manual dispatch runs on
+`olivier-norture/nebuko-claude-code` (runs 44302540158 … 44332921102, tracked in
+#1388 and #1099). Until the bridge is deployed, every run is started by hand.
+
+### Setup
+
+- Run `nebuko init claude-code-repo` (optional `--pin-ref <ref>`, default `main`)
+  where `gh` is logged in as the repo owner.
+- The token comes from the `CLAUDE_CODE_OAUTH_TOKEN` env var if set, otherwise
+  from a hidden prompt. Produce it with `claude setup-token`.
+- The command refuses if `<login>/nebuko-claude-code` already exists.
+- Install the GitHub App on that repo only:
+  <https://github.com/apps/nebuko/installations/new>. This is needed for the
+  bridge, **not** for the manual dispatch below.
+
+### Workflow template
+
+`.github/workflows/nebuko-run.yaml` is rendered by `render_workflow`:
+
+| Field | Value |
+|-------|-------|
+| `on` | `repository_dispatch`, type `nebuko-run` |
+| `owner-guard` job | asserts `client_payload.actor == github.repository_owner` (guard 4) |
+| `with:` `prompt_body` | `client_payload.prompt_body` |
+| `with:` `org_repo` | `client_payload.org_repo` |
+| `with:` `issue_number` | `client_payload.issue_number` |
+| `with:` `agent_config_path` | `agent-config-anthropic.yaml` |
+| `secrets:` `CLAUDE_CODE_OAUTH_TOKEN` | the user repo's own secret |
+| `secrets:` `GH_PAT` | `client_payload.gh_token` (org-repo token, see below) |
+
+- **Pin.** `uses:` must name a full 40-character commit SHA, because `uses:`
+  cannot track a branch. `render_workflow` rejects anything else.
+- **Bump.** There is no bump command. Resolve the new SHA with
+  `gh api repos/nebuko/nebuko/commits/main --jq .sha`, edit the `@<sha>` in
+  `nebuko-run.yaml`, and commit. Re-running `init` will not help, because it
+  refuses an existing repo.
+
+### Manual dispatch
+
+The issue did not record a literal command, so this call is built from the
+ADR-0017 payload and is **unverified against a live run**:
+
+```bash
+gh api --method POST repos/<login>/nebuko-claude-code/dispatches \
+  -f event_type=nebuko-run \
+  -f client_payload[actor]=<login> \
+  -f client_payload[org_repo]=<org>/<repo> \
+  -F client_payload[issue_number]=<number> \
+  -f client_payload[prompt_body]="<prompt>" \
+  -f client_payload[gh_token]="<org-repo token>"
+```
+
+- `actor` must equal the repo owner, or guard 4 fails the run.
+- **Warning:** the org-repo token in `gh_token` is visible to the repo owner in
+  the run. Use a short-lived token (see below).
+
+### Org-repo token requirements
+
+Until the bridge mints the token:
+
+- Fine-grained token, resource owner = the org, scoped to the target repo only.
+- Permissions: Issues, Pull requests and Contents, read and write.
+- The org may need to approve the token before it works.
+- Fallback: a classic `repo` PAT. It needs SSO authorization for the org.
+- Use a 1-day expiry and revoke the token after the run.
+- See [adoption.md](./adoption.md) and [nebuko-init.md](./nebuko-init.md) for
+  the general setup; they are not repeated here.
+
+### Troubleshooting
+
+Run links are not recorded for each symptom: the runs are on the user's repo,
+which this docs pass could not read. Each row cites the issue or PR that
+produced the fix or the finding.
+
+| Symptom | Cause | Source |
+|---------|-------|--------|
+| `run-task` skipped, run is green | Workflow predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426; run link not recorded |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | run link not recorded |
+| 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses | #1429, #1431; run link not recorded |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | run link not recorded |
+| `refusing to push the base branch` | Dispatch-branch issue | #1432 |
+
+### Known limits
+
+Until the follow-ups land:
+
+- Continuation steps do not stay on the user repo (credential-bound
+  continuation design, #1433).
+- The bridge is not deployed (token-broker#53).
+- Per-run Actions minutes and the 6 h job cap apply to the user's repo.
+
+_Update this section after #1432 and #1433 are resolved._
+
+### Credential rules
+
+- The secret lives only in the user's repo. Never store it in a shared repo.
+- Guard 3 (`nebuko-workflow.yaml`): schedule, actor-less and bot-started runs
+  are refused. Bot continuations are allowed only under the #1427 rule.
+- Guard 4 (`owner-guard` job): asserts `client_payload.actor` equals the
+  repository owner before any job that can reach the token.
+- Never use the shared org token for a user-started workflow. The repo owner
+  can read it during the run.
+
 ## Per-role switch
 
 ```yaml
