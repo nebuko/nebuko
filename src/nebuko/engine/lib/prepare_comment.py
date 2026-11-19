@@ -20,9 +20,9 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
-from nebuko.engine.lib.answer_footer import format_answer_footer
+from nebuko.engine.lib.answer_footer import StepLinkResolver, format_answer_footer
 from nebuko.engine.lib.validate_output import strip_agent_run_config
 from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import (
     collapse_sections,
@@ -629,6 +629,8 @@ def build_comment_body_parts(
     role_name: str | None = None,
     state: WorkflowState | None = None,
     engine_failed: bool = False,
+    step_resolver: StepLinkResolver | None = None,
+    workflow_steps: Sequence[str] | None = None,
 ) -> tuple[str, str]:
     """The posted comment as ``(header, body)``, kept separate for splitting.
 
@@ -655,7 +657,7 @@ def build_comment_body_parts(
             role_name=role_name,
             recall_count=_posted_recall_count(state),
         )
-    footer = format_answer_footer(state)
+    footer = format_answer_footer(state, workflow_steps, step_resolver)
     if footer:
         body = f"{body}\n\n{footer}" if body.strip() else footer
     return (format_answer_header(role_name, state, engine_failed=engine_failed), body)

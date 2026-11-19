@@ -130,7 +130,8 @@ class AnswerFooter:
         current step is bold; pending steps are plain. Separator: ``" -> "``.
         """
         if not steps:
-            steps = [entry.step for entry in state.history] + [state.step]
+            # Dedupe: a retried step must show once, at its first position.
+            steps = list(dict.fromkeys([entry.step for entry in state.history] + [state.step]))
         return " -> ".join(self._render_step(state, step) for step in steps)
 
     def _render_step(self, state: WorkflowState, step: str) -> str:
@@ -190,11 +191,13 @@ class AnswerFooter:
 def format_answer_footer(
     state: WorkflowState | None,
     steps: Sequence[str] | None = None,
+    resolver: StepLinkResolver | None = None,
 ) -> str:
     """Module-level seam used by the publish path.
 
-    ``""`` when ``state`` is ``None``; otherwise ``AnswerFooter().render(state, steps)``.
+    ``""`` when ``state`` is ``None``; otherwise
+    ``AnswerFooter(resolver).render(state, steps)``.
     """
     if state is None:
         return ""
-    return AnswerFooter().render(state, steps)
+    return AnswerFooter(resolver).render(state, steps)

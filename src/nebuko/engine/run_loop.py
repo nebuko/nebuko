@@ -2833,6 +2833,27 @@ class Engine:
                 if section is not None:
                     scope[f"{step}.{field.name}"] = section
 
+    def _workflow_step_names(self, name: str) -> list[str] | None:
+        """The workflow definition's step names in declared order, or ``None``.
+
+        ``None`` when the definition cannot be loaded; the footer then falls
+        back to the steps recorded in the state's history.
+        """
+        if not name:
+            return None
+        from nebuko.engine.lib.config import load_workflow, load_workflow_with_dirs
+
+        workflows_dir, local_workflows_dir = self._workflow_dirs()
+        try:
+            path = load_workflow_with_dirs(
+                name, workflows_dir, local_workflows_dir or ""
+            )
+            definition = load_workflow(str(path))
+        except Exception as exc:  # noqa: BLE001 - a missing definition is not fatal
+            log.warning("[phase:publish] workflow %s steps unavailable: %s", name, exc)
+            return None
+        return [step.name for step in definition.steps] or None
+
     def _declared_outputs(self) -> dict[str, Any]:
         """The workflow's per-step ``output:`` declarations, keyed by step name."""
         previous = self._previous_state()
@@ -3951,6 +3972,13 @@ class Engine:
             ) or recorded_state
         else:
             publish_state = recorded_state
+        from nebuko.engine.lib.answer_footer import StepLinkResolver
+
+        ledger = self._thread_ledger_data()
+        step_resolver = StepLinkResolver(
+            ledger[0] if ledger else (),
+            publish_state.history if publish_state is not None else (),
+        )
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3961,6 +3989,10 @@ class Engine:
             role_name=self._role_of(agent_result),
             state=publish_state,
             engine_failed=engine_failed,
+            step_resolver=step_resolver,
+            workflow_steps=self._workflow_step_names(
+                str(getattr(publish_state, "workflow", "") or "")
+            ),
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).

@@ -255,5 +255,40 @@ class TestHints(unittest.TestCase):
         self.assertFalse(footer.endswith("|"))
 
 
+class TestFullStepListAndLatestLink(unittest.TestCase):
+    def test_full_workflow_steps_are_listed_in_declared_order(self):
+        """Given the workflow definition's steps, when formatting the footer,
+        then steps not yet reached still appear, in declared order."""
+        footer = format_answer_footer(
+            _state(history=[_entry("plan")]),
+            steps=["plan", "spec", "implement", "review"],
+        )
+        self.assertEqual(
+            footer.split(" | ")[1],
+            "plan -> **spec** -> implement -> review",
+        )
+
+    def test_retried_step_links_to_its_latest_comment(self):
+        """Given plan ran twice, when a resolver is supplied, then plan links
+        to the most recent comment only."""
+        state = _state(history=[_entry("plan", [10]), _entry("plan", [42])])
+        resolver = StepLinkResolver(
+            thread=[
+                _agent_record(10, "https://github.com/o/r#issuecomment-10"),
+                _agent_record(42, "https://github.com/o/r#issuecomment-42"),
+            ],
+            history=state.history,
+        )
+        footer = format_answer_footer(state, steps=["plan", "spec"], resolver=resolver)
+        self.assertIn("[plan](https://github.com/o/r#issuecomment-42)", footer)
+        self.assertNotIn("issuecomment-10", footer)
+
+    def test_history_fallback_lists_a_retried_step_once(self):
+        """Given plan appears twice in history, when no step list is given,
+        then the steps segment shows plan once."""
+        state = _state(history=[_entry("plan"), _entry("plan")])
+        self.assertEqual(AnswerFooter().render_steps(state, None), "plan -> **spec**")
+
+
 if __name__ == "__main__":
     unittest.main()
