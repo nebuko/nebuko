@@ -593,15 +593,34 @@ def _caller_association(login: str) -> str | None:
     return "COLLABORATOR" if permission in _CALLER_PERMISSIONS_AUTHORIZED else None
 
 
-def _continuation_from_env() -> "ContinuationContext | None":
-    """The bot-trigger facts behind this run, or None for a human-triggered run."""
-    from nebuko.engine.harness.credentials import ContinuationContext, is_bot_actor  # noqa: PLC0415
+def _trigger_facts_from_env() -> "ContinuationContext":
+    """The trigger and lane facts behind this run, for every trigger type (ADR 0017).
+
+    A fresh ``/nebuko run workflow`` starts a workflow of its own, so it inherits
+    no lane from the previous state. An untrusted-only thread (no bot-authored
+    state) assumes a user-repo lane may exist, so the guard fails closed.
+    """
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        USER_REPO_LANE,
+        ContinuationContext,
+    )
+    from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
+    from nebuko.engine.lib.workflow_state.workflow_state import (  # noqa: PLC0415
+        dispatch_actor_from_event,
+        is_fresh_run,
+        lane_binding_from_env,
+    )
 
     login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
     actor_type = (os.environ.get("TRIGGER_AUTHOR_TYPE") or "").strip()
-    if not is_bot_actor(login, actor_type):
-        return None
     previous = _previous_state()
+    previous_lane = getattr(previous, "lane", None)
+    previous_owner = getattr(previous, "credential_owner", None)
+    if previous is None and WorkflowStateCodec().untrusted_handoff_marked():
+        previous_lane = USER_REPO_LANE
+    if is_fresh_run(os.environ):
+        previous_lane, previous_owner = None, None
+    lane, owner = lane_binding_from_env(os.environ, dispatch_actor_from_event(os.environ))
     try:
         parsed = json.loads(os.environ.get("TRUSTED_BOTS") or '["nebuko[bot]"]')
     except ValueError:
@@ -613,10 +632,43 @@ def _continuation_from_env() -> "ContinuationContext | None":
         trusted_bots=trusted,
         comment_header=os.environ.get("TRIGGER_COMMENT_HEADER") or "",
         started_by=getattr(previous, "started_by", None) or None,
-        credential_owner=(os.environ.get("CLAUDE_CREDENTIAL_OWNER") or "").strip() or None,
-        lane=(os.environ.get("WORKFLOW_LANE") or "").strip() or None,
-        previous_lane=getattr(previous, "lane", None),
-        previous_credential_owner=getattr(previous, "credential_owner", None),
+        credential_owner=owner,
+        lane=lane,
+        previous_lane=previous_lane,
+        previous_credential_owner=previous_owner,
+    )
+
+
+def _continuation_from_env() -> "ContinuationContext | None":
+    """The bot-trigger facts behind this run, or None for a human-triggered run."""
+    from nebuko.engine.harness.credentials import is_bot_actor  # noqa: PLC0415
+
+    ctx = _trigger_facts_from_env()
+    return ctx if is_bot_actor(ctx.trigger_login, ctx.trigger_type) else None
+
+
+def _record_lane_rebaseline(login: str) -> None:
+    """Move the hand-off state off its user-repo lane, recording who did it (ADR 0017).
+
+    build_state carries the hand-off forward, so the posted state and footer
+    show the re-baseline without any further plumbing.
+    """
+    from nebuko.engine.harness.credentials import SHARED_LANE, USER_REPO_LANE  # noqa: PLC0415
+    from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
+
+    codec = WorkflowStateCodec()
+    previous = codec.load_prev().state
+    if previous is None:
+        return
+    codec.save_prev(
+        previous.model_copy(
+            update={
+                "lane": SHARED_LANE,
+                "credential_owner": None,
+                "lane_changed_from": USER_REPO_LANE,
+                "lane_changed_by": login,
+            }
+        )
     )
 
 
@@ -659,6 +711,42 @@ def _enforce_harness_credentials(
         api_token_env = getattr(provider, "api_token_env", None)
         if is_subscription_token(api_token_env):
             subscription_token = api_token_env
+
+    # ADR 0017: lane binding runs before the per-model backend gate, for every
+    # trigger. A continuation of a user-repo workflow must stay in its lane, for
+    # every trigger (a human resume too) and whatever the backend, so the payer
+    # never changes silently. Only the starter may re-baseline it.
+    ctx = continuation if continuation is not None else _trigger_facts_from_env()
+    from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+        ClaudeCredentialError,
+        authorize_bot_continuation,
+        authorize_lane_binding,
+        authorize_lane_rebaseline,
+        is_bot_actor,
+    )
+
+    lane_decision = authorize_lane_binding(ctx)
+    if not lane_decision.allowed:
+        subscription_free = backend != CLAUDE_CODE_BACKEND and subscription_token is None
+        rebaseline = authorize_lane_rebaseline(ctx, subscription_free, _caller_association)
+        if not rebaseline.allowed:
+            raise ClaudeCredentialError(
+                f"{lane_decision.refusal_message()} Re-baseline refused: rule "
+                f"'{rebaseline.failed_rule}' ({rebaseline.detail})."
+            )
+        _record_lane_rebaseline(ctx.trigger_login)
+
+    # ADR 0017 / #1424: a bot-triggered run may spend the subscription only as a
+    # continuation of a human-started, still-authorized workflow.
+    is_bot = is_bot_actor(ctx.trigger_login, ctx.trigger_type)
+    if is_bot and (backend == CLAUDE_CODE_BACKEND or subscription_token is not None):
+        decision = authorize_bot_continuation(ctx, _caller_association)
+        if not decision.allowed:
+            raise ClaudeCredentialError(decision.refusal_message())
+
+    for ref in refs:
+        provider = getattr(ref, "provider_ref", None)
+        api_token_env = getattr(provider, "api_token_env", None)
         enforce_backend_credentials(
             backend, getattr(ref, "model_path", None), api_token_env
         )
@@ -675,26 +763,6 @@ def _enforce_harness_credentials(
             subscription_token,
         )
 
-    # ADR 0017: a bot continuation of a user-repo workflow must stay in its lane,
-    # whatever the backend, so the payer never changes silently.
-    ctx = continuation if continuation is not None else _continuation_from_env()
-    if ctx is not None:
-        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
-            ClaudeCredentialError,
-            authorize_bot_continuation,
-            authorize_lane_binding,
-        )
-
-        lane_decision = authorize_lane_binding(ctx)
-        if not lane_decision.allowed:
-            raise ClaudeCredentialError(lane_decision.refusal_message())
-
-        # ADR 0017 / #1424: a bot-triggered run may spend the subscription only
-        # as a continuation of a human-started, still-authorized workflow.
-        if backend == CLAUDE_CODE_BACKEND or subscription_token is not None:
-            decision = authorize_bot_continuation(ctx, _caller_association)
-            if not decision.allowed:
-                raise ClaudeCredentialError(decision.refusal_message())
 
 
 def run_agent(

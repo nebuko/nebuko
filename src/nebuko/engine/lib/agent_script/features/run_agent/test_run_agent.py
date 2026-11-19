@@ -1036,3 +1036,132 @@ class TestSubscriptionTokenIsolation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLaneBinding(unittest.TestCase):
+    """ADR 0017 lane binding: every trigger is checked; only the starter re-baselines."""
+
+    def setUp(self):
+        import tempfile
+
+        from nebuko.engine.lib.agent_script.features.run_agent import run_agent as ra
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for key in (
+            "TRIGGER_AUTHOR_LOGIN", "TRIGGER_AUTHOR_TYPE", "TRIGGER_COMMENT_HEADER",
+            "WORKFLOW_LANE", "CLAUDE_CREDENTIAL_OWNER", "GITHUB_EVENT_NAME",
+            "GITHUB_EVENT_PATH", "GITHUB_REPOSITORY_OWNER", "TRUSTED_BOTS",
+        ):
+            os.environ.pop(key, None)
+        os.environ["RUNNER_TEMP"] = self._tmp.name
+        original = ra._caller_association
+        ra._caller_association = lambda login: "OWNER" if login in {"alice", "bob"} else None
+        self.addCleanup(setattr, ra, "_caller_association", original)
+        self.ra = ra
+
+    def _seed_user_repo_state(self, owner="alice"):
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+
+        WorkflowStateCodec().save_prev(
+            WorkflowState(
+                workflow="dev-review-loop",
+                started_by=owner,
+                lane="user-repo",
+                credential_owner=owner,
+            )
+        )
+
+    def _human(self, login, header="/nebuko resume"):
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = login
+        os.environ["TRIGGER_AUTHOR_TYPE"] = "User"
+        os.environ["TRIGGER_COMMENT_HEADER"] = header
+
+    @staticmethod
+    def _agent(backend=None, model_path="claude-code/sonnet", token="CLAUDE_CODE_OAUTH_TOKEN"):
+        return TestClaudeCredentialGate._agent(backend, model_path, token)
+
+    def test_human_resume_on_user_repo_state_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        self._seed_user_repo_state("alice")
+        self._human("bob")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+        self.assertIn("user-repo lane", str(refused.exception))
+        self.assertIn("re-baseline", str(refused.exception))
+
+    def test_starter_re_baselines_with_a_non_subscription_config(self):
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        self._seed_user_repo_state("alice")
+        self._human("alice")
+        agent = self._agent(backend="openhands", model_path="mistral/mistral-large-4", token="MISTRAL_API_KEY")
+        self.ra._enforce_harness_credentials(agent, {})
+        state = WorkflowStateCodec().load_prev().state
+        self.assertEqual(state.lane, "shared")
+        self.assertIsNone(state.credential_owner)
+        self.assertEqual(state.lane_changed_from, "user-repo")
+        self.assertEqual(state.lane_changed_by, "alice")
+
+    def test_non_owner_cannot_re_baseline(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        self._seed_user_repo_state("alice")
+        self._human("bob")
+        agent = self._agent(backend="openhands", model_path="mistral/mistral-large-4", token="MISTRAL_API_KEY")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(agent, {})
+        self.assertIn("rebaseline-owner", str(refused.exception))
+
+    def test_bot_cannot_re_baseline(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        self._seed_user_repo_state("alice")
+        os.environ["TRIGGER_AUTHOR_LOGIN"] = "nebuko[bot]"
+        os.environ["TRIGGER_AUTHOR_TYPE"] = "Bot"
+        os.environ["TRIGGER_COMMENT_HEADER"] = "<!-- workflow-continue -->"
+        agent = self._agent(backend="openhands", model_path="mistral/mistral-large-4", token="MISTRAL_API_KEY")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(agent, {})
+        self.assertIn("lane-binding", str(refused.exception))
+
+    def test_fresh_run_on_a_user_repo_state_is_not_refused(self):
+        self._seed_user_repo_state("alice")
+        self._human("bob", header="/nebuko run workflow --name dev-review-loop")
+        self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+
+    def test_untrusted_only_thread_fails_closed(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        WorkflowStateCodec().mark_untrusted_handoff(True)
+        self._human("bob")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+        self.assertIn("user-repo lane", str(refused.exception))
+
+    def test_repository_dispatch_event_file_binds_the_user_repo_lane(self):
+        import json
+
+        from nebuko.engine.lib.workflow_state.workflow_state import (
+            dispatch_actor_from_event,
+            lane_binding_from_env,
+        )
+
+        event = os.path.join(self._tmp.name, "event.json")
+        with open(event, "w", encoding="utf-8") as handle:
+            json.dump({"client_payload": {"actor": "alice"}}, handle)
+        os.environ.update(
+            GITHUB_EVENT_NAME="repository_dispatch",
+            GITHUB_EVENT_PATH=event,
+            GITHUB_REPOSITORY_OWNER="alice",
+        )
+        actor = dispatch_actor_from_event(os.environ)
+        self.assertEqual(lane_binding_from_env(os.environ, actor), ("user-repo", "alice"))
+        os.environ["GITHUB_REPOSITORY_OWNER"] = "nebuko"
+        self.assertEqual(lane_binding_from_env(os.environ, actor), (None, None))

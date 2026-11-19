@@ -43,9 +43,11 @@ from nebuko.engine.lib.workflow_state import (
     WorkflowState,
     workflow_ref_from_env,
     agent_config_from_env,
-    credential_owner_from_env,
-    lane_from_env,
+    dispatch_actor_from_event,
+    is_fresh_run,
+    lane_binding_from_env,
 )
+from nebuko.engine.harness.credentials import SHARED_LANE
 from nebuko.engine.lib.workflow_state import extract_function_call
 from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
 from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
@@ -1464,6 +1466,13 @@ def build_output(
 
     pin = _resolve_pin(prefs)
 
+    lane, credential_owner = lane_binding_from_env(
+        os.environ, dispatch_actor_from_event(os.environ)
+    )
+    if lane is None and is_fresh_run(os.environ):
+        # A new /nebuko run workflow starts a workflow of its own: record the
+        # shared lane explicitly so build_state does not inherit the old one.
+        lane = SHARED_LANE
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -1493,8 +1502,8 @@ def build_output(
         gate=gate,
         workflow_ref=workflow_ref_from_env(os.environ),
         agent_config=agent_config_from_env(os.environ),
-        lane=lane_from_env(os.environ),
-        credential_owner=credential_owner_from_env(os.environ),
+        lane=lane,
+        credential_owner=credential_owner,
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,
         complexity_policy=_parse_complexity_policy_env(),

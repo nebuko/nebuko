@@ -50,6 +50,11 @@ CLAUDE_CODE_MODEL_PREFIX = "claude-code/"
 #: ``<login>/nebuko-claude-code`` repo (Lane D). Its continuations must run there.
 USER_REPO_LANE = "user-repo"
 
+#: Lane recorded once a user-repo workflow is re-baselined (the starter moved it
+#: to a non-subscription config). Any value other than ``USER_REPO_LANE`` releases
+#: the binding; the explicit name keeps the state self-describing.
+SHARED_LANE = "shared"
+
 
 class ClaudeCredentialError(RuntimeError):
     """A config pairs Claude Code credentials with another backend (ADR 0017).
@@ -217,7 +222,7 @@ class ContinuationDecision:
         """The terminal message for a refused run; names the failed rule."""
         hint = _API_KEY_LANE_HINT if self.api_key_lane_applies else ""
         return (
-            f"claude-code run refused for bot trigger: rule '{self.failed_rule}' "
+            f"claude-code run refused: rule '{self.failed_rule}' "
             f"failed ({self.detail}).{hint}"
         )
 
@@ -271,6 +276,51 @@ def authorize_bot_continuation(
     return ContinuationDecision(True)
 
 
+def authorize_lane_rebaseline(
+    ctx: ContinuationContext,
+    subscription_free: bool,
+    association_of: Callable[[str], str | None],
+) -> ContinuationDecision:
+    """Let the human who started a user-repo workflow move it off its lane.
+
+    The escape hatch for an owner whose private repo is unavailable. Only the
+    recorded ``started_by`` human, resuming from their own comment, with a
+    CALLER_AUTH association still held, and a resolved config that bills no
+    subscription may re-baseline. Never a bot trigger, never another human.
+    """
+    if ctx.previous_lane != USER_REPO_LANE:
+        return ContinuationDecision(True)
+    login = (ctx.trigger_login or "").strip()
+    if not login or is_bot_actor(login, ctx.trigger_type):
+        return ContinuationDecision(
+            False, "rebaseline-trigger", False, "a bot trigger cannot re-baseline a lane"
+        )
+    started_by = (ctx.started_by or "").strip()
+    if not started_by or login != started_by:
+        return ContinuationDecision(
+            False,
+            "rebaseline-owner",
+            False,
+            f"only the workflow starter may re-baseline; '{login}' did not start it",
+        )
+    if not subscription_free:
+        return ContinuationDecision(
+            False,
+            "rebaseline-config",
+            False,
+            "re-baselining needs a non-subscription --config",
+        )
+    association = association_of(login)
+    if association is None or association not in CONTINUATION_CALLER_ASSOCIATIONS:
+        return ContinuationDecision(
+            False,
+            "caller-association",
+            False,
+            f"'{login}' no longer holds OWNER/MEMBER/COLLABORATOR (association {association or 'unknown'})",
+        )
+    return ContinuationDecision(True)
+
+
 def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
     """Refuse a continuation of a user-repo workflow that leaves its user's lane.
 
@@ -292,5 +342,6 @@ def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
         "lane-binding",
         False,
         f"the workflow runs in the user-repo lane; resume it in {resume_in} "
-        f"(this run's lane '{ctx.lane or 'shared'}')",
+        f"(this run's lane '{ctx.lane or 'shared'}'), or have its starter re-baseline "
+        "the lane by resuming with a non-subscription --config",
     )

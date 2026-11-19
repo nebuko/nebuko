@@ -53,6 +53,26 @@ class WorkflowStateCodec:
         base = self._runner_temp or os.environ.get("RUNNER_TEMP", "/tmp")
         return os.path.join(base, HANDOFF_FILENAME)
 
+    # Sidecar flag: the thread holds state comments, but none from a trusted
+    # (bot) author. The guard then assumes a lane may exist (ADR 0017, fail closed).
+    _UNTRUSTED_SUFFIX = ".untrusted"
+
+    def mark_untrusted_handoff(self, marked: bool) -> None:
+        """Set or clear the untrusted-state flag beside the hand-off file."""
+        marker = self._handoff_path() + self._UNTRUSTED_SUFFIX
+        if not marked:
+            try:
+                os.remove(marker)
+            except FileNotFoundError:
+                pass
+            return
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("untrusted\n")
+
+    def untrusted_handoff_marked(self) -> bool:
+        """True when the thread's only state comments came from untrusted authors."""
+        return os.path.isfile(self._handoff_path() + self._UNTRUSTED_SUFFIX)
+
     # @stub-protected: signature defined by architect — do not modify
     def encode(self, state: WorkflowState, *, compact: bool = False) -> str:
         """Serialise ``state`` to the canonical (optionally compact) JSON."""

@@ -304,6 +304,10 @@ class WorkflowState(BaseModel):
     # Carried forward by every transition; None on legacy blobs.
     lane: Optional[str] = None  # @stub-protected
     credential_owner: Optional[str] = None  # @stub-protected
+    # Set when the starter re-baselines a user-repo lane (ADR 0017): the lane and
+    # owner it moved off, and the human who did it. Rendered in the footer.
+    lane_changed_from: Optional[str] = None
+    lane_changed_by: Optional[str] = None
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -424,6 +428,65 @@ def lane_from_env(env: Mapping[str, str]) -> Optional[str]:
     """
     value = (env.get("WORKFLOW_LANE") or "").strip()
     return value or None
+
+
+def dispatch_actor_from_event(env: Mapping[str, str]) -> Optional[str]:
+    """The ``client_payload.actor`` of a ``repository_dispatch`` run, else None.
+
+    Read from ``GITHUB_EVENT_PATH`` so it does not depend on which env vars the
+    workflow exported. Any non-dispatch event, or an unreadable file, is None.
+    """
+    import json
+
+    if (env.get("GITHUB_EVENT_NAME") or "").strip() != "repository_dispatch":
+        return None
+    path = (env.get("GITHUB_EVENT_PATH") or "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    client_payload = payload.get("client_payload") if isinstance(payload, dict) else None
+    actor = client_payload.get("actor") if isinstance(client_payload, dict) else None
+    value = str(actor or "").strip()
+    return value or None
+
+
+def lane_binding_from_env(
+    env: Mapping[str, str], dispatch_actor: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """This run's ``(lane, credential_owner)`` (ADR 0017).
+
+    ``WORKFLOW_LANE`` / ``CLAUDE_CREDENTIAL_OWNER`` override when set. Otherwise
+    a ``repository_dispatch`` run whose runner owner (``GITHUB_REPOSITORY_OWNER``)
+    matches the dispatch actor is the actor's own ``user-repo`` lane, bound to
+    that actor. Anything else is the shared lane: ``(None, None)``.
+    """
+    lane = lane_from_env(env)
+    owner = credential_owner_from_env(env)
+    if lane is not None or owner is not None:
+        return lane, owner
+    actor = (dispatch_actor or "").strip()
+    running_owner = (env.get("GITHUB_REPOSITORY_OWNER") or "").strip()
+    if not actor or running_owner.lower() != actor.lower():
+        return None, None
+    return "user-repo", actor
+
+
+def is_fresh_run(env: Mapping[str, str]) -> bool:
+    """True when the trigger comment is a human ``/nebuko run workflow`` command.
+
+    A fresh run starts a new workflow rather than continuing the recorded one, so
+    it neither inherits nor is refused by the previous state's lane.
+    """
+    from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
+        parse_workflow_command,
+    )
+
+    command = parse_workflow_command(env.get("TRIGGER_COMMENT_HEADER") or "")
+    return command is not None and command.action == "run"
 
 
 def credential_owner_from_env(env: Mapping[str, str]) -> Optional[str]:

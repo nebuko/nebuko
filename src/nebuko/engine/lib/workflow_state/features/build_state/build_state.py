@@ -210,6 +210,8 @@ def build_state(
         base_agent_config = None
         base_lane = None
         base_credential_owner = None
+        base_lane_changed_from = None
+        base_lane_changed_by = None
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
@@ -233,6 +235,8 @@ def build_state(
         base_agent_config = prev_state.agent_config
         base_lane = prev_state.lane
         base_credential_owner = prev_state.credential_owner
+        base_lane_changed_from = prev_state.lane_changed_from
+        base_lane_changed_by = prev_state.lane_changed_by
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
@@ -430,6 +434,8 @@ def build_state(
         agent_config=new_agent_config,
         lane=new_lane,
         credential_owner=new_credential_owner,
+        lane_changed_from=base_lane_changed_from,
+        lane_changed_by=base_lane_changed_by,
         position=position_refs,
         soft_retry=new_soft_retry,
         # Per-issue circuit-breaker policy (issue #839): carried forward

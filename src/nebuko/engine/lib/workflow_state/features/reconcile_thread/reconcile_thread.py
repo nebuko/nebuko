@@ -206,6 +206,13 @@ def _user_login(item: Mapping[str, Any]) -> str:
     return str(_user_block(item).get("login") or "")
 
 
+def is_bot_authored(
+    comment: Mapping[str, Any], engine_actor_id: int, engine_actor_login: str
+) -> bool:
+    """Public bot-authorship check; the trust anchor for state comments (ADR 0017)."""
+    return _author_is_bot(comment, engine_actor_id, engine_actor_login)
+
+
 def _author_is_bot(
     comment: Mapping[str, Any], engine_actor_id: int, engine_actor_login: str
 ) -> bool:

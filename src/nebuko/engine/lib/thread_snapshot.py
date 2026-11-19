@@ -55,6 +55,8 @@ class ThreadSnapshot:
     state: Optional["WorkflowState"] = None
     fetched_at: float = 0.0
     fetch_error: Optional[str] = None
+    #: Only untrusted (non-bot) state comments exist; the guard fails closed.
+    untrusted_state_only: bool = False
 
 
 def _state_view(comments: Sequence[Mapping[str, Any]]) -> list:
@@ -100,16 +102,41 @@ def build_snapshot(
     comments: Sequence[Mapping[str, Any]],
     *,
     fetch_error: Optional[str] = None,
+    engine_actor: Optional[tuple[int, str]] = None,
 ) -> ThreadSnapshot:
-    """Wrap already-fetched comments into a snapshot, extracting state once."""
+    """Wrap already-fetched comments into a snapshot, extracting state once.
+
+    Only bot-authored state comments are adopted (ADR 0017): a state comment
+    typed by a human could otherwise lower the lane guard. ``engine_actor`` is
+    the engine's own ``(user_id, login)``; ``None`` skips the filter (legacy).
+    """
+    from nebuko.engine.lib.workflow_state.features.reconcile_thread.reconcile_thread import (  # noqa: PLC0415
+        is_bot_authored,
+    )
+
     fetched_at = time.time()
     if fetch_error is not None:
         return ThreadSnapshot(fetched_at=fetched_at, fetch_error=fetch_error)
     ordered = tuple(comments)
+    if engine_actor is None:
+        trusted, untrusted = ordered, ()
+    else:
+        actor_id, actor_login = engine_actor
+        trusted = tuple(
+            c for c in ordered if is_bot_authored(c, actor_id, actor_login)
+        )
+        untrusted = tuple(
+            c for c in ordered if not is_bot_authored(c, actor_id, actor_login)
+        )
+    state = extract_latest_state_from_comments(_state_view(trusted))
+    untrusted_only = state is None and (
+        extract_latest_state_from_comments(_state_view(untrusted)) is not None
+    )
     return ThreadSnapshot(
         comments=ordered,
-        state=extract_latest_state_from_comments(_state_view(ordered)),
+        state=state,
         fetched_at=fetched_at,
+        untrusted_state_only=untrusted_only,
     )
 
 
