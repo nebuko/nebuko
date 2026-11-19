@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
-from nebuko.engine.lib.answer_footer import format_answer_footer
+from nebuko.engine.lib.answer_footer import StepLinkResolver, format_answer_footer
 from nebuko.engine.lib.redaction import redact_text
 from nebuko.engine.lib.validate_output import strip_agent_run_config
 from nebuko.engine.paths import secret_scan_enabled
@@ -695,6 +695,8 @@ def build_comment_body_parts(
     role_name: str | None = None,
     state: WorkflowState | None = None,
     engine_failed: bool = False,
+    step_resolver: StepLinkResolver | None = None,
+    workflow_steps: Sequence[str] | None = None,
     secret_findings: Sequence[SecretFinding] = (),
     secret_scan: bool | None = None,
 ) -> tuple[str, str]:
@@ -729,7 +731,7 @@ def build_comment_body_parts(
             role_name=role_name,
             recall_count=_posted_recall_count(state),
         )
-    footer = format_answer_footer(state)
+    footer = format_answer_footer(state, workflow_steps, step_resolver)
     if footer:
         body = f"{body}\n\n{footer}" if body.strip() else footer
     # A comment is a public artifact (issue #1347): the body is scanned for

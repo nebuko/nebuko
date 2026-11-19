@@ -192,11 +192,13 @@ class AnswerFooter:
 def format_answer_footer(
     state: WorkflowState | None,
     steps: Sequence[str] | None = None,
+    resolver: StepLinkResolver | None = None,
 ) -> str:
     """Module-level seam used by the publish path.
 
-    ``""`` when ``state`` is ``None``; otherwise ``AnswerFooter().render(state, steps)``.
+    ``""`` when ``state`` is ``None``; otherwise
+    ``AnswerFooter(resolver).render(state, steps)``.
     """
     if state is None:
         return ""
-    return AnswerFooter().render(state, steps)
+    return AnswerFooter(resolver).render(state, steps)
