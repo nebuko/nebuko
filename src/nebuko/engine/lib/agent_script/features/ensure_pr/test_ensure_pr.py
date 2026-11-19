@@ -387,7 +387,6 @@ class TestIssueLinking(unittest.TestCase):
             )
         )
 
-
     def test_engine_issue_number_links_new_pr_without_env(self):
         # The trigger's number reaches ensure_pr directly: TARGET_NUMBER unset.
         def gh_out(args, **k):

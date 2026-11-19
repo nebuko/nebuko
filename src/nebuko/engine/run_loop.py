@@ -3398,13 +3398,16 @@ class Engine:
         interrupted = (
             self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
-        issue_number = trigger.number if trigger is not None and trigger.number > 0 else None
+        issue_number = (
+            trigger.number if trigger is not None and trigger.number > 0 else None
+        )
         if trigger is None:
             issue_repo = ""
         elif trigger.type == "repository_dispatch":
             issue_repo = trigger.org_repo
         else:
-            issue_repo = str(((trigger.payload or {}).get("repository") or {}).get("full_name") or "")
+            repository = (trigger.payload or {}).get("repository") or {}
+            issue_repo = str(repository.get("full_name") or "")
         result = pr_finalize.PrFinalizer(
             issue_title=issue_title,
             interrupted=interrupted,
