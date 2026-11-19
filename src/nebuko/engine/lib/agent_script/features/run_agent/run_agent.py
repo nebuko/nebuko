@@ -562,15 +562,14 @@ def _harness_system_prompt(role_name: str) -> str:
 _CALLER_PERMISSIONS_AUTHORIZED = frozenset({"admin", "maintain", "write"})
 
 
-def _previous_started_by() -> str | None:
-    """``started_by`` of the persisted WORKFLOW_STATE, or None when unreadable."""
+def _previous_state() -> Any | None:
+    """The persisted WORKFLOW_STATE, or None when unreadable."""
     from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
 
     try:
-        state = WorkflowStateCodec().load_prev().state
+        return WorkflowStateCodec().load_prev().state
     except Exception:  # noqa: BLE001 - an unreadable state is "no human-started workflow"
         return None
-    return getattr(state, "started_by", None) or None
 
 
 def _caller_association(login: str) -> str | None:
@@ -602,6 +601,7 @@ def _continuation_from_env() -> "ContinuationContext | None":
     actor_type = (os.environ.get("TRIGGER_AUTHOR_TYPE") or "").strip()
     if not is_bot_actor(login, actor_type):
         return None
+    previous = _previous_state()
     try:
         parsed = json.loads(os.environ.get("TRUSTED_BOTS") or '["nebuko[bot]"]')
     except ValueError:
@@ -612,8 +612,11 @@ def _continuation_from_env() -> "ContinuationContext | None":
         trigger_type=actor_type,
         trusted_bots=trusted,
         comment_header=os.environ.get("TRIGGER_COMMENT_HEADER") or "",
-        started_by=_previous_started_by(),
+        started_by=getattr(previous, "started_by", None) or None,
         credential_owner=(os.environ.get("CLAUDE_CREDENTIAL_OWNER") or "").strip() or None,
+        lane=(os.environ.get("WORKFLOW_LANE") or "").strip() or None,
+        previous_lane=getattr(previous, "lane", None),
+        previous_credential_owner=getattr(previous, "credential_owner", None),
     )
 
 
@@ -672,16 +675,23 @@ def _enforce_harness_credentials(
             subscription_token,
         )
 
-    if backend == CLAUDE_CODE_BACKEND or subscription_token is not None:
+    # ADR 0017: a bot continuation of a user-repo workflow must stay in its lane,
+    # whatever the backend, so the payer never changes silently.
+    ctx = continuation if continuation is not None else _continuation_from_env()
+    if ctx is not None:
+        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+            ClaudeCredentialError,
+            authorize_bot_continuation,
+            authorize_lane_binding,
+        )
+
+        lane_decision = authorize_lane_binding(ctx)
+        if not lane_decision.allowed:
+            raise ClaudeCredentialError(lane_decision.refusal_message())
+
         # ADR 0017 / #1424: a bot-triggered run may spend the subscription only
         # as a continuation of a human-started, still-authorized workflow.
-        ctx = continuation if continuation is not None else _continuation_from_env()
-        if ctx is not None:
-            from nebuko.engine.harness.credentials import (  # noqa: PLC0415
-                ClaudeCredentialError,
-                authorize_bot_continuation,
-            )
-
+        if backend == CLAUDE_CODE_BACKEND or subscription_token is not None:
             decision = authorize_bot_continuation(ctx, _caller_association)
             if not decision.allowed:
                 raise ClaudeCredentialError(decision.refusal_message())

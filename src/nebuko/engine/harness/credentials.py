@@ -46,6 +46,10 @@ SUBSCRIPTION_TOKEN_ENVS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 #: ``model_path`` prefix that routes a model through the Claude Code binary.
 CLAUDE_CODE_MODEL_PREFIX = "claude-code/"
 
+#: ``WORKFLOW_STATE.lane`` of a workflow dispatched into the user's own
+#: ``<login>/nebuko-claude-code`` repo (Lane D). Its continuations must run there.
+USER_REPO_LANE = "user-repo"
+
 
 class ClaudeCredentialError(RuntimeError):
     """A config pairs Claude Code credentials with another backend (ADR 0017).
@@ -178,6 +182,10 @@ class ContinuationContext:
         started_by: ``started_by`` of the previous WORKFLOW_STATE, if any.
         credential_owner: Login bound to the credential in the per-user lane;
             ``None`` in the shared lane, where no owner binding applies.
+        lane: ``WORKFLOW_LANE`` of this run; ``None`` when unset (shared lane).
+        previous_lane: ``lane`` of the previous WORKFLOW_STATE, if any.
+        previous_credential_owner: ``credential_owner`` of the previous
+            WORKFLOW_STATE, if any.
     """
 
     trigger_login: str
@@ -186,6 +194,9 @@ class ContinuationContext:
     comment_header: str
     started_by: str | None
     credential_owner: str | None = None
+    lane: str | None = None
+    previous_lane: str | None = None
+    previous_credential_owner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -258,3 +269,28 @@ def authorize_bot_continuation(
         )
 
     return ContinuationDecision(True)
+
+
+def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
+    """Refuse a continuation of a user-repo workflow that leaves its user's lane.
+
+    A workflow started in ``<login>/nebuko-claude-code`` bills that user's
+    subscription for every step. A bot continuation may proceed only in the
+    same lane and for the same credential owner; any other lane (the org repo,
+    a shared token, an API-key profile) would move the payer silently (ADR 0017).
+    Applies to every backend, not only claude-code, because a silent change of
+    model is the same violation.
+    """
+    if ctx.previous_lane != USER_REPO_LANE:
+        return ContinuationDecision(True)
+    owner = (ctx.previous_credential_owner or "").strip()
+    if ctx.lane == USER_REPO_LANE and owner and ctx.credential_owner == owner:
+        return ContinuationDecision(True)
+    resume_in = f"{owner}/nebuko-claude-code" if owner else "the user's nebuko-claude-code repo"
+    return ContinuationDecision(
+        False,
+        "lane-binding",
+        False,
+        f"the workflow runs in the user-repo lane; resume it in {resume_in} "
+        f"(this run's lane '{ctx.lane or 'shared'}')",
+    )

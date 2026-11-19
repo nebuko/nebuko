@@ -60,6 +60,8 @@ from .workflow_state import (
     go_next,
     workflow_ref_from_env,
     agent_config_from_env,
+    credential_owner_from_env,
+    lane_from_env,
 )
 
 __all__ = [
@@ -105,4 +107,6 @@ __all__ = [
     "go_next",
     "workflow_ref_from_env",
     "agent_config_from_env",
+    "credential_owner_from_env",
+    "lane_from_env",
 ]

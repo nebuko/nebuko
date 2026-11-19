@@ -43,6 +43,8 @@ from nebuko.engine.lib.workflow_state import (
     WorkflowState,
     workflow_ref_from_env,
     agent_config_from_env,
+    credential_owner_from_env,
+    lane_from_env,
 )
 from nebuko.engine.lib.workflow_state import extract_function_call
 from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
@@ -1491,6 +1493,8 @@ def build_output(
         gate=gate,
         workflow_ref=workflow_ref_from_env(os.environ),
         agent_config=agent_config_from_env(os.environ),
+        lane=lane_from_env(os.environ),
+        credential_owner=credential_owner_from_env(os.environ),
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,
         complexity_policy=_parse_complexity_policy_env(),

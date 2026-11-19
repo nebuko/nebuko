@@ -137,8 +137,8 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 # universal position -> v4 (``run_id`` + ``schema_version`` split) -> v5 (thread
 # ledger + per-step input records, issue #872) -> v6 (``turn_outcome`` replaces
 # the legacy ``dispatch``, issue #964) -> v7 (``agent_config`` per-run agent
-# config selection, issue #1389).
-STATE_SCHEMA_VERSION = 7
+# config selection, issue #1389) -> v8 (``lane`` + ``credential_owner``, ADR 0017).
+STATE_SCHEMA_VERSION = 8
 
 
 class WorkflowState(BaseModel):
@@ -230,6 +230,13 @@ class WorkflowState(BaseModel):
             persists across hand-off comments — each comment is a new job that
             would otherwise fall back to the workflow's own config. None when
             the run never selected one, so legacy blobs load unchanged.
+        lane: Execution lane the workflow was started on (``user-repo`` for a
+            Lane D run in the user's own repo), from ``WORKFLOW_LANE``. A
+            continuation of a ``user-repo`` state must run in that lane (ADR
+            0017). None on legacy blobs and shared-lane runs.
+        credential_owner: Login bound to the credential of a per-user lane, from
+            ``CLAUDE_CREDENTIAL_OWNER``. A login only, never a secret. None when
+            no owner is bound.
     """
 
     run_id: int = 0
@@ -293,6 +300,10 @@ class WorkflowState(BaseModel):
     # new job) keep the same provider; None on legacy blobs, which load
     # unchanged.
     agent_config: Optional[str] = None  # @stub-protected
+    # Execution lane and credential owner the workflow was started on (ADR 0017).
+    # Carried forward by every transition; None on legacy blobs.
+    lane: Optional[str] = None  # @stub-protected
+    credential_owner: Optional[str] = None  # @stub-protected
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -402,6 +413,32 @@ def agent_config_from_env(env: Mapping[str, str]) -> Optional[str]:
     return value or None
 
 
+def lane_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read this run's execution lane from ``WORKFLOW_LANE`` (ADR 0017).
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty ``WORKFLOW_LANE`` value, or ``None`` for the shared lane.
+    """
+    value = (env.get("WORKFLOW_LANE") or "").strip()
+    return value or None
+
+
+def credential_owner_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read the per-user credential owner login from ``CLAUDE_CREDENTIAL_OWNER``.
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty owner login, or ``None`` when no owner is bound.
+    """
+    value = (env.get("CLAUDE_CREDENTIAL_OWNER") or "").strip()
+    return value or None
+
+
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
     return state_to_json(state)
@@ -441,6 +478,8 @@ def go_next(
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
     agent_config: Optional[str] = None,
+    lane: Optional[str] = None,
+    credential_owner: Optional[str] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -469,4 +508,6 @@ def go_next(
         workflow_ref=workflow_ref,
         gate=gate,
         agent_config=agent_config,
+        lane=lane,
+        credential_owner=credential_owner,
     )
