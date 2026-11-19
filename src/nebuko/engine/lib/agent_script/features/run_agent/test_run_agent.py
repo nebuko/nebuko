@@ -755,6 +755,21 @@ class TestParseContextBodiesEnv(unittest.TestCase):
 class TestClaudeCredentialGate(unittest.TestCase):
     """ADR 0017 rule 1 is enforced at run time, not only by the linter."""
 
+    def setUp(self):
+        # A bot-triggered environment (a workflow-continue run) must not leak into
+        # these human-triggered cases: _continuation_from_env reads it.
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for key in (
+            "TRIGGER_AUTHOR_LOGIN",
+            "TRIGGER_AUTHOR_TYPE",
+            "TRIGGER_COMMENT_HEADER",
+            "CLAUDE_CREDENTIAL_OWNER",
+            "WORKFLOW_LANE",
+        ):
+            os.environ.pop(key, None)
+
     @staticmethod
     def _agent(backend=None, model_path="claude-code/sonnet", token="CLAUDE_CODE_OAUTH_TOKEN"):
         ref = SimpleNamespace(
@@ -822,6 +837,32 @@ class TestClaudeCredentialGate(unittest.TestCase):
         finally:
             ra._caller_association = original
         self.assertIn("human-started-state", str(refused.exception))
+
+    def test_user_repo_state_on_the_org_shared_token_is_refused(self):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError, ContinuationContext
+        from nebuko.engine.lib.agent_script.features.run_agent import run_agent as ra
+
+        ctx = ContinuationContext(
+            trigger_login="nebuko[bot]",
+            trigger_type="Bot",
+            trusted_bots=("nebuko[bot]",),
+            comment_header="<!-- workflow-continue -->",
+            started_by="alice",
+            credential_owner=None,
+            lane="shared",
+            previous_lane="user-repo",
+            previous_credential_owner="alice",
+        )
+        agent = self._agent(backend="claude-code")
+        original = ra._caller_association
+        ra._caller_association = lambda login: "OWNER" if login == "alice" else None
+        try:
+            with self.assertRaises(ClaudeCredentialError) as refused:
+                ra._enforce_harness_credentials(agent, continuation=ctx)
+        finally:
+            ra._caller_association = original
+        self.assertIn("user-repo lane", str(refused.exception))
+        self.assertIn("alice/nebuko-claude-code", str(refused.exception))
 
     def test_a_tier_swap_is_checked_too(self):
         from nebuko.engine.harness.credentials import ClaudeCredentialError
