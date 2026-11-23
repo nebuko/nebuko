@@ -9,9 +9,13 @@ failure, ``2`` usage (unknown agent, bad arguments).
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from pathlib import Path
+from typing import Any, Literal, Sequence
 
 from nebuko.engine.lib import default_paths
 from nebuko.engine.lib.config.features.load_config.load_config import load_config
@@ -43,6 +47,75 @@ class AgentRunRequest:
         if self.temperature is not None:
             env["CONFIG_TEMPERATURE"] = str(self.temperature)
         return env
+
+    def workflow_yaml(self) -> str:
+        """One-step workflow that runs ``name`` with the task as its step prompt."""
+        prompt = self.task or f"Run as the {self.name} agent."
+        return "\n".join(
+            [
+                f"name: {json.dumps(self.workflow_name)}",
+                f"description: {json.dumps(f'Single run of agent {self.name} (nebuko run agent)')}",
+                "steps:",
+                "  - name: run",
+                f"    agent: {json.dumps(self.name)}",
+                f"    complexity: {self.complexity or 'medium'}",
+                f"    prompt: {json.dumps(prompt)}",
+                "",
+            ]
+        )
+
+    def trigger_payload(self) -> dict[str, Any]:
+        """``trigger.json`` body that selects the generated workflow by name."""
+        return {
+            "author": "nebuko-cli",
+            "body": f"/nebuko run workflow --name {self.workflow_name}",
+            "type": "workflow_dispatch",
+            "number": 0,
+        }
+
+    @property
+    def workflow_name(self) -> str:
+        return f"agent-{self.name}"
+
+
+def run_agent_request(request: AgentRunRequest) -> int:
+    """Run ``request`` as a generated one-step workflow on the local adapter; print its answer.
+
+    The engine resolves workflow names only from the caller's ``.nebuko/workflows/`` and the
+    shipped defaults, so the generated file is staged there for the duration of the run and
+    removed afterwards. The run state lives in a temporary run directory.
+    """
+    from nebuko.engine.lib.default_paths import user_dir
+    from nebuko.engine.run_loop import main as run_loop_main
+
+    workflows = user_dir() / "workflows"
+    created_dir = not workflows.exists()
+    workflows.mkdir(parents=True, exist_ok=True)
+    workflow_file = workflows / f"{request.workflow_name}.yaml"
+    overrides = {"ENGINE_ADAPTER": "local", **request.to_env()}
+    saved = {key: os.environ.get(key) for key in overrides}
+    with tempfile.TemporaryDirectory(prefix="nebuko-agent-") as tmp:
+        run_dir = Path(tmp)
+        (run_dir / "trigger.json").write_text(
+            json.dumps(request.trigger_payload()), encoding="utf-8"
+        )
+        workflow_file.write_text(request.workflow_yaml(), encoding="utf-8")
+        os.environ.update(overrides)
+        try:
+            code = run_loop_main(["--adapter", "local", "--run-dir", str(run_dir)])
+        finally:
+            workflow_file.unlink(missing_ok=True)
+            if created_dir and not any(workflows.iterdir()):
+                workflows.rmdir()
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        answer = run_dir / "latest_answer.md"
+        if answer.is_file():
+            print(answer.read_text(encoding="utf-8"))
+        return code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,11 +165,4 @@ def main(argv: Sequence[str]) -> int:
     if error:
         print(f"nebuko run agent: {error}", file=sys.stderr)
         return EXIT_USAGE
-    # Single-agent execution is not wired yet; the validated request and its env are the
-    # contract the execution step will consume.
-    print(
-        f"nebuko run agent: single-agent execution is not implemented yet "
-        f"(agent={request.name}, env={request.to_env()})",
-        file=sys.stderr,
-    )
-    return EXIT_FAILED
+    return run_agent_request(request)
