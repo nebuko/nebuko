@@ -226,7 +226,7 @@ class ContinuationDecision:
         """The terminal message for a refused run; names the failed rule."""
         hint = _API_KEY_LANE_HINT if self.api_key_lane_applies else ""
         return (
-            f"claude-code run refused: rule '{self.failed_rule}' "
+            f"run refused: rule '{self.failed_rule}' "
             f"failed ({self.detail}).{hint}"
         )
 

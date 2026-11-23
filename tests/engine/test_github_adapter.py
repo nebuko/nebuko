@@ -426,7 +426,12 @@ class TestRunStatus:
 
         adapter.set_status(RunStatus.REVIEW_NEEDED)
 
-        assert client.removed == ["nebuko:running", "nebuko:gated", "nebuko:failed"]
+        assert client.removed == [
+            "nebuko:running",
+            "nebuko:gated",
+            "nebuko:failed",
+            "nebuko:refused",
+        ]
         assert "nebuko:review-needed" not in client.removed
 
     def test_maps_every_status_to_its_label(self):
@@ -437,6 +442,7 @@ class TestRunStatus:
             "nebuko:running",
             "nebuko:gated",
             "nebuko:failed",
+            "nebuko:refused",
             "nebuko:review-needed",
         ]
 

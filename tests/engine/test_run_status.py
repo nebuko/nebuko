@@ -183,6 +183,25 @@ class TestEngineStatus:
         assert outcome.exit_code == ExitCode.ERROR
         assert engine.adapter.load_status() is RunStatus.FAILED
 
+    def test_a_credential_refusal_is_refused_and_exits_zero(self, tmp_path, monkeypatch):
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        engine = _engine(tmp_path)
+        _stub_resolved(monkeypatch, dict(_RESOLVED_MID_WORKFLOW))
+
+        def refuse(self, prompt):
+            raise ClaudeCredentialError("run refused: rule 'lane-binding' failed (detail)")
+
+        monkeypatch.setattr(Engine, "invoke_agent", refuse)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert outcome.process_exit_code() == 0
+        assert outcome.posted_body is not None
+        assert "did not produce a final message" not in outcome.posted_body
+        assert engine.adapter.load_status() is RunStatus.REFUSED
+
     def test_a_script_step_start_is_running(self, tmp_path, monkeypatch):
         import sys
 
