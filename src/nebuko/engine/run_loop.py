@@ -5241,6 +5241,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return init_main(raw_args[1:])
 
+    if raw_args and raw_args[0] == "run":
+        from nebuko.engine.run_cli import main as run_cli_main
+
+        return run_cli_main(raw_args[1:])
+
     from nebuko.adapters import build_adapter
 
     parser = argparse.ArgumentParser(description="Run one orchestration engine step")
