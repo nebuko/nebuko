@@ -13,8 +13,7 @@ import json
 import os
 import sys
 import tempfile
-import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -37,8 +36,6 @@ class AgentRunRequest:
     complexity: Complexity | None = None
     temperature: float | None = None
     task: str | None = None
-    # Generated workflow name; ``None`` means ``agent-<name>``.
-    workflow: str | None = None
 
     def to_env(self) -> dict[str, str]:
         """Translate the overrides to the engine's env contract; unset fields emit nothing."""
@@ -78,41 +75,38 @@ class AgentRunRequest:
 
     @property
     def workflow_name(self) -> str:
-        return self.workflow or f"agent-{self.name}"
+        return f"agent-{self.name}"
 
 
 def run_agent_request(request: AgentRunRequest) -> int:
     """Run ``request`` as a generated one-step workflow on the local adapter; print its answer.
 
-    The engine resolves workflow names only from the caller's ``.nebuko/workflows/`` and the
-    shipped defaults, so the generated file is staged there for the duration of the run and
-    removed afterwards. The run state lives in a temporary run directory.
+    The generated workflow and the run state both live in a temporary directory; the engine
+    reads the workflow through ``NEBUKO_STAGED_WORKFLOWS_DIR`` so the shipped workflows stay
+    visible.
     """
-    from nebuko.engine.lib.default_paths import user_dir
     from nebuko.engine.run_loop import main as run_loop_main
 
-    # A per-run name keeps the staged file from ever overwriting a user's workflow.
-    request = replace(request, workflow=f"agent-{request.name}-{uuid.uuid4().hex[:8]}")
-    workflows = user_dir() / "workflows"
-    created_dir = not workflows.exists()
-    workflows.mkdir(parents=True, exist_ok=True)
-    workflow_file = workflows / f"{request.workflow_name}.yaml"
-    overrides = {"ENGINE_ADAPTER": "local", **request.to_env()}
-    saved = {key: os.environ.get(key) for key in overrides}
     with tempfile.TemporaryDirectory(prefix="nebuko-agent-") as tmp:
-        run_dir = Path(tmp)
+        workflows = Path(tmp) / "workflows"
+        run_dir = Path(tmp) / "run"
+        workflows.mkdir()
+        run_dir.mkdir()
+        (workflows / f"{request.workflow_name}.yaml").write_text(
+            request.workflow_yaml(), encoding="utf-8"
+        )
         (run_dir / "trigger.json").write_text(
             json.dumps(request.trigger_payload()), encoding="utf-8"
         )
-        with workflow_file.open("x", encoding="utf-8") as handle:
-            handle.write(request.workflow_yaml())
+        overrides = {
+            "NEBUKO_STAGED_WORKFLOWS_DIR": str(workflows),
+            **request.to_env(),
+        }
+        saved = {key: os.environ.get(key) for key in overrides}
         os.environ.update(overrides)
         try:
             code = run_loop_main(["--adapter", "local", "--run-dir", str(run_dir)])
         finally:
-            workflow_file.unlink(missing_ok=True)
-            if created_dir and not any(workflows.iterdir()):
-                workflows.rmdir()
             for key, value in saved.items():
                 if value is None:
                     os.environ.pop(key, None)

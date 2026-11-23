@@ -281,6 +281,9 @@ metrics, remote (zero-copy) workflows and a deterministic command surface
 (`@@agent`, `/nebuko run workflow`, `force-step`, `resume`, `delete comments`).
 Full inventory: [features.md](docs/features.md).
 
+Run a single agent from a terminal: `nebuko run agent --name dev --task "..."`
+(see [reference.md](docs/reference.md#nebuko-run-agent)).
+
 **Know before you adopt.**
 - The config schema and `WORKFLOW_STATE` format still move (legacy state loads
   unchanged).

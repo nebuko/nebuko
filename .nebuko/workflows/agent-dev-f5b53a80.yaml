@@ -1,7 +1,0 @@
-name: "agent-dev-f5b53a80"
-description: "Single run of agent dev (nebuko run agent)"
-steps:
-  - name: run
-    agent: "dev"
-    complexity: medium
-    prompt: "Say hi"

@@ -3147,10 +3147,12 @@ class Engine:
         """
         paths = NebukoPaths.discover(self._caller_root())
         roots = paths.search_roots(ConfigKind.WORKFLOW)
-        return (
-            str(roots[-1]),
-            str(roots[0]) if len(roots) > 1 else None,
+        # ``NEBUKO_STAGED_WORKFLOWS_DIR`` pins the override layer for ``nebuko run agent``,
+        # whose generated one-step workflow lives in a temp dir (not the caller's workspace).
+        local = os.environ.get("NEBUKO_STAGED_WORKFLOWS_DIR") or (
+            str(roots[0]) if len(roots) > 1 else None
         )
+        return (str(roots[-1]), local)
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:

@@ -62,14 +62,14 @@ def test_known_agent_executes_and_prints_answer(monkeypatch, capsys):
         run_dir = Path(argv[argv.index("--run-dir") + 1])
         seen["argv"] = argv
         seen["trigger"] = json.loads((run_dir / "trigger.json").read_text())
-        seen["workflow"] = Path(os.environ["LOCAL_WORKFLOWS_DIR"], "agent-dev.yaml").read_text()
+        seen["workflow"] = Path(os.environ["NEBUKO_STAGED_WORKFLOWS_DIR"], "agent-dev.yaml").read_text()
         seen["complexity"] = os.environ.get("CONFIG_COMPLEXITY")
         (run_dir / "latest_answer.md").write_text("hello from dev", encoding="utf-8")
         return 0
 
     monkeypatch.setattr("nebuko.engine.run_loop.main", fake_run_loop_main)
     monkeypatch.delenv("CONFIG_COMPLEXITY", raising=False)
-    monkeypatch.setenv("LOCAL_WORKFLOWS_DIR", "/pinned/before")
+    monkeypatch.setenv("NEBUKO_STAGED_WORKFLOWS_DIR", "/pinned/before")
     assert main(["agent", "--name", "dev", "--complexity", "high", "--task", "x"]) == 0
     assert "hello from dev" in capsys.readouterr().out
     assert seen["argv"][:2] == ["--adapter", "local"]
@@ -77,7 +77,7 @@ def test_known_agent_executes_and_prints_answer(monkeypatch, capsys):
     assert "complexity: high" in seen["workflow"]
     assert seen["complexity"] == "high"
     assert "CONFIG_COMPLEXITY" not in os.environ
-    assert os.environ["LOCAL_WORKFLOWS_DIR"] == "/pinned/before"
+    assert os.environ["NEBUKO_STAGED_WORKFLOWS_DIR"] == "/pinned/before"
 
 
 def test_run_agent_restores_preexisting_env(monkeypatch):

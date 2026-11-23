@@ -95,6 +95,26 @@ loops.
 
 ---
 
+## `nebuko run agent`
+
+Runs one configured agent from a terminal as a generated one-step workflow on the local
+adapter, then prints its answer. The run state lives in a temporary directory.
+
+```bash
+nebuko run agent --name dev --task "Summarise the open PRs"
+nebuko run agent --name dev --complexity high --temperature 0.2 --config agent-config.yaml
+```
+
+| Flag | Effect |
+|---|---|
+| `--name <agent>` | Required. Must be declared in the agent config (exit `2` otherwise). |
+| `--config <file>` | Agent config to use; maps to `AGENT_CONFIG_PATH`. |
+| `--complexity low\|medium\|high` | Complexity tier of the step; maps to `CONFIG_COMPLEXITY`. Defaults to `medium`. |
+| `--temperature <float>` | Sampling override; maps to `CONFIG_TEMPERATURE`. |
+| `--task <text>` | Step prompt for the agent. Defaults to `Run as the <agent> agent.` |
+
+Exit codes: `0` success, `1` run failure, `2` usage error.
+
 ## Workflow YAML Grammar
 
 Workflows are first-class YAML definitions in `workflows/` (local) or fetched
