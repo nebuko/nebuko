@@ -868,7 +868,10 @@ def _default_base(*, transport: Optional[GitHubTransport] = None) -> str:
     resolves the target repo from the ambient git context (remote origin /
     GITHUB_REPOSITORY), so no URL parsing is needed.
     """
-    base = os.environ.get("GITHUB_BASE_REF", "").strip()
+    base = (
+        os.environ.get("NEBUKO_BASE_BRANCH", "").strip()
+        or os.environ.get("GITHUB_BASE_REF", "").strip()
+    )
     if base:
         return base
     try:

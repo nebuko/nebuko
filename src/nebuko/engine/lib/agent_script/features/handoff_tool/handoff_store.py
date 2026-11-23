@@ -41,6 +41,11 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _configured_base() -> str:
+    """The repo's configured base branch (``NEBUKO_BASE_BRANCH``), or ``""``."""
+    return os.environ.get("NEBUKO_BASE_BRANCH", "").strip()
+
+
 class HandoffStore:
     """Read/write the tracked handoff document, committing on the engine's side.
 
@@ -104,7 +109,7 @@ class HandoffStore:
 
     def _is_base_branch(self, branch: str) -> bool:
         """Whether ``branch`` is a base branch (``main``/``master``)."""
-        if branch in ("main", "master"):
+        if branch in ("main", "master") or (_configured_base() and branch == _configured_base()):
             return True
         try:
             return bool(_run_git(["config", f"branch.{branch}.nebukoHandoffBase"], cwd=self._repo_root))
@@ -113,7 +118,10 @@ class HandoffStore:
 
     def _base_start_point(self) -> str:
         """The freshest base ref to cut the handoff branch from (``""`` if none)."""
-        for candidate in ("origin/main", "origin/master"):
+        candidates = ["origin/main", "origin/master"]
+        if _configured_base():
+            candidates.insert(0, f"origin/{_configured_base()}")
+        for candidate in candidates:
             try:
                 _run_git(["rev-parse", "--verify", candidate], cwd=self._repo_root)
                 return candidate
