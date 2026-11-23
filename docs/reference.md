@@ -481,6 +481,7 @@ Variables the orchestrator sets/consumes per run:
 | `AGENT_CONFIG` | `resolve_config` | Raw `--config` value of the run's `/nebuko run workflow` command (issue #1389); `build_output` persists it as `WorkflowState.agent_config` so later hand-off comments keep the same config. Absent when the run selected none. |
 | `CIRCUIT_BREAKER_THRESHOLD` | reusable workflow (`circuit_breaker_threshold`) / `.nebuko/nebuko.yaml` | Bot-marker count that trips the circuit breaker. Precedence: workflow input > manifest `circuit_breaker_threshold` > `15`. |
 | `PIN_COMMENT` | reusable workflow (`pin_comment`) / `.nebuko/nebuko.yaml` | Pin every agent step output comment. OR-ed: `true` from the input or the manifest's `pin_comment` wins. |
+| `NEBUKO_BASE_BRANCH` | `.nebuko/nebuko.yaml` (`base_branch`) | Base branch for the scaffold, evidence checkout, PR finalizer and handoff branches (e.g. `master`). Precedence: `NEBUKO_BASE_BRANCH` > `GITHUB_BASE_REF` > remote `origin/HEAD` > `main`. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |

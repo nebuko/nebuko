@@ -6,8 +6,8 @@ Package-by-feature layout (mirrors ``pricing/`` and ``workflow_state/``):
 ``pr_finalize.py`` opens the PR after the agent phase (issue #1138).
 """
 
+from .base_branch import DEFAULT_BASE_BRANCH
 from .branch_scaffold import (
-    DEFAULT_BASE_BRANCH,
     BranchScaffold,
     ScaffoldResult,
     branch_slug,

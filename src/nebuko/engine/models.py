@@ -85,10 +85,13 @@ class NebukoManifest(BaseModel):
     circuit_breaker_threshold: int | None = Field(None, ge=1)
     history_comment_count: int | None = None
     pin_comment: bool | None = None
+    base_branch: str | None = None
 
     def env_defaults(self) -> dict[str, str]:
         """The env vars this manifest sets, as the workflow would export them."""
         values: dict[str, str] = {}
+        if self.base_branch and self.base_branch.strip():
+            values["NEBUKO_BASE_BRANCH"] = self.base_branch.strip()
         if self.agent_config is not None:
             values["AGENT_CONFIG_PATH"] = self.agent_config
         if self.circuit_breaker_threshold is not None:
