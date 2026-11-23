@@ -1391,7 +1391,6 @@ class Engine:
                     failure_reason = _hook_failure_note("pre", pre_result)
 
             if failure_reason is None:
-                self.notify_agent_started(self._agent_start_notice(trigger))
                 # Imported here, not at module scope: the agent assembly needs
                 # the runtime extra, and the engine imports without it.
                 from nebuko.engine.harness.credentials import (  # noqa: PLC0415
@@ -1400,6 +1399,14 @@ class Engine:
                 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
                     ProviderFailure,
                 )
+
+                # The guard runs before the acknowledgment, so a refusal posts
+                # one notice and no "agent started" comment (issue #1099).
+                try:
+                    self._preflight_agent_credentials()
+                except ClaudeCredentialError as exc:
+                    return self._handle_refusal(str(exc), phases)
+                self.notify_agent_started(self._agent_start_notice(trigger))
 
                 try:
                     agent_result = self.invoke_agent(prompt)
@@ -3196,6 +3203,38 @@ class Engine:
         )
 
     # @stub-protected
+    def _preflight_agent_credentials(self) -> None:
+        """Run the credential guard host-side, before the agent acknowledgment (#1099).
+
+        The guard also runs inside the agent seam, which starts after the
+        acknowledgment; a refusal there would post the ack beside the refusal.
+        Only a ``ClaudeCredentialError`` is acted on. Any other failure (an
+        unresolvable config, a missing runtime) is left to the agent seam, which
+        reports it as it always has.
+        """
+        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+            ClaudeCredentialError,
+        )
+
+        try:
+            from nebuko.engine.agent_host import _applied_env  # noqa: PLC0415
+            from nebuko.engine.lib.agent_script.features.resolve_llm_config.resolve_llm_config import (  # noqa: PLC0415
+                resolve_llm_config,
+            )
+            from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (  # noqa: PLC0415
+                _enforce_harness_credentials,
+            )
+
+            with _applied_env(self._agent_env()):
+                llm_config, _, agent_cfg = resolve_llm_config(
+                    SimpleNamespace(prompt_location=None), ""
+                )
+                _enforce_harness_credentials(agent_cfg, llm_config)
+        except ClaudeCredentialError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the agent seam reports it
+            log.debug("[phase:agent] credential preflight skipped: %s", exc)
+
     def invoke_agent(self, prompt: str) -> Any:
         """Run the agent through the engine's in-process seam.
 

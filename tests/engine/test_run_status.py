@@ -289,3 +289,63 @@ class TestEngineStatus:
 
         assert outcome.exit_code == ExitCode.ADVANCE
         assert outcome.turn_outcome.appreciation.value == "approved"
+
+
+class TestCredentialRefusalThroughMain:
+    """Issue #1099: a guard refusal through ``main()`` is one notice, not a crash."""
+
+    REFUSAL = (
+        "run refused: rule 'lane-binding' failed (the continuation is in a user repo). "
+        "To proceed: resume in the owner's repo, re-baseline with a non-subscription "
+        "--config, or restart with /nebuko run workflow."
+    )
+
+    def test_a_refused_continuation_posts_one_notice_and_exits_zero(
+        self, tmp_path, monkeypatch
+    ):
+        import dataclasses
+        import importlib
+        import json
+
+        import nebuko.engine.run_loop as run_loop
+        from nebuko.adapters.local import TRIGGER_FILE
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+        resolve_module = importlib.import_module(
+            "nebuko.engine.lib.agent_script.features.resolve_llm_config.resolve_llm_config"
+        )
+        agent_module = importlib.import_module(
+            "nebuko.engine.lib.agent_script.features.run_agent.run_agent"
+        )
+
+        def refuse(agent_cfg, llm_config=None, continuation=None):
+            raise ClaudeCredentialError(self.REFUSAL)
+
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / TRIGGER_FILE).write_text(
+            json.dumps(dataclasses.asdict(_trigger())), encoding="utf-8"
+        )
+        _stub_resolved(monkeypatch, dict(_RESOLVED_MID_WORKFLOW))
+        monkeypatch.setattr(
+            resolve_module,
+            "resolve_llm_config",
+            lambda args, prompt: ({"model": "openai/gpt-5"}, prompt, object()),
+        )
+        monkeypatch.setattr(agent_module, "_enforce_harness_credentials", refuse)
+        monkeypatch.setattr(
+            Engine,
+            "invoke_agent",
+            lambda self, prompt: pytest.fail("the agent ran after a refusal"),
+        )
+
+        code = run_loop.main(["--adapter", "local", "--run-dir", str(run_dir)])
+
+        adapter = LocalAdapter(run_dir)
+        bodies = [entry.body for entry in adapter.load_history()]
+        assert code == 0
+        assert len(bodies) == 1
+        assert "To proceed" in bodies[0]
+        assert "/nebuko resume" not in bodies[0]
+        assert "did not produce a final message" not in bodies[0]
+        assert adapter.load_status() is RunStatus.REFUSED

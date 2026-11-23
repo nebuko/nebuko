@@ -15,6 +15,7 @@ from nebuko.engine.lib.agent_script import (
     build_output,
     load_prev_state_or_recover,
 )
+from nebuko.engine.harness.credentials import ClaudeCredentialError
 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import ProviderFailure
 from nebuko.engine.lib.pricing.features.load_price_table.load_price_table import load_price_table
 
@@ -25,6 +26,10 @@ logger = get_logger(__name__)
 #: ``RuntimeError``, so the engine can report the real cause.
 PROVIDER_FAILURE_EXIT_CODE = 3
 PROVIDER_FAILURE_FILE = "provider_failure.json"
+#: Exit status of a run the credential guard refused (issue #1099). The legacy
+#: seam maps it back to ``ClaudeCredentialError`` so the refusal is not a crash.
+REFUSAL_EXIT_CODE = 4
+REFUSAL_FILE = "credential_refusal.json"
 
 
 def _record_provider_failure(error: ProviderFailure) -> None:
@@ -43,6 +48,17 @@ def _record_provider_failure(error: ProviderFailure) -> None:
         logger.warning(f"could not stage the provider failure: {exc}")
     logger.error(f"Provider failure: {error.provider_error}")
     sys.exit(PROVIDER_FAILURE_EXIT_CODE)
+
+
+def _record_credential_refusal(error: ClaudeCredentialError) -> None:
+    """Stage the guard's refusal for the parent seam, then exit non-zero."""
+    try:
+        with open(REFUSAL_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"reason": str(error)}, handle)
+    except OSError as exc:  # pragma: no cover - the stderr message still carries it
+        logger.warning(f"could not stage the credential refusal: {exc}")
+    logger.error(f"Credential refusal: {error}")
+    sys.exit(REFUSAL_EXIT_CODE)
 
 
 def main():
@@ -99,6 +115,10 @@ def main():
         # A provider failure is terminal (issue #1322): stop before the metrics
         # and output steps, which would otherwise synthesize a wrong cause.
         _record_provider_failure(error)
+    except ClaudeCredentialError as error:
+        # A credential refusal is a deliberate stop (ADR 0015, issue #1099):
+        # no metrics or output for a run that never reached the agent.
+        _record_credential_refusal(error)
 
     # 6. Collect metrics — the default price table prices models the config
     #    leaves unpriced (subscription providers); load is fail-open (#714).
