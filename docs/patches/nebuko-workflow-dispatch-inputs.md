@@ -1,10 +1,11 @@
-# Patch: `nebuko-workflow.yaml` dispatch inputs (for a human to apply)
+# Patch: `nebuko-workflow.yaml` step / agent_config inputs (for a human to apply)
 
 An agent cannot push `.github/workflows/*` (the App token lacks `workflows`).
 Apply this to `.github/workflows/nebuko-workflow.yaml` (issue #1447, part of #1099).
 
-Add optional inputs under `on.workflow_call.inputs`. All are optional: the engine
-derives the lane without them, so the `lane-binding` guard holds when they are absent.
+The `lane` and `credential_owner` inputs and their `WORKFLOW_LANE` /
+`CLAUDE_CREDENTIAL_OWNER` exports are already applied. Still pending, add under
+`on.workflow_call.inputs`:
 
 ```yaml
       step:
@@ -17,23 +18,6 @@ derives the lane without them, so the `lane-binding` guard holds when they are a
         required: false
         type: string
         default: ''
-      lane:
-        description: 'Override the execution lane (user-repo). Empty: the engine derives it.'
-        required: false
-        type: string
-        default: ''
-      credential_owner:
-        description: 'Override the credential owner login. Empty: the engine derives it. Never a secret.'
-        required: false
-        type: string
-        default: ''
-```
-
-Export the lane pair in the engine step's `env:` (next to `TRIGGER_COMMENT_HEADER`):
-
-```yaml
-          WORKFLOW_LANE: ${{ inputs.lane }}
-          CLAUDE_CREDENTIAL_OWNER: ${{ inputs.credential_owner }}
 ```
 
 Do not add `lane` or `credential_owner` to the caller template's `with:`, and never
