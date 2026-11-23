@@ -2281,6 +2281,8 @@ class Engine:
                 repo=self._repo(trigger),
                 issue_number=trigger.number or None,
                 debug=_is_true(self.env.get("CONFIG_DEBUG")),
+                dispatch_step=trigger.step,
+                dispatch_agent_config=trigger.agent_config,
             )
         )
         _apply_prompt_layer(resolved, paths)

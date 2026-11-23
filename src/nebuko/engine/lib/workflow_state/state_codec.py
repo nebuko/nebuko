@@ -29,11 +29,18 @@ class PrevStateLoad:
         status: ``"ok"`` when loaded, ``"absent"`` when no hand-off file
             exists, ``"invalid"`` when the file exists but cannot be decoded.
         detail: Human-readable failure reason (empty when ``status == "ok"``).
+        refused_newer_lane: True only when the hand-off was refused because it
+            is a newer-schema state carrying a lane (its lane is unknowable).
     """
 
     state: WorkflowState | None  # @stub-protected
     status: Literal["ok", "absent", "invalid"]  # @stub-protected
     detail: str = ""  # @stub-protected
+    refused_newer_lane: bool = False
+
+
+class NewerLaneSchemaError(ValueError):
+    """A newer-schema state carrying a lane, refused by this engine (ADR 0017)."""
 
 
 class WorkflowStateCodec:
@@ -90,7 +97,7 @@ class WorkflowStateCodec:
         """
         state = WorkflowState.model_validate(json.loads(raw))
         if state.schema_version > STATE_SCHEMA_VERSION and state.lane is not None:
-            raise ValueError(
+            raise NewerLaneSchemaError(
                 f"schema_version {state.schema_version} is newer than engine "
                 f"{STATE_SCHEMA_VERSION} and the state carries a lane"
             )
@@ -127,6 +134,13 @@ class WorkflowStateCodec:
             )
         try:
             return PrevStateLoad(state=self.decode(raw), status="ok")
+        except NewerLaneSchemaError as e:
+            return PrevStateLoad(
+                state=None,
+                status="invalid",
+                detail=f"cannot decode {path}: {e}",
+                refused_newer_lane=True,
+            )
         except Exception as e:
             return PrevStateLoad(
                 state=None, status="invalid", detail=f"cannot decode {path}: {e}"

@@ -5511,3 +5511,78 @@ class TestPrFinalizerWiring:
         assert state.pull_request.url == (
             "https://github.com/olivier-norture/git-flow-ai/pull/42"
         )
+
+
+class TestRepositoryDispatchSeed:
+    """``client_payload.step`` / ``agent_config`` seed a dispatch run (ADR 0017, #1099)."""
+
+    @staticmethod
+    def _resolve_dispatch(tmp_path, monkeypatch, mocker, **client_payload):
+        import nebuko.engine.run_loop as run_loop
+
+        event = tmp_path / "event.json"
+        event.write_text(
+            json.dumps(
+                {
+                    "client_payload": {
+                        "actor": "olivier-norture",
+                        "prompt_body": "/nebuko run workflow --name dev-review-loop",
+                        "issue_number": 1447,
+                        "org_repo": "olivier-norture/git-flow-ai",
+                        **client_payload,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "repository_dispatch")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/git-flow-ai")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+        mocker.patch(
+            "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
+            return_value=None,
+        )
+        run = mocker.patch.object(
+            run_loop.Engine, "run", autospec=True, return_value=mocker.Mock(exit_code=0)
+        )
+        run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
+        engine = run.call_args[0][0]
+        return engine.resolve(engine.normalize())
+
+    def test_missing_step_runs_the_first_step(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker)
+
+        assert str(resolved.get("SKIP_AGENT", "")).lower() != "true"
+        assert resolved.get("WORKFLOW_STEP") == "implement"
+
+    def test_step_seeds_the_run_at_that_step(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker, step="review")
+
+        assert resolved.get("WORKFLOW_STEP") == "review"
+
+    def test_unknown_step_is_a_clean_skip(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker, step="no-such-step")
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert "no-such-step" in resolved.get("REASON", "")
+
+    def test_agent_config_is_stamped_for_the_run(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, agent_config="agent-config-mistral.yaml"
+        )
+
+        assert resolved.get("AGENT_CONFIG") == "agent-config-mistral.yaml"
+
+    @pytest.mark.parametrize("agent_config", ["../../etc/passwd", "/etc/passwd", "missing.yaml"])
+    def test_agent_config_outside_the_allowed_names_is_refused(
+        self, tmp_path, monkeypatch, mocker, agent_config
+    ):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, agent_config=agent_config
+        )
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert "unknown agent config" in resolved.get("REASON", "")
+        assert "agent-config-anthropic.yaml" in resolved.get("REASON", "")

@@ -44,10 +44,21 @@ def test_gh_pat_is_a_declared_secret() -> None:
     assert "GH_PAT" in secrets
 
 
+def test_step_is_a_declared_non_secret_input() -> None:
+    inputs = _reusable()[True]["workflow_call"]["inputs"]
+
+    assert "step" in inputs
+    assert inputs["step"]["default"] == ""
+
+
 def test_caller_forwards_org_fields_and_maps_token_to_secret() -> None:
     caller = yaml.safe_load(ccr.render_workflow(SHA))
     agent = caller["jobs"]["agent"]
 
-    assert {"prompt_body", "org_repo", "issue_number"} <= set(agent["with"])
+    assert {"prompt_body", "org_repo", "issue_number", "step", "agent_config_path"} <= set(agent["with"])
+    assert agent["with"]["step"] == "${{ github.event.client_payload.step || '' }}"
+    assert agent["with"]["agent_config_path"] == (
+        "${{ github.event.client_payload.agent_config || 'agent-config-anthropic.yaml' }}"
+    )
     assert agent["secrets"]["GH_PAT"] == "${{ github.event.client_payload.gh_token }}"
     assert not any(CREDENTIAL.search(key) for key in agent["with"])

@@ -1186,6 +1186,37 @@ class TestLaneBinding(unittest.TestCase):
         self._human("bob", header="/nebuko run workflow --name dev-review-loop")
         self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
 
+    def test_newer_schema_lane_state_fails_closed(self):
+        import json
+
+        from nebuko.engine.harness.credentials import ClaudeCredentialError
+        from nebuko.engine.lib.workflow_state.state_codec import (
+            HANDOFF_FILENAME,
+            STATE_SCHEMA_VERSION,
+            WorkflowStateCodec,
+        )
+
+        self._seed_user_repo_state("alice")
+        path = os.path.join(self._tmp.name, HANDOFF_FILENAME)
+        with open(path, encoding="utf-8") as handle:
+            raw = json.load(handle)
+        raw["schema_version"] = STATE_SCHEMA_VERSION + 1
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(raw, handle)
+        self.assertTrue(WorkflowStateCodec().load_prev().refused_newer_lane)
+        self._human("bob")
+        with self.assertRaises(ClaudeCredentialError) as refused:
+            self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+        self.assertIn("user-repo lane", str(refused.exception))
+
+    def test_corrupt_handoff_does_not_read_as_a_user_repo_lane(self):
+        from nebuko.engine.lib.workflow_state.state_codec import HANDOFF_FILENAME
+
+        with open(os.path.join(self._tmp.name, HANDOFF_FILENAME), "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        self._human("bob")
+        self.ra._enforce_harness_credentials(self._agent(backend="claude-code"), {})
+
     def test_repository_dispatch_event_file_binds_the_user_repo_lane(self):
         import json
 
