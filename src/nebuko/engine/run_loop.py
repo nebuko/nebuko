@@ -3202,7 +3202,6 @@ class Engine:
             str(roots[0]) if len(roots) > 1 else None,
         )
 
-    # @stub-protected
     def _preflight_agent_credentials(self) -> None:
         """Run the credential guard host-side, before the agent acknowledgment (#1099).
 
@@ -3235,6 +3234,7 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - the agent seam reports it
             log.debug("[phase:agent] credential preflight skipped: %s", exc)
 
+    # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
         """Run the agent through the engine's in-process seam.
 
