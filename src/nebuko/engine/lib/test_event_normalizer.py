@@ -9,6 +9,28 @@ import pytest
 from nebuko.engine.lib.event_normalizer import normalize_event, normalize_trigger
 
 
+class TestNormalizeTriggerDispatchPayload:
+    """repository_dispatch carries step/agent_config through client_payload (ADR 0017)."""
+
+    def _payload(self, **client_payload):
+        return {"client_payload": {"actor": "alice", "issue_number": 7, **client_payload}}
+
+    def test_step_and_agent_config_are_read(self):
+        trigger = normalize_trigger(self._payload(step="plan", agent_config="agent-config-anthropic.yaml"))
+        assert trigger.step == "plan"
+        assert trigger.agent_config == "agent-config-anthropic.yaml"
+
+    def test_missing_step_and_config_are_none(self):
+        trigger = normalize_trigger(self._payload())
+        assert trigger.step is None
+        assert trigger.agent_config is None
+
+    def test_blank_step_and_config_are_none(self):
+        trigger = normalize_trigger(self._payload(step="  ", agent_config=""))
+        assert trigger.step is None
+        assert trigger.agent_config is None
+
+
 class TestNormalizeEvent:
     """Test normalize_event function with real GitHub event JSON fixtures."""
 

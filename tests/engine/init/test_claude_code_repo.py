@@ -51,6 +51,14 @@ def test_owner_guard_refuses_any_actor_other_than_owner(actor: str, owner: str, 
     assert _run_guard(actor, owner) == expected
 
 
+def test_agent_job_forwards_step_and_agent_config_but_no_credential_fields() -> None:
+    with_ = _workflow()["jobs"]["agent"]["with"]
+    assert with_["step"] == "${{ github.event.client_payload.step }}"
+    assert with_["agent_config"] == "${{ github.event.client_payload.agent_config }}"
+    # ADR 0017 / ADR-0008: the lane is derived by the engine; no credential travels through with:.
+    assert not {"lane", "credential_owner"} & set(with_)
+
+
 def test_reusable_workflow_is_pinned_to_the_sha() -> None:
     assert _workflow()["jobs"]["agent"]["uses"] == (
         f"nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@{SHA}"

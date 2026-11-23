@@ -248,6 +248,28 @@ class TestCodecRoundTripPreservesGateDecisions(unittest.TestCase):
         self.assertEqual(restored.gate_decision.feedback, multiline)
 
 
+class TestNewerSchemaLaneStateIsRefused(unittest.TestCase):
+    """ADR 0017: an older engine must not rewrite a newer lane state without the lane."""
+
+    def _raw(self, **overrides) -> str:
+        data = json.loads(WorkflowStateCodec().encode(_state_v7()))
+        data.update(overrides)
+        return json.dumps(data)
+
+    def test_newer_schema_with_lane_is_refused(self):
+        raw = self._raw(schema_version=STATE_SCHEMA_VERSION + 1, lane="user-repo")
+        with self.assertRaises(ValueError):
+            WorkflowStateCodec().decode(raw)
+
+    def test_newer_schema_without_lane_still_decodes(self):
+        raw = self._raw(schema_version=STATE_SCHEMA_VERSION + 1, lane=None)
+        self.assertEqual(WorkflowStateCodec().decode(raw).lane, None)
+
+    def test_current_schema_with_lane_decodes(self):
+        raw = self._raw(schema_version=STATE_SCHEMA_VERSION, lane="user-repo")
+        self.assertEqual(WorkflowStateCodec().decode(raw).lane, "user-repo")
+
+
 class TestMalformedPositionNeverSilentlyDropped(unittest.TestCase):
     def test_empty_step_mount_ref_is_preserved(self):
         """The empty-step mount ref from #648 survives encode -> decode."""

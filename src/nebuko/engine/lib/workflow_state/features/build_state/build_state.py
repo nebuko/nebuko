@@ -334,10 +334,15 @@ def build_state(
     )
     # Lane binding (ADR 0017): recorded on the first step, then carried forward
     # so a continuation cannot silently drop the lane its workflow started on.
-    new_lane = lane if lane is not None else base_lane
-    new_credential_owner = (
-        credential_owner if credential_owner is not None else base_credential_owner
-    )
+    # The owner belongs to the lane: an explicit lane (e.g. a fresh run's shared lane)
+    # resets the carried owner, so a new lane never inherits the previous owner.
+    if lane is not None:
+        new_lane, new_credential_owner = lane, credential_owner
+    else:
+        new_lane = base_lane
+        new_credential_owner = (
+            credential_owner if credential_owner is not None else base_credential_owner
+        )
 
     # Human_gate decision (issue #648): when this run was started by an
     # identity-verified gate command, record the new decision as the latest

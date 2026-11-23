@@ -68,6 +68,8 @@ jobs:
       prompt_body: ${{{{ github.event.client_payload.prompt_body }}}}
       org_repo: ${{{{ github.event.client_payload.org_repo }}}}
       issue_number: ${{{{ github.event.client_payload.issue_number }}}}
+      step: ${{{{ github.event.client_payload.step }}}}
+      agent_config: ${{{{ github.event.client_payload.agent_config }}}}
       agent_config_path: agent-config-anthropic.yaml
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{{{ secrets.{TOKEN_SECRET} }}}}

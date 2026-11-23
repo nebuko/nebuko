@@ -618,7 +618,12 @@ def _trigger_facts_from_env() -> "ContinuationContext":
     previous = _previous_state()
     previous_lane = getattr(previous, "lane", None)
     previous_owner = getattr(previous, "credential_owner", None)
-    untrusted_only = previous is None and WorkflowStateCodec().untrusted_handoff_marked()
+    codec = WorkflowStateCodec()
+    # An undecodable hand-off (incl. a refused newer-schema lane state) is unknown, not
+    # "no lane": assume the user-repo lane so the guard fails closed (ADR 0017).
+    untrusted_only = previous is None and (
+        codec.untrusted_handoff_marked() or codec.load_prev().status == "invalid"
+    )
     if untrusted_only:
         previous_lane = USER_REPO_LANE
     if is_fresh_run(os.environ):

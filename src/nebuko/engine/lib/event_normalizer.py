@@ -107,6 +107,8 @@ def normalize_trigger(payload: Mapping[str, Any]) -> Trigger:
             number=int(client_payload.get("issue_number") or 0),
             payload=payload,
             org_repo=str(client_payload.get("org_repo") or ""),
+            step=str(client_payload.get("step") or "").strip() or None,
+            agent_config=str(client_payload.get("agent_config") or "").strip() or None,
         )
 
     inputs = payload.get("inputs")

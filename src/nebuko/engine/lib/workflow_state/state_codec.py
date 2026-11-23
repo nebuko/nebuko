@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .features.to_json.to_json import state_to_json
-from .workflow_state import WorkflowState
+from .workflow_state import STATE_SCHEMA_VERSION, WorkflowState
 
 HANDOFF_FILENAME = "prev_workflow_state.json"
 
@@ -80,8 +80,21 @@ class WorkflowStateCodec:
 
     # @stub-protected: signature defined by architect — do not modify
     def decode(self, raw: str) -> WorkflowState:
-        """Parse canonical JSON back into a lossless ``WorkflowState``."""
-        return WorkflowState.model_validate(json.loads(raw))
+        """Parse canonical JSON back into a lossless ``WorkflowState``.
+
+        A state written by a newer engine (``schema_version`` above this engine's)
+        that carries a lane is refused: this engine would drop fields it does not
+        know, and the lane is what the continuation guard relies on (ADR 0017).
+        The refusal surfaces as an ``invalid`` hand-off, which the guard treats as
+        an untrusted user-repo thread (fail closed).
+        """
+        state = WorkflowState.model_validate(json.loads(raw))
+        if state.schema_version > STATE_SCHEMA_VERSION and state.lane is not None:
+            raise ValueError(
+                f"schema_version {state.schema_version} is newer than engine "
+                f"{STATE_SCHEMA_VERSION} and the state carries a lane"
+            )
+        return state
 
     # @stub-protected: signature defined by architect — do not modify
     def save_prev(self, state: WorkflowState) -> str:

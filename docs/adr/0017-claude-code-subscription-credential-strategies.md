@@ -345,3 +345,27 @@ whose `started_by` owns a `<login>/nebuko-claude-code` repo and dispatch there,
 with `client_payload` carrying `step`, `agent_config` and `lane`. Until it lands,
 Lane D continuations are refused at the first hand-off (option C), never run on
 another payer (option B is not used silently).
+
+#### Dispatch payload contract (Lane D)
+
+- `client_payload.step` (optional): the step to run. Missing or blank means the
+  workflow's first step, so today's dispatch is unchanged.
+- `client_payload.agent_config` (optional): the agent config to run that step with.
+- The template (`nebuko init claude-code-repo`) forwards `step` and `agent_config`
+  through `with:`. It never forwards `lane` or `credential_owner`: the engine
+  derives the lane from a `repository_dispatch` run (owner = `GITHUB_REPOSITORY_OWNER`,
+  actor = `client_payload.actor`). `WORKFLOW_LANE` and `CLAUDE_CREDENTIAL_OWNER` are
+  overrides only, and the guard must hold when they are absent (ADR-0008: no
+  credential travels through `with:`).
+- **Re-baseline rule:** a fresh `/nebuko run workflow` (no `--step`) starts a new
+  workflow. It takes the shared lane unless its own run is in a user repo, so the
+  previous state's lane and owner are not carried into it. Continuations carry the
+  lane forward.
+- **Trusted-state rule:** only a state written by a trusted (bot) author is read as
+  the lane source. A thread whose only state comments are untrusted, or whose hand-off
+  is undecodable, is treated as user-repo (fail closed).
+- **Older engines:** the codec refuses a state with `schema_version` above the
+  engine's when it carries a lane, and a refused hand-off is treated as untrusted.
+  This does not protect a user repo pinned to an older reusable workflow, which drops
+  the lane on re-encode. That residual risk is documented here; pin bumps are not
+  automated by this change.
