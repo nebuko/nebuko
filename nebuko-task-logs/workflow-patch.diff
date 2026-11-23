@@ -1,0 +1,35 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index bbe0558..ab8e765 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -3,6 +3,21 @@ name: OpenHands Multi-Agent Router
+ on:
+   workflow_call:
+     inputs:
++      lane:
++        description: 'Override the execution lane (user-repo). Empty: the engine derives it from the dispatch.'
++        required: false
++        type: string
++        default: ''
++      credential_owner:
++        description: 'Override the credential owner login. Empty: the engine derives it. Never a secret.'
++        required: false
++        type: string
++        default: ''
++      step:
++        description: 'Step a repository_dispatch caller starts the run at (client_payload.step). Empty: the first step.'
++        required: false
++        type: string
++        default: ''
+       agent_config_path:
+         description: 'Path to the layered YAML config file (providers → llms → agents). Leave empty to use .nebuko/nebuko.yaml (agent_config), else agent-config.yaml'
+         required: false
+@@ -555,6 +570,8 @@ jobs:
+                 LOG_TO_FILE: "true"
+                 LOG_DIR: ${{ runner.temp }}/nebuko-task-logs
+                 NEBUKO_WORKFLOW_REF: ${{ job.workflow_ref }}
++                WORKFLOW_LANE: ${{ inputs.lane || '' }}
++                CLAUDE_CREDENTIAL_OWNER: ${{ inputs.credential_owner || '' }}
+ 
+             - name: Upload console.txt artifact
+               uses: actions/upload-artifact@v7
