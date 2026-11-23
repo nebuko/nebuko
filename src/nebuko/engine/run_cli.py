@@ -13,7 +13,8 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -36,6 +37,8 @@ class AgentRunRequest:
     complexity: Complexity | None = None
     temperature: float | None = None
     task: str | None = None
+    # Generated workflow name; ``None`` means ``agent-<name>``.
+    workflow: str | None = None
 
     def to_env(self) -> dict[str, str]:
         """Translate the overrides to the engine's env contract; unset fields emit nothing."""
@@ -75,7 +78,7 @@ class AgentRunRequest:
 
     @property
     def workflow_name(self) -> str:
-        return f"agent-{self.name}"
+        return self.workflow or f"agent-{self.name}"
 
 
 def run_agent_request(request: AgentRunRequest) -> int:
@@ -88,6 +91,8 @@ def run_agent_request(request: AgentRunRequest) -> int:
     from nebuko.engine.lib.default_paths import user_dir
     from nebuko.engine.run_loop import main as run_loop_main
 
+    # A per-run name keeps the staged file from ever overwriting a user's workflow.
+    request = replace(request, workflow=f"agent-{request.name}-{uuid.uuid4().hex[:8]}")
     workflows = user_dir() / "workflows"
     created_dir = not workflows.exists()
     workflows.mkdir(parents=True, exist_ok=True)
@@ -99,7 +104,8 @@ def run_agent_request(request: AgentRunRequest) -> int:
         (run_dir / "trigger.json").write_text(
             json.dumps(request.trigger_payload()), encoding="utf-8"
         )
-        workflow_file.write_text(request.workflow_yaml(), encoding="utf-8")
+        with workflow_file.open("x", encoding="utf-8") as handle:
+            handle.write(request.workflow_yaml())
         os.environ.update(overrides)
         try:
             code = run_loop_main(["--adapter", "local", "--run-dir", str(run_dir)])
