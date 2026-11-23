@@ -165,7 +165,9 @@ def _apply_dispatch_fields(
     if not (step or agent_config):
         return wf_cmd, None
     if wf_cmd is None or wf_cmd.action != "run" or wf_cmd.resource != "workflow":
-        return wf_cmd, None
+        return wf_cmd, (
+            "dispatch step/agent_config require a /nebuko run workflow prompt"
+        )
     params = dict(wf_cmd.params)
     if step and not params.get("step"):
         params["step"] = step

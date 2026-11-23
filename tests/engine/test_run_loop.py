@@ -5575,6 +5575,21 @@ class TestRepositoryDispatchSeed:
 
         assert resolved.get("AGENT_CONFIG") == "agent-config-mistral.yaml"
 
+    @pytest.mark.parametrize(
+        "prompt_body", ["continue the workflow", "/nebuko delete comments"]
+    )
+    def test_step_without_a_run_workflow_prompt_is_a_clean_skip(
+        self, tmp_path, monkeypatch, mocker, prompt_body
+    ):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, prompt_body=prompt_body, step="review"
+        )
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert resolved.get("REASON") == (
+            "dispatch step/agent_config require a /nebuko run workflow prompt"
+        )
+
     @pytest.mark.parametrize("agent_config", ["../../etc/passwd", "/etc/passwd", "missing.yaml"])
     def test_agent_config_outside_the_allowed_names_is_refused(
         self, tmp_path, monkeypatch, mocker, agent_config

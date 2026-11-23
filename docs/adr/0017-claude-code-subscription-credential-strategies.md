@@ -351,8 +351,10 @@ another payer (option B is not used silently).
 - `client_payload.step` (optional): the step to run. Missing or blank means the
   workflow's first step, so today's dispatch is unchanged.
 - `client_payload.agent_config` (optional): the agent config to run that step with.
-- The template (`nebuko init claude-code-repo`) forwards `step` and `agent_config`
-  through `with:`. It never forwards `lane` or `credential_owner`: the engine
+- The engine reads `step` and `agent_config` from the event's `client_payload`
+  (`Trigger.step` / `Trigger.agent_config`); the template does not forward them through
+  `with:`, so no reusable-workflow input is needed. The template never forwards
+  `lane` or `credential_owner`: the engine
   derives the lane from a `repository_dispatch` run (owner = `GITHUB_REPOSITORY_OWNER`,
   actor = `client_payload.actor`). `WORKFLOW_LANE` and `CLAUDE_CREDENTIAL_OWNER` are
   overrides only, and the guard must hold when they are absent (ADR-0008: no
