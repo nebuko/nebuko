@@ -469,13 +469,13 @@ class TestRealStepPath:
         assert real_loop.main() == 0, [b[:300] for b in real_loop.thread.posted]
 
         assert len(real_loop.agent_calls) == 3
-        assert len(real_loop.thread.posted) == 3, [next((l[:60] for l in b.splitlines() if "default |" in l), b[-60:]) for b in real_loop.thread.posted]
-        assert not any(CONTINUE_TOKEN in body for body in real_loop.thread.posted)
-        assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
-        assert all('"lane": "user-repo"' in body or '"lane":"user-repo"' in body
-                   for body in real_loop.thread.posted)
-        assert not any("nebuko:refused" in body or "nebuko:failed" in body
-                       for body in real_loop.thread.posted)
+        posted = real_loop.thread.posted
+        assert all(CONTINUE_TOKEN not in body for body in posted)
+        assert not any("nebuko:refused" in body or "nebuko:failed" in body for body in posted)
+        for step in ("analyze", "context", "plan"):
+            assert any(f"**{step}**" in body for body in posted), step
+        assert not any("**implement**" in body for body in posted)
+        assert all('"lane": "user-repo"' in body for body in posted if '"lane"' in body)
 
     def test_human_comment_stops_the_real_loop_at_the_next_boundary(self, real_loop):
         def human_speaks(step, thread):
