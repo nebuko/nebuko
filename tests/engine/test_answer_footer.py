@@ -271,5 +271,36 @@ class TestHints(unittest.TestCase):
         self.assertFalse(footer.endswith("|"))
 
 
+class TestPublishSeam(unittest.TestCase):
+    """The footer reaches the posted agent comment via build_comment_body_parts."""
+
+    def test_posted_body_lists_declared_steps_with_latest_links(self):
+        from nebuko.engine.lib.prepare_comment import build_comment_body_parts
+
+        url = "https://github.com/o/r#issuecomment-42"
+        state = _state(
+            history=[_entry("plan", [42])],
+            thread=[_agent_record(42, url)],
+        )
+        _, body = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            state=state,
+            workflow_steps=["plan", "spec", "implement"],
+        )
+        self.assertIn(f"spec-tdd | [plan]({url}) -> **spec** -> implement", body)
+
+    def test_posted_body_falls_back_to_visited_steps_without_declared_steps(self):
+        from nebuko.engine.lib.prepare_comment import build_comment_body_parts
+
+        state = _state(history=[_entry("plan", [42])])
+        _, body = build_comment_body_parts(
+            latest_answer="done",
+            final_message="done",
+            state=state,
+        )
+        self.assertIn("spec-tdd | plan -> **spec**", body)
+
+
 if __name__ == "__main__":
     unittest.main()

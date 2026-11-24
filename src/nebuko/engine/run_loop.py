@@ -2714,6 +2714,14 @@ class Engine:
             self._declared_step_cache[name] = cached
         return cached.get(step_name)
 
+    def _declared_step_names(self, workflow_name: Any) -> list[str]:
+        """The workflow definition's step names in declared order, or ``[]``."""
+        name = str(workflow_name or "")
+        if not name:
+            return []
+        self._declared_step(name)
+        return list(self._declared_step_cache.get(name) or {})
+
     def _outputless_steps(self) -> set[str]:
         """Steps whose run posts no own state, so their output is carried (#889).
 
@@ -4212,6 +4220,9 @@ class Engine:
             engine_failed=engine_failed,
             secret_findings=comment_findings,
             secret_scan=scan_enabled,
+            workflow_steps=self._declared_step_names(
+                getattr(publish_state, "workflow", "")
+            ),
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).

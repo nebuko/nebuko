@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
-from nebuko.engine.lib.answer_footer import format_answer_footer
+from nebuko.engine.lib.answer_footer import AnswerFooter, StepLinkResolver
 from nebuko.engine.lib.redaction import redact_text
 from nebuko.engine.lib.validate_output import strip_agent_run_config
 from nebuko.engine.paths import secret_scan_enabled
@@ -697,6 +697,7 @@ def build_comment_body_parts(
     engine_failed: bool = False,
     secret_findings: Sequence[SecretFinding] = (),
     secret_scan: bool | None = None,
+    workflow_steps: Sequence[str] | None = None,
 ) -> tuple[str, str]:
     """The posted comment as ``(header, body)``, kept separate for splitting.
 
@@ -714,6 +715,9 @@ def build_comment_body_parts(
     ``secret_scan`` record so the warning renders and the record persists.
     ``secret_scan`` is the resolved ``features.secret_scan`` flag; ``None``
     resolves it from the manifest (disabled by default).
+    ``workflow_steps`` is the workflow definition's step names in declared
+    order, so the footer lists steps not yet visited; ``None`` falls back to
+    the visited steps.
 
     Returns:
         ``(header, body)`` where ``header`` is the answer-comment header and
@@ -729,7 +733,10 @@ def build_comment_body_parts(
             role_name=role_name,
             recall_count=_posted_recall_count(state),
         )
-    footer = format_answer_footer(state)
+    footer = ""
+    if state is not None:
+        resolver = StepLinkResolver(thread=state.thread, history=state.history)
+        footer = AnswerFooter(resolver).render(state, workflow_steps)
     if footer:
         body = f"{body}\n\n{footer}" if body.strip() else footer
     # A comment is a public artifact (issue #1347): the body is scanned for
