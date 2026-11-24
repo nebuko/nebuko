@@ -161,6 +161,9 @@ class Trigger:
     issue_body: str = ""
     # ``owner/name`` the dispatch targets (``client_payload.org_repo``, "" otherwise)
     org_repo: str = ""
+    # ``client_payload.step`` / ``client_payload.agent_config`` (ADR 0017); None when absent
+    step: str | None = None
+    agent_config: str | None = None
 
 
 # @stub-protected

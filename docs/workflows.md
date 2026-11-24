@@ -94,6 +94,20 @@ file, select the config for **one run** from the command itself (issue #1389):
 > OWNER/MEMBER/COLLABORATOR (and the credential owner in the per-user lane).
 > Lane D's bridge (token-broker#53) must apply the same rule to continuation
 > comments; it is not implemented in this repository.
+>
+> **Lane binding (`lane-binding`).** A workflow started in a user's own
+> `<login>/nebuko-claude-code` repo records `lane: user-repo` and
+> `credential_owner: <login>`. A bot continuation is refused with rule
+> `lane-binding` unless it runs in that same lane for the same owner. Refusal
+> messages:
+> - Lane mismatch: `the workflow runs in the user-repo lane; this run's lane is
+>   '<lane>'`, with the fix "resume in `<login>/nebuko-claude-code`".
+> - Untrusted thread: `no trusted workflow state was found on this thread`. This is
+>   not a lane violation. Resume in the owner's repo, or start over with
+>   `/nebuko run workflow`.
+>
+> A fresh `/nebuko run workflow` does not inherit the previous lane (see ADR 0017,
+> re-baseline rule).
 
 ---
 

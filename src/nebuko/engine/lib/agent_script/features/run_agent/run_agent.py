@@ -564,16 +564,6 @@ def _harness_system_prompt(role_name: str) -> str:
 _CALLER_PERMISSIONS_AUTHORIZED = frozenset({"admin", "maintain", "write"})
 
 
-def _previous_state() -> Any | None:
-    """The persisted WORKFLOW_STATE, or None when unreadable."""
-    from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
-
-    try:
-        return WorkflowStateCodec().load_prev().state
-    except Exception:  # noqa: BLE001 - an unreadable state is "no human-started workflow"
-        return None
-
-
 def _caller_association(login: str) -> str | None:
     """Map a login's repository permission onto a CALLER_AUTH association.
 
@@ -599,8 +589,10 @@ def _trigger_facts_from_env() -> "ContinuationContext":
     """The trigger and lane facts behind this run, for every trigger type (ADR 0017).
 
     A fresh ``/nebuko run workflow`` (no ``--step``) starts a workflow of its own,
-    so it inherits no lane from the previous state; ``--step`` continues it. An untrusted-only thread (no bot-authored
-    state) assumes a user-repo lane may exist, so the guard fails closed.
+    so it inherits no lane from the previous state; ``--step`` continues it. An
+    untrusted-only thread (no bot-authored state) assumes a user-repo lane may
+    exist, and so does a newer-schema state whose lane the engine refuses to read
+    (ADR 0017): both fail closed. Any other undecodable hand-off carries no lane.
     """
     from nebuko.engine.harness.credentials import (  # noqa: PLC0415
         USER_REPO_LANE,
@@ -615,10 +607,14 @@ def _trigger_facts_from_env() -> "ContinuationContext":
 
     login = (os.environ.get("TRIGGER_AUTHOR_LOGIN") or "").strip()
     actor_type = (os.environ.get("TRIGGER_AUTHOR_TYPE") or "").strip()
-    previous = _previous_state()
+    codec = WorkflowStateCodec()
+    loaded = codec.load_prev()
+    previous = loaded.state
     previous_lane = getattr(previous, "lane", None)
     previous_owner = getattr(previous, "credential_owner", None)
-    untrusted_only = previous is None and WorkflowStateCodec().untrusted_handoff_marked()
+    untrusted_only = previous is None and (
+        codec.untrusted_handoff_marked() or loaded.refused_newer_lane
+    )
     if untrusted_only:
         previous_lane = USER_REPO_LANE
     if is_fresh_run(os.environ):

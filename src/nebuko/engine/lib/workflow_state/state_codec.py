@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .features.to_json.to_json import state_to_json
-from .workflow_state import WorkflowState
+from .workflow_state import STATE_SCHEMA_VERSION, WorkflowState
 
 HANDOFF_FILENAME = "prev_workflow_state.json"
 
@@ -29,11 +29,18 @@ class PrevStateLoad:
         status: ``"ok"`` when loaded, ``"absent"`` when no hand-off file
             exists, ``"invalid"`` when the file exists but cannot be decoded.
         detail: Human-readable failure reason (empty when ``status == "ok"``).
+        refused_newer_lane: True only when the hand-off was refused because it
+            is a newer-schema state carrying a lane (its lane is unknowable).
     """
 
     state: WorkflowState | None  # @stub-protected
     status: Literal["ok", "absent", "invalid"]  # @stub-protected
     detail: str = ""  # @stub-protected
+    refused_newer_lane: bool = False
+
+
+class NewerLaneSchemaError(ValueError):
+    """A newer-schema state carrying a lane, refused by this engine (ADR 0017)."""
 
 
 class WorkflowStateCodec:
@@ -80,8 +87,21 @@ class WorkflowStateCodec:
 
     # @stub-protected: signature defined by architect — do not modify
     def decode(self, raw: str) -> WorkflowState:
-        """Parse canonical JSON back into a lossless ``WorkflowState``."""
-        return WorkflowState.model_validate(json.loads(raw))
+        """Parse canonical JSON back into a lossless ``WorkflowState``.
+
+        A state written by a newer engine (``schema_version`` above this engine's)
+        that carries a lane is refused: this engine would drop fields it does not
+        know, and the lane is what the continuation guard relies on (ADR 0017).
+        The refusal surfaces as an ``invalid`` hand-off, which the guard treats as
+        an untrusted user-repo thread (fail closed).
+        """
+        state = WorkflowState.model_validate(json.loads(raw))
+        if state.schema_version > STATE_SCHEMA_VERSION and state.lane is not None:
+            raise NewerLaneSchemaError(
+                f"schema_version {state.schema_version} is newer than engine "
+                f"{STATE_SCHEMA_VERSION} and the state carries a lane"
+            )
+        return state
 
     # @stub-protected: signature defined by architect — do not modify
     def save_prev(self, state: WorkflowState) -> str:
@@ -114,6 +134,13 @@ class WorkflowStateCodec:
             )
         try:
             return PrevStateLoad(state=self.decode(raw), status="ok")
+        except NewerLaneSchemaError as e:
+            return PrevStateLoad(
+                state=None,
+                status="invalid",
+                detail=f"cannot decode {path}: {e}",
+                refused_newer_lane=True,
+            )
         except Exception as e:
             return PrevStateLoad(
                 state=None, status="invalid", detail=f"cannot decode {path}: {e}"

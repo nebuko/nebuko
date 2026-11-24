@@ -365,6 +365,26 @@ class TestBuildStateAgentConfig(unittest.TestCase):
         self.assertEqual(next_state.lane, "user-repo")
         self.assertEqual(next_state.credential_owner, "alice")
 
+    def test_fresh_run_after_user_repo_state_does_not_carry_the_lane_across_steps(self):
+        from nebuko.engine.harness.credentials import SHARED_LANE
+
+        prev = build_state(
+            None,
+            workflow="default",
+            step="analyze",
+            agent="architect",
+            lane="user-repo",
+            credential_owner="alice",
+        )
+        # build_output passes SHARED_LANE for a fresh run (no --step), so the old lane is not inherited.
+        fresh = build_state(prev, workflow="default", step="analyze", agent="architect", lane=SHARED_LANE)
+        self.assertEqual(fresh.lane, SHARED_LANE)
+        self.assertIsNone(fresh.credential_owner)
+        next_state = build_state(fresh, workflow="default", step="plan", agent="architect")
+        self.assertEqual(next_state.lane, SHARED_LANE)
+        self.assertIsNone(next_state.credential_owner)
+        self.assertNotEqual(next_state.lane, "user-repo")
+
     def test_legacy_state_without_lane_fields_loads_unchanged(self):
         state = build_state(None, workflow="default", step="analyze", agent="architect")
         self.assertIsNone(state.lane)

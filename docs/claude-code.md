@@ -73,6 +73,31 @@ The generated workflow refuses to run unless the triggering actor is the
 repository owner, so only you can start a run in that repo. An existing repo is
 refused before anything is written; a missing token creates nothing.
 
+### Dispatch payload fields
+
+A continuation dispatched to your repo may carry two optional `client_payload`
+fields, read by the engine from the event (not forwarded through `with:`):
+
+- `step`: the workflow step to run. Missing or blank runs the first step.
+- `agent_config`: the agent config file name to run that step with. It is matched
+  by name against the configs found in the repo; paths and unknown names are refused.
+
+Both are only valid with a `/nebuko run workflow` prompt; any other prompt is
+skipped with `dispatch step/agent_config require a /nebuko run workflow prompt`.
+
+`step` skips no gate check that `--step` does not already skip. A gated step still
+needs its human decision: the plan gate is approved in the org issue with
+`/nebuko approve gate`, and only then does the owner dispatch the next step.
+
+### Lane and re-baseline troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Bot continuation refused with `lane-binding`: "runs in the user-repo lane" | The workflow started in `<login>/nebuko-claude-code`, and this run is in another lane | Resume in `<login>/nebuko-claude-code` |
+| Refused with `lane-binding`: "no trusted workflow state" | The thread's state comments are not from `nebuko[bot]`, or the hand-off is undecodable | Resume in the owner's repo, or start over with `/nebuko run workflow` |
+| Fresh `/nebuko run workflow` still refused on a later step | Not expected: a fresh run re-baselines the lane to shared | Report it; it is a regression |
+| State shows `lane: user-repo` after a re-baseline | `lane_changed_from` / `lane_changed_by` record the move | Expected: the starter moved the lane on purpose |
+
 ## Per-role switch
 
 ```yaml
