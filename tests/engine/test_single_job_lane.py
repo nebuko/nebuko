@@ -469,7 +469,7 @@ class TestRealStepPath:
         assert real_loop.main() == 0, [b[:300] for b in real_loop.thread.posted]
 
         assert len(real_loop.agent_calls) == 3
-        assert len(real_loop.thread.posted) == 3, [b.splitlines()[-1][:90] + " | " + str("<!--" in b[:40]) for b in real_loop.thread.posted]
+        assert len(real_loop.thread.posted) == 3, [next((l[:60] for l in b.splitlines() if "default |" in l), b[-60:]) for b in real_loop.thread.posted]
         assert not any(CONTINUE_TOKEN in body for body in real_loop.thread.posted)
         assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
         assert all('"lane": "user-repo"' in body or '"lane":"user-repo"' in body
