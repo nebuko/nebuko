@@ -5063,14 +5063,37 @@ def _agent_facing_body(body: str) -> str:
     return strip_state_section(body)
 
 
-_BARE_COMMAND = re.compile(
-    r"/nebuko(?:[ \t]+(?:run|workflow|force-step|--[\w-]+(?:[ \t]+[\w.-]+)?))+[ \t]*"
-)
+_BARE_COMMAND_WORDS = frozenset({"run", "workflow", "force-step"})
+_BARE_COMMAND_FLAG = re.compile(r"--[\w-]+")
+_BARE_COMMAND_VALUE = re.compile(r"[\w.-]+")
 
 
 def _is_bare_command(text: str) -> bool:
-    """True when ``text`` is only a ``/nebuko`` command line, with no task text."""
-    return _BARE_COMMAND.fullmatch(text.strip()) is not None
+    """True when ``text`` is only a ``/nebuko`` command line, with no task text.
+
+    A linear token walk, not a regex: a flag/value regex backtracks
+    exponentially on non-matching input, and this runs on untrusted comments.
+    A flag consumes at most one following value token (never another flag).
+    """
+    tokens = text.split()
+    if len(tokens) < 2 or tokens[0] != "/nebuko":
+        return False
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _BARE_COMMAND_WORDS:
+            i += 1
+        elif _BARE_COMMAND_FLAG.fullmatch(token):
+            i += 1
+            if (
+                i < len(tokens)
+                and not tokens[i].startswith("--")
+                and _BARE_COMMAND_VALUE.fullmatch(tokens[i])
+            ):
+                i += 1
+        else:
+            return False
+    return True
 
 
 def _render_gate_decision(raw: Any) -> str:

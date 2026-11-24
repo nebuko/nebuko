@@ -3575,6 +3575,8 @@ class TestDispatchIssueBody:
         ("/nebuko run workflow --name dev-review-loop", True),
         ("/nebuko force-step --name implement", True),
         ("/nebuko run workflow fix the login bug", False),
+        ("/nebuko --flag", True),
+        ("/nebuko", False),
         ("make it so", False),
         ("", False),
     ],
@@ -3583,6 +3585,18 @@ def test_is_bare_command(text, bare):
     from nebuko.engine.run_loop import _is_bare_command
 
     assert _is_bare_command(text) is bare
+
+
+def test_is_bare_command_is_linear_on_adversarial_input():
+    import time
+
+    from nebuko.engine.run_loop import _is_bare_command
+
+    flags = " ".join(f"--a{n}" for n in range(200))
+    text = f"/nebuko {flags} BAD!"
+    started = time.perf_counter()
+    assert _is_bare_command(text) is False
+    assert time.perf_counter() - started < 0.5
 
 
 class TestHistoryWindowInjection:
