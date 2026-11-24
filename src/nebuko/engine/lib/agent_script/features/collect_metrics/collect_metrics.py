@@ -5,6 +5,7 @@ import os
 
 from openhands.sdk import get_logger
 
+from nebuko.engine.lib.loop_step import loop_step_index
 from nebuko.engine.lib.metrics_schema import Metrics
 from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import collect_llm_metrics
 from nebuko.engine.lib.pricing.sub_domains.price_table.price_table import PriceTable
@@ -24,7 +25,10 @@ def save_metrics_json(metrics: Metrics) -> None:
         os.makedirs(output_dir, exist_ok=True)
 
         run_id = metrics.run_id if hasattr(metrics, "run_id") else "unknown"
-        filename = f"{output_dir}/metrics-{run_id}.json"
+        # One record per step of the single-job loop (issue #1457).
+        step = loop_step_index()
+        suffix = "" if step is None else f"-step-{step}"
+        filename = f"{output_dir}/metrics-{run_id}{suffix}.json"
 
         with open(filename, "w") as f:
             if isinstance(metrics, Metrics):

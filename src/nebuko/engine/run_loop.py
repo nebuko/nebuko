@@ -5498,5 +5498,15 @@ class _ContinuationAdapter:
     def read_trigger(self) -> Trigger:
         return replace(self._inner.read_trigger(), body="", step=None, agent_config=None)
 
+    def load_state(self) -> WorkflowState | None:
+        # The previous step's in-process state (the driver persists it at the
+        # boundary); the posted comment is only the fallback.
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        loaded = WorkflowStateCodec().load_prev()
+        if loaded.status == "ok" and loaded.state is not None:
+            return loaded.state
+        return self._inner.load_state()
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

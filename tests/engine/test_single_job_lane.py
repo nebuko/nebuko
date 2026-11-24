@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from dataclasses import replace
+
 from nebuko.adapters.github import GitHubAdapter
 from nebuko.engine.models import ExitCode, RunOutcome
 from nebuko.engine.step_driver import (
@@ -17,6 +19,8 @@ from nebuko.engine.step_driver import (
     StopReason,
 )
 from nebuko.engine.lib.github_client import BOT_MARKER
+from nebuko.engine.lib.prepare_comment import CONTINUE_TOKEN
+from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.models import CommentEntry
 
 
@@ -29,6 +33,20 @@ def _outcome(code: ExitCode) -> RunOutcome:
         state=None,
         phases=(),
     )
+
+
+def _agent_turn(appreciation: str) -> dict:
+    """What ``Engine.invoke_agent`` returns: the answer, turn outcome and state."""
+    return {
+        "answer": "## step\n\nDone.",
+        "turn_outcome": {"appreciation": appreciation},
+        "state": WorkflowState(
+            workflow="default",
+            step="context",
+            agent="context",
+            position=[{"workflow": "default", "step": "context"}],
+        ),
+    }
 
 
 def _cfg(**overrides) -> DriverConfig:
@@ -125,7 +143,17 @@ class _Thread:
 
 @pytest.fixture
 def loop(tmp_path, monkeypatch, mocker):
-    """Patched dispatch run: returns (thread, triggers, run_mock, script-setter)."""
+    """Dispatch run with ``Engine.run`` stubbed: the driver sees scripted outcomes."""
+    return _loop_handle(tmp_path, monkeypatch, mocker, real_steps=False)
+
+
+@pytest.fixture
+def real_loop(tmp_path, monkeypatch, mocker):
+    """Dispatch run through the real ``Engine.run``; only the agent is stubbed."""
+    return _loop_handle(tmp_path, monkeypatch, mocker, real_steps=True)
+
+
+def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     import nebuko.engine.run_loop as run_loop
 
     thread = _Thread()
@@ -175,9 +203,12 @@ def loop(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/git-flow-ai")
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("WORKFLOW_SINGLE_JOB", "1")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.delenv("WORKFLOW_MAX_STEPS", raising=False)
 
     state = {"script": [], "on_step": None}
+    seen_prev: list[WorkflowState | None] = []
+    agent_calls: list[str] = []
 
     def fake_run(self):
         triggers.append((self.adapter.read_trigger().body, self.adapter.read_trigger().step))
@@ -185,9 +216,26 @@ def loop(tmp_path, monkeypatch, mocker):
         if state["on_step"] is not None:
             state["on_step"](len(triggers), thread)
         code = state["script"][len(triggers) - 1]
-        return _outcome(code)
+        if len(triggers) > 1:
+            seen_prev.append(self.adapter.load_state())
+        make_state = state.get("state_for")
+        outcome = _outcome(code)
+        return replace(outcome, state=make_state(len(triggers))) if make_state else outcome
 
-    run = mocker.patch.object(run_loop.Engine, "run", autospec=True, side_effect=fake_run)
+    run = None
+    if real_steps:
+        agent_turns: list[str] = state.setdefault("agent_turns", [])
+
+        def fake_agent(self, prompt):
+            appreciation = agent_turns.pop(0) if agent_turns else "approved"
+            if state["on_step"] is not None:
+                state["on_step"](len(agent_calls) + 1, thread)
+            agent_calls.append(prompt)
+            return _agent_turn(appreciation)
+
+        mocker.patch.object(run_loop.Engine, "invoke_agent", autospec=True, side_effect=fake_agent)
+    else:
+        run = mocker.patch.object(run_loop.Engine, "run", autospec=True, side_effect=fake_run)
 
     class Handle:
         pass
@@ -198,6 +246,8 @@ def loop(tmp_path, monkeypatch, mocker):
     handle.markers = markers
     handle.run = run
     handle.state = state
+    handle.seen_prev = seen_prev
+    handle.agent_calls = agent_calls
     handle.main = lambda: run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
     return handle
 
@@ -338,3 +388,70 @@ class TestDriverHelpers:
         assert _step_budget_s({}) == (20 + 8) * 60
         env = {"AGENT_SOFT_TIMEOUT_MINUTES": "10", "WIND_DOWN_TIMEOUT_MINUTES": "5"}
         assert _step_budget_s(env) == 15 * 60
+
+
+class TestHandOffAndArtifacts:
+    def test_next_step_reads_the_previous_steps_state_from_the_handoff(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE, ExitCode.HOLD]
+        loop.state["state_for"] = lambda n: WorkflowState(
+            workflow="default", step=f"s{n}", agent="context", position=[]
+        )
+
+        loop.main()
+
+        assert [s.step for s in loop.seen_prev] == ["s1", "s2"]
+
+    def test_console_and_timings_keep_one_record_per_step(self, tmp_path, monkeypatch):
+        from nebuko.engine.artifacts import CONSOLE_LOG_FILE, TIMINGS_FILE, RunArtifactStager
+        from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
+
+        stager = RunArtifactStager(tmp_path)
+        for step in (1, 2, 3):
+            monkeypatch.setenv(LOOP_STEP_ENV, str(step))
+            stager.bundle(f"console of {step}")
+            stager.stage_timings({"engine_init": float(step)})
+
+        console = (tmp_path / CONSOLE_LOG_FILE).read_text(encoding="utf-8")
+        assert "console of 1" in console
+        assert "=== step 3 ===\nconsole of 3" in console
+        records = json.loads((tmp_path / TIMINGS_FILE).read_text(encoding="utf-8"))
+        assert [r["step"] for r in records] == [1, 2, 3]
+
+    def test_metrics_file_is_per_step_in_the_loop(self, tmp_path, monkeypatch):
+        from nebuko.engine.lib.agent_script.features.collect_metrics import collect_metrics
+        from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
+        from nebuko.engine.lib.metrics_schema import Metrics
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(LOOP_STEP_ENV, "2")
+
+        collect_metrics.save_metrics_json(Metrics(run_id="abc"))
+
+        assert (tmp_path / "output" / "metrics-abc-step-2.json").is_file()
+
+
+class TestRealStepPath:
+    def test_three_real_steps_post_no_continue_token(self, real_loop):
+        real_loop.state["agent_turns"] = ["approved", "approved", "hold"]
+
+        assert real_loop.main() == 0
+
+        assert len(real_loop.agent_calls) == 3
+        assert real_loop.thread.posted
+        assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
+        assert not any("nebuko:refused" in body or "nebuko:failed" in body
+                       for body in real_loop.thread.posted)
+
+    def test_human_comment_stops_the_real_loop_at_the_next_boundary(self, real_loop):
+        def human_speaks(step, thread):
+            if step == 2:
+                thread.add("777", "/nebuko approve gate")
+
+        real_loop.state["on_step"] = human_speaks
+
+        real_loop.main()
+
+        assert len(real_loop.agent_calls) == 2
+        assert "777" in [c.comment_id for c in real_loop.thread.comments]
+        assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
+

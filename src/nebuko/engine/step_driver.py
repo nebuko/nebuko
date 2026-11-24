@@ -18,6 +18,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
 from nebuko.engine.models import ExitCode, RunOutcome
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
@@ -219,18 +220,24 @@ class StepDriver:
 
     def _run_step(self, index: int, *, looping: bool) -> RunOutcome:
         if looping:
-            self._reset_process_state()
+            self._reset_process_state(index)
         outcome = self._engine_factory(index).run()
         timings = getattr(outcome, "timings", None)
         if isinstance(timings, Mapping):
             self.step_timings.append({"step": index, **timings})
+        if looping and outcome.state is not None:
+            # The next step reads this hand-off instead of the posted comment.
+            from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+            WorkflowStateCodec().save_prev(outcome.state)
         return outcome
 
-    def _reset_process_state(self) -> None:
+    def _reset_process_state(self, index: int) -> None:
         """Undo what the previous step exported; keep the continue token off the loop."""
         os.environ.clear()
         os.environ.update(self._env_snapshot)
         os.environ["WORKFLOW_NO_CONTINUE"] = "1"
+        os.environ[LOOP_STEP_ENV] = str(index)
         from nebuko.engine.lib.resolve_workflow import step_prompt_path
 
         Path(step_prompt_path()).unlink(missing_ok=True)
