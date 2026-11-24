@@ -37,24 +37,34 @@ def _outcome(code: ExitCode) -> RunOutcome:
     )
 
 
-def _agent_turn(appreciation: str) -> dict:
+# The default workflow's first three steps, in run order.
+_REAL_STEPS = ("analyze", "context", "plan")
+
+
+def _agent_turn(appreciation: str, step: str) -> dict:
     """What ``Engine.invoke_agent`` returns: the answer, turn outcome and state."""
     return {
         # Every declared output section of the default workflow's steps, in the
         # engine's section markers, so the real validator accepts the answer.
         "answer": "# Step\n\n" + "".join(
             SECTION_OPEN.format(name=name) + "\n\nDone.\n" + SECTION_CLOSE + "\n\n"
-            for name in ("context_request", "assumptions", "requirements", "decision", "coverage", "questions")
+            for name in (
+                "headline", "context_request", "assumptions", "requirements",
+                "decision", "coverage", "questions",
+            )
         ),
         "turn_outcome": {
             "appreciation": appreciation,
             **({"hold_kind": "awaiting_input"} if appreciation == "hold" else {}),
         },
+        # The state the step hands to the next one: the real hand-off the next
+        # in-process step reads (no posted-comment fallback in the real path).
         "state": WorkflowState(
             workflow="default",
-            step="context",
-            agent="context",
-            position=[{"workflow": "default", "step": "context"}],
+            step=step,
+            agent=step,
+            position=[{"workflow": "default", "step": step}],
+            lane="user-repo",
         ),
     }
 
@@ -207,20 +217,15 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     mocker.patch("nebuko.engine.lib.github_client.get_issue", return_value={})
 
     event = tmp_path / "event.json"
-    event.write_text(
-        json.dumps(
-            {
-                "client_payload": {
-                    "actor": "olivier-norture",
-                    "prompt_body": "/nebuko run workflow",
-                    "issue_number": 1457,
-                    "org_repo": "olivier-norture/git-flow-ai",
-                    "step": "context",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    payload = {
+        "actor": "olivier-norture",
+        "prompt_body": "/nebuko run workflow",
+        "issue_number": 1457,
+        "org_repo": "olivier-norture/git-flow-ai",
+        # The real path starts at the workflow's first step, so it runs all three.
+        **({} if real_steps else {"step": "context"}),
+    }
+    event.write_text(json.dumps({"client_payload": payload}), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
     monkeypatch.setenv("GITHUB_EVENT_NAME", "repository_dispatch")
@@ -252,11 +257,12 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
         agent_turns: list[str] = state.setdefault("agent_turns", [])
 
         def fake_agent(self, prompt):
+            n = len(agent_calls)
             appreciation = agent_turns.pop(0) if agent_turns else "approved"
             if state["on_step"] is not None:
-                state["on_step"](len(agent_calls) + 1, thread)
+                state["on_step"](n + 1, thread)
             agent_calls.append(prompt)
-            return _agent_turn(appreciation)
+            return _agent_turn(appreciation, _REAL_STEPS[min(n, len(_REAL_STEPS) - 1)])
 
         mocker.patch.object(run_loop.Engine, "invoke_agent", autospec=True, side_effect=fake_agent)
     else:
@@ -457,15 +463,16 @@ class TestHandOffAndArtifacts:
 
 class TestRealStepPath:
     def test_three_real_steps_post_no_continue_token(self, real_loop):
-        real_loop.state["agent_turns"] = ["approved", "approved", "hold"]
+        # analyze -> context -> plan; the plan gate turns the approval into a hold.
+        real_loop.state["agent_turns"] = ["approved", "approved", "approved"]
 
         assert real_loop.main() == 0, [b[:300] for b in real_loop.thread.posted]
 
-        # The real Engine chains steps in-process; the stub agent does not write the
-        # child's hand-off, so only the first hand-offs are asserted here.
-        assert len(real_loop.agent_calls) >= 2
-        assert real_loop.thread.posted
+        assert len(real_loop.agent_calls) == 3
+        assert len(real_loop.thread.posted) == 3
         assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
+        assert all('"lane": "user-repo"' in body or '"lane":"user-repo"' in body
+                   for body in real_loop.thread.posted)
         assert not any("nebuko:refused" in body or "nebuko:failed" in body
                        for body in real_loop.thread.posted)
 
