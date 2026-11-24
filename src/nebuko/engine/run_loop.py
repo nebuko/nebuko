@@ -29,7 +29,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
-from nebuko.engine.lib.loop_step import loop_step_index
+from nebuko.engine.lib.loop_step import handed_over_state
 from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
@@ -4961,14 +4961,9 @@ class Engine:
         seeded = self._seeded_prev_state.get("state")
         if seeded is not None:
             return seeded
-        # A later step of the single-job loop reads the state the previous step
-        # handed over in-process, not the comment it just posted (issue #1457).
-        if (loop_step_index() or 1) > 1:
-            from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
-
-            handed = WorkflowStateCodec().load_prev()
-            if handed.status == "ok" and handed.state is not None:
-                return handed.state
+        handed = handed_over_state()
+        if handed is not None:
+            return handed
         try:
             return self.adapter.load_state()
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal

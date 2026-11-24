@@ -180,10 +180,15 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
 
     mocker.patch.object(GitHubAdapter, "load_history", side_effect=load_history)
     mocker.patch.object(GitHubAdapter, "post", post)
-    mocker.patch(
-        "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
-        return_value=None,
-    )
+    if real_steps:
+        # The thread fallback stays real (the hand-off is tried first); the posted
+        # comments are not in the fake thread, so the fallback finds nothing.
+        mocker.patch("nebuko.engine.lib.resolve_config.get_issue_comments", return_value=[])
+    else:
+        mocker.patch(
+            "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
+            return_value=None,
+        )
     mocker.patch(
         "nebuko.adapters.github.GitHubAdapter.load_context_entries", return_value=[]
     )
