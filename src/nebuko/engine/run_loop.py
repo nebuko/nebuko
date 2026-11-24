@@ -1166,7 +1166,7 @@ class Engine:
         self._caller_root()
         try:
             self._enter(phases, "normalize")
-            trigger = self.normalize()
+            trigger = self._with_dispatch_issue_body(self.normalize())
 
             self._require_readable_target(trigger)
 
@@ -3509,6 +3509,28 @@ class Engine:
             log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
         return result
 
+    def _with_dispatch_issue_body(self, trigger: Trigger) -> Trigger:
+        """Fill a dispatch trigger's ``issue_body`` from the target issue (#1455).
+
+        A ``repository_dispatch`` payload carries only the command, so the
+        prompt would otherwise show no issue text. Best-effort: an unreadable
+        issue keeps the empty body and the run proceeds.
+        """
+        if trigger.type != "repository_dispatch" or trigger.issue_body or trigger.number <= 0:
+            return trigger
+        repo = self._repo(trigger)
+        if not repo:
+            return trigger
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the body is optional context
+            log.warning("[phase:normalize] could not read issue #%s: %s", trigger.number, exc)
+            return trigger
+        body = str((issue or {}).get("body") or "")
+        return replace(trigger, issue_body=body) if body else trigger
+
     def _fetched_issue_title(self, trigger: Trigger) -> str:
         """The target issue's title, read from GitHub; ``""`` when unreadable.
 
@@ -4579,6 +4601,10 @@ class Engine:
                 if trigger.issue_body:
                     parts.append(f"**Issue body:**\n{trigger.issue_body}")
                 body = _agent_facing_body(trigger.body)
+                if trigger.type == "repository_dispatch" and _is_bare_command(body):
+                    # A dispatch's prompt is the command, not the task: the
+                    # issue body above is the request (issue #1455).
+                    body = ""
             if body:
                 parts.append(body)
         task = self._get(resolved, "TASK")
@@ -4686,7 +4712,9 @@ class Engine:
         trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
         if not isinstance(trigger, Trigger):
             return False
-        return bool(trigger.issue_body or trigger.body) or trigger.type == "issue"
+        if trigger.type == "issue" or trigger.issue_body:
+            return True
+        return bool(trigger.body) and not _is_bare_command(trigger.body)
 
     def _context_bodies(self) -> dict[str, str]:
         """Every thread comment body by id, read once (issue #913 parts)."""
@@ -5033,6 +5061,16 @@ def _agent_facing_body(body: str) -> str:
     from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
 
     return strip_state_section(body)
+
+
+_BARE_COMMAND = re.compile(
+    r"/nebuko(?:[ \t]+(?:run|workflow|force-step|--[\w-]+(?:[ \t]+[\w.-]+)?))+[ \t]*"
+)
+
+
+def _is_bare_command(text: str) -> bool:
+    """True when ``text`` is only a ``/nebuko`` command line, with no task text."""
+    return _BARE_COMMAND.fullmatch(text.strip()) is not None
 
 
 def _render_gate_decision(raw: Any) -> str:
