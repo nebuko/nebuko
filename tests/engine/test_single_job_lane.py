@@ -22,6 +22,7 @@ from nebuko.engine.step_driver import (
 )
 from nebuko.engine.lib.github_client import BOT_MARKER
 from nebuko.engine.lib.prepare_comment import CONTINUE_TOKEN
+from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock
 from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.models import CommentEntry
 
@@ -65,6 +66,8 @@ def _agent_turn(appreciation: str, step: str) -> dict:
             agent=step,
             position=[{"workflow": "default", "step": step}],
             lane="user-repo",
+            # The plan gate arms the root lock; the engine must not advance past it.
+            gate=GateLock(step="plan") if step == "plan" else None,
         ),
     }
 
