@@ -34,6 +34,15 @@ When a run fails after the agent phase, the engine posts a comment marked
 - whether the branch was pushed (`branch pushed: yes/no`);
 - a ping of the workflow starter, like the human-action notice.
 
+## Refusals are not failures
+
+A credential-guard refusal (`ClaudeCredentialError`, ADR 0017) stops the run
+before the agent starts. It posts a single notice with the guard's own next
+steps, sets the `nebuko:refused` status (`RunStatus.REFUSED`) and exits 0, as a
+human-actionable stop does (ADR 0015). It gets no failure notice, no placeholder
+answer and no `nebuko:failed` label. Its notice does not offer `/nebuko resume`
+when the guard says resume would be refused.
+
 ## How to resume
 
 Fix the underlying failure, then re-run the step with the existing `/nebuko`

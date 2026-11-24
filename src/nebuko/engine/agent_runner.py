@@ -46,6 +46,9 @@ _PROMPT_FILE = "final_prompt.md"
 #: The child's provider-failure staging file and exit status (issue #1322).
 _PROVIDER_FAILURE_FILE = "provider_failure.json"
 _PROVIDER_FAILURE_EXIT_CODE = 3
+#: The child's credential-refusal staging file and exit status (issue #1099).
+_REFUSAL_FILE = "credential_refusal.json"
+_REFUSAL_EXIT_CODE = 4
 # The entry point is staged under a name that cannot shadow the ``agent_script``
 # package (see :func:`_stage_entry_point`).
 _STAGED_ENTRY_FILE = "agent_script_entry.py"
@@ -102,6 +105,10 @@ def run_legacy_agent(
             # A provider failure is terminal (issue #1322): surface it typed so
             # the engine reports the real cause instead of a generic crash.
             raise _provider_failure_from(work, completed.stderr)
+        if completed.returncode == _REFUSAL_EXIT_CODE:
+            # The credential guard refused the run (issue #1099): a deliberate
+            # stop, not a crash, so it keeps its own type.
+            raise _refusal_from(work, completed.stderr)
         if completed.returncode != 0:
             raise RuntimeError(
                 f"agent_script exited {completed.returncode}: "
@@ -224,6 +231,22 @@ def _load_state(path: Path) -> Any:
         return WorkflowState.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - a malformed state is reported downstream
         return None
+
+
+def _refusal_from(work: Path, stderr: str) -> Exception:
+    """Rebuild the child's credential refusal from its staged record (#1099)."""
+    from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+    reason = ""
+    path = work / _REFUSAL_FILE
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                reason = str(loaded.get("reason") or "")
+        except (OSError, ValueError):
+            reason = ""
+    return ClaudeCredentialError(reason or stderr.strip()[-500:])
 
 
 def _provider_failure_from(work: Path, stderr: str) -> Any:

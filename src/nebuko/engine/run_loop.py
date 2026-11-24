@@ -202,6 +202,7 @@ def _is_true(value: Any) -> bool:
 STATUS_EVENT_STARTED = "started"
 STATUS_EVENT_HUMAN_ACTION = "human_action"
 STATUS_EVENT_FAILURE = "failure"
+STATUS_EVENT_REFUSAL = "refusal"
 
 
 def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
@@ -223,6 +224,8 @@ def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
         return RunStatus.RUNNING
     if event == STATUS_EVENT_FAILURE:
         return RunStatus.FAILED
+    if event == STATUS_EVENT_REFUSAL:
+        return RunStatus.REFUSED
     if event == STATUS_EVENT_HUMAN_ACTION:
         if kind in (AWAITING_APPROVAL, AWAITING_INPUT):
             return RunStatus.GATED
@@ -1388,12 +1391,22 @@ class Engine:
                     failure_reason = _hook_failure_note("pre", pre_result)
 
             if failure_reason is None:
-                self.notify_agent_started(self._agent_start_notice(trigger))
                 # Imported here, not at module scope: the agent assembly needs
                 # the runtime extra, and the engine imports without it.
+                from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+                    ClaudeCredentialError,
+                )
                 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
                     ProviderFailure,
                 )
+
+                # The guard runs before the acknowledgment, so a refusal posts
+                # one notice and no "agent started" comment (issue #1099).
+                try:
+                    self._preflight_agent_credentials()
+                except ClaudeCredentialError as exc:
+                    return self._handle_refusal(str(exc), phases)
+                self.notify_agent_started(self._agent_start_notice(trigger))
 
                 try:
                     agent_result = self.invoke_agent(prompt)
@@ -1401,6 +1414,11 @@ class Engine:
                     # A provider failure is terminal (issue #1322): no finalize
                     # attempts, no validation, no publish and no routing.
                     return self._handle_provider_failure(exc, phases)
+                except ClaudeCredentialError as exc:
+                    # A credential-guard refusal is a deliberate human-actionable
+                    # stop (ADR 0015), not a crash: no placeholder answer, no
+                    # publish and no routing (issue #1099).
+                    return self._handle_refusal(str(exc), phases)
                 except Exception as exc:  # noqa: BLE001 - never crash the host
                     log.exception("[phase:agent] agent invocation failed: %s", exc)
                     # The bash runs the agent behind ``| tee console.txt``, so a
@@ -2062,6 +2080,28 @@ class Engine:
             phases=tuple(phases),
         )
 
+    def _handle_refusal(self, reason: str, phases: Sequence[str]) -> RunOutcome:
+        """Stop the run on a credential-guard refusal (issue #1099).
+
+        The guard refused before the agent ran, so there is nothing to publish
+        or route. The one notice carries the guard's own next steps; the run
+        exits 0 like the other human-actionable stops (ADR 0015) and writes no
+        workflow state.
+        """
+        log.info("[phase:agent] run refused by the credential guard — %s", reason)
+        self._set_status(run_status_for(STATUS_EVENT_REFUSAL))
+        posted = self._post_refusal_notice(reason)
+        return RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.NO_OUTCOME, note=reason
+            ),
+            prompt=None,
+            posted_body=posted,
+            state=None,
+            phases=tuple(phases),
+        )
+
     def _render_failure_timings(self) -> str:
         """The failed run's wall-clock breakdown for the failure notice (#1375).
 
@@ -2238,6 +2278,16 @@ class Engine:
         except Exception as exc:  # noqa: BLE001 - the notice is best-effort
             log.warning("[phase:guards] terminal notice failed: %s", exc)
         return notice
+
+    # @stub-protected
+    def _post_refusal_notice(self, reason: str) -> str | None:
+        """Post the credential guard's refusal as the run's one notice (#1099).
+
+        The reason is the guard's own message and its ``To proceed`` options;
+        it reaches the thread through the terminal-notice path (ping plus
+        neutralized triggers). Best-effort: a failed post returns ``None``.
+        """
+        return self._post_terminal_notice(reason)
 
     # @stub-protected
     def _post_soft_kill_halt(self, reason: str) -> str:
@@ -3153,6 +3203,38 @@ class Engine:
             str(roots[-1]),
             str(roots[0]) if len(roots) > 1 else None,
         )
+
+    def _preflight_agent_credentials(self) -> None:
+        """Run the credential guard host-side, before the agent acknowledgment (#1099).
+
+        The guard also runs inside the agent seam, which starts after the
+        acknowledgment; a refusal there would post the ack beside the refusal.
+        Only a ``ClaudeCredentialError`` is acted on. Any other failure (an
+        unresolvable config, a missing runtime) is left to the agent seam, which
+        reports it as it always has.
+        """
+        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+            ClaudeCredentialError,
+        )
+
+        try:
+            from nebuko.engine.agent_host import _applied_env  # noqa: PLC0415
+            from nebuko.engine.lib.agent_script.features.resolve_llm_config.resolve_llm_config import (  # noqa: PLC0415
+                resolve_llm_config,
+            )
+            from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (  # noqa: PLC0415
+                _enforce_harness_credentials,
+            )
+
+            with _applied_env(self._agent_env()):
+                llm_config, _, agent_cfg = resolve_llm_config(
+                    SimpleNamespace(prompt_location=None), ""
+                )
+                _enforce_harness_credentials(agent_cfg, llm_config)
+        except ClaudeCredentialError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the agent seam reports it
+            log.debug("[phase:agent] credential preflight skipped: %s", exc)
 
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
