@@ -43,7 +43,11 @@ from nebuko.engine.lib.workflow_state import (
     WorkflowState,
     workflow_ref_from_env,
     agent_config_from_env,
+    dispatch_actor_from_event,
+    is_fresh_run,
+    lane_binding_from_env,
 )
+from nebuko.engine.harness.credentials import SHARED_LANE
 from nebuko.engine.lib.workflow_state import extract_function_call
 from nebuko.engine.lib.workflow_state import extract_latest_state_from_comments
 from nebuko.engine.lib.workflow_state.features.build_state.build_state import build_state
@@ -60,6 +64,7 @@ from nebuko.engine.lib.agent_script.features.extract_recovery_trace.extract_reco
     extract_recovery_trace,
     recovery_trace_to_markdown,
 )
+from nebuko.engine.harness.base import warn_if_hold_means_done
 from nebuko.engine.lib.agent_script.features.run_agent.dispatch_recall import DISPATCH_RECALL_PROMPT
 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import RunFailure, RunFailureKind
 from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus, RunOutcome
@@ -1308,6 +1313,9 @@ def build_output(
 
     # ── Extract the turn outcome + function_call from agent output ─────
     turn_outcome, prefs, function_call = _resolve_outcome(conversation)
+    warn_if_hold_means_done(
+        workflow_step, os.environ.get("CONFIG_MODEL", ""), turn_outcome
+    )
 
     # Failure is engine-measured (issue #978): a crashed run stated nothing, so
     # the no-action default above (INCOMPLETE/NO_OUTCOME) must not stand in for
@@ -1462,6 +1470,13 @@ def build_output(
 
     pin = _resolve_pin(prefs)
 
+    lane, credential_owner = lane_binding_from_env(
+        os.environ, dispatch_actor_from_event(os.environ)
+    )
+    if lane is None and is_fresh_run(os.environ):
+        # A new /nebuko run workflow starts a workflow of its own: record the
+        # shared lane explicitly so build_state does not inherit the old one.
+        lane = SHARED_LANE
     new_state = build_state(
         prev_state,
         workflow=workflow_name,
@@ -1491,6 +1506,8 @@ def build_output(
         gate=gate,
         workflow_ref=workflow_ref_from_env(os.environ),
         agent_config=agent_config_from_env(os.environ),
+        lane=lane,
+        credential_owner=credential_owner,
         complexity_adjustment=_parse_complexity_adjustment_env(),
         complexity_review_request=complexity_review_request,
         complexity_policy=_parse_complexity_policy_env(),

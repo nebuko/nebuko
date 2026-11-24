@@ -426,7 +426,12 @@ class TestRunStatus:
 
         adapter.set_status(RunStatus.REVIEW_NEEDED)
 
-        assert client.removed == ["nebuko:running", "nebuko:gated", "nebuko:failed"]
+        assert client.removed == [
+            "nebuko:running",
+            "nebuko:gated",
+            "nebuko:failed",
+            "nebuko:refused",
+        ]
         assert "nebuko:review-needed" not in client.removed
 
     def test_maps_every_status_to_its_label(self):
@@ -437,6 +442,7 @@ class TestRunStatus:
             "nebuko:running",
             "nebuko:gated",
             "nebuko:failed",
+            "nebuko:refused",
             "nebuko:review-needed",
         ]
 
@@ -451,7 +457,7 @@ class TestThreadSnapshotReuse:
 
     def test_history_and_state_share_a_single_fetch(self, tmp_path):
         _, body = _state_comment()
-        client = FakeGhClient(comments=[{"body": body, "user": {"login": "x"}}])
+        client = FakeGhClient(comments=[{"body": body, "user": {"login": "x", "type": "Bot"}}])
         adapter = _adapter(tmp_path, client)
         adapter.read_trigger()
 
@@ -467,7 +473,7 @@ class TestThreadSnapshotReuse:
     def test_a_low_history_limit_still_reserves_a_state_safe_tail(self, tmp_path):
         from nebuko.engine.lib.thread_snapshot import STATE_TAIL_FLOOR
 
-        client = FakeGhClient(comments=[{"body": "hi", "user": {"login": "x"}}])
+        client = FakeGhClient(comments=[{"body": "hi", "user": {"login": "x", "type": "Bot"}}])
         adapter = _adapter(tmp_path, client)
         adapter.read_trigger()
 
@@ -654,8 +660,8 @@ class TestStagePrevState:
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         previous, body = _state_comment(history_len=3)
         comments = [
-            {"body": "<!-- bot-workflow-terminal -->\nolder", "user": {"login": "x"}},
-            {"body": body, "user": {"login": "x"}},
+            {"body": "<!-- bot-workflow-terminal -->\nolder", "user": {"login": "x", "type": "Bot"}},
+            {"body": body, "user": {"login": "x", "type": "Bot"}},
         ]
         adapter = _adapter(tmp_path, FakeGhClient(comments=comments))
         engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
@@ -725,7 +731,7 @@ class TestHistoryIncrementRegression:
         monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
         previous, body = _state_comment(history_len=3)
         adapter = _adapter(
-            tmp_path, FakeGhClient(comments=[{"body": body, "user": {"login": "x"}}])
+            tmp_path, FakeGhClient(comments=[{"body": body, "user": {"login": "x", "type": "Bot"}}])
         )
         engine = Engine(adapter=adapter, repo_root=repo_root(), env={})
 
@@ -769,3 +775,58 @@ class TestTargetIssueUnreadable:
 
         with pytest.raises(TargetIssueUnreadable, match="HTTP 404"):
             adapter.load_raw_thread()
+
+
+class TestStateTrust:
+    """Only bot-authored state comments are adopted (ADR 0017, fail closed)."""
+
+    ENGINE = (7, "nebuko-engine")
+
+    @staticmethod
+    def _body(lane=None):
+        from nebuko.engine.lib.config import StepRef
+        from nebuko.engine.lib.workflow_state.workflow_state import (
+            STATE_MARKER_END,
+            STATE_MARKER_START,
+            WorkflowState,
+        )
+
+        state = WorkflowState(
+            run_id=3,
+            workflow="dev-review-loop",
+            step="plan",
+            agent="architect",
+            position=[StepRef(workflow="dev-review-loop", step="plan")],
+            lane=lane,
+        )
+        return (
+            "<!-- bot-workflow-terminal -->\n"
+            f"{STATE_MARKER_START}\n{state.model_dump_json()}\n{STATE_MARKER_END}"
+        )
+
+    def test_forged_untrusted_state_without_lane_does_not_lower_guard(self):
+        from nebuko.engine.lib.thread_snapshot import build_snapshot
+
+        snapshot = build_snapshot(
+            [
+                {"id": 1, "body": self._body(lane="user-repo"),
+                 "user": {"login": "nebuko-engine", "type": "User", "id": 7}},
+                {"id": 2, "body": self._body(lane=None),
+                 "user": {"login": "mallory", "type": "User", "id": 99}},
+            ],
+            engine_actor=self.ENGINE,
+        )
+        assert snapshot.state is not None
+        assert snapshot.state.lane == "user-repo"
+        assert snapshot.untrusted_state_only is False
+
+    def test_untrusted_only_state_is_flagged_for_the_guard(self):
+        from nebuko.engine.lib.thread_snapshot import build_snapshot
+
+        snapshot = build_snapshot(
+            [{"id": 2, "body": self._body(lane=None),
+              "user": {"login": "mallory", "type": "User", "id": 99}}],
+            engine_actor=self.ENGINE,
+        )
+        assert snapshot.state is None
+        assert snapshot.untrusted_state_only is True

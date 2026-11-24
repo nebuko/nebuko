@@ -276,14 +276,33 @@ class GitHubAdapter:  # structurally satisfies adapters.base.PlatformAdapter
         client = self._client_handle()
         repo = self._require_repo()
         number = self._issue_number()
+        actor = self._snapshot_engine_actor()
         typed = getattr(client, "fetch_issue_comments", None)
         if typed is not None:
             result = typed(repo, number, limit=limit)
             if getattr(result, "ok", True):
-                return build_snapshot(result.comments)
+                return build_snapshot(result.comments, engine_actor=actor)
             return build_snapshot((), fetch_error=getattr(result, "detail", ""))
         # Injected/legacy clients expose only the list-returning function.
-        return build_snapshot(client.get_issue_comments(repo, number, limit=limit))
+        return build_snapshot(
+            client.get_issue_comments(repo, number, limit=limit), engine_actor=actor
+        )
+
+    def _snapshot_engine_actor(self) -> tuple[int, str]:
+        """The engine identity that anchors state-comment trust (ADR 0017).
+
+        Best-effort: ``(0, "")`` makes the engine's own state comments look
+        untrusted, which fails the lane guard closed rather than open.
+        """
+        try:
+            user_id, login = self.engine_actor()
+        except Exception:  # noqa: BLE001 - identity lookup must not break the read
+            return 0, ""
+        return int(user_id or 0), str(login or "")
+
+    def has_untrusted_state_only(self) -> bool:
+        """True when the thread's only state comments are from untrusted authors."""
+        return bool(getattr(self._thread_snapshot(), "untrusted_state_only", False))
 
     # @stub-protected
     def post(self, body: str) -> PostedComment:

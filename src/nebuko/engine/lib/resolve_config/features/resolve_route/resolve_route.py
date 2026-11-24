@@ -676,7 +676,9 @@ def _gate_hold_rejection_reason(
 
     Fail-closed: a missing state, a step not held at a gate, an unauthorized
     author, or a hold that already carries a decision (single-shot replay) all
-    yield a reason and the command becomes inert.
+    yield a reason and the command becomes inert. A decision binds one hold
+    instance only (issue #1294): a later hold at the same step — a loop back
+    into the gated step — accepts a fresh decision.
     """
     if prev_state is None:
         return "gate: no prior workflow state found"
@@ -689,11 +691,75 @@ def _gate_hold_rejection_reason(
         )
     position = list(prev_state.position or [])
     if any(
-        decision.is_for(prev_state.workflow, prev_state.step, position)
+        _decision_binds_current_hold(decision, prev_state, position)
         for decision in (prev_state.gate_history or [])
     ):
         return "gate: this hold already has a recorded decision (single-shot)"
     return None
+
+
+def _decision_binds_current_hold(
+    decision: GateDecision,
+    prev_state: "WorkflowState",
+    position: list[StepRef],
+) -> bool:
+    """True iff ``decision`` was recorded for the hold now blocking the step.
+
+    ``GateDecision.is_for`` matches every hold at a step in a loop, so it is
+    not enough on its own (issue #1294). A hold begins when the gated step's
+    latest run completes (``apply_gate_lock`` arms the lock there), and GitHub
+    comment ids are monotonic, so a decision recorded *before* that run's
+    output comments belongs to an earlier hold instance. Without comparable
+    ids (legacy state, or CI did not forward the deciding comment id) fall
+    back to counting hold instances, which fails closed on a replay.
+    """
+    if not decision.is_for(prev_state.workflow, prev_state.step, position):
+        return False
+    hold_start = _hold_start_comment_id(prev_state, position)
+    if hold_start is not None and decision.comment_id is not None:
+        return decision.comment_id > hold_start
+    return _decisions_for_hold(prev_state, position) >= _hold_completions(
+        prev_state, position
+    )
+
+
+def _hold_start_comment_id(
+    prev_state: "WorkflowState", position: list[StepRef]
+) -> Optional[int]:
+    """Highest comment id of the run that began the current hold, if known."""
+    for entry in reversed(prev_state.history or []):
+        if entry.step != prev_state.step or list(entry.position or []) != position:
+            continue
+        return max(entry.comment_ids) if entry.comment_ids else None
+    return None
+
+
+def _decisions_for_hold(
+    prev_state: "WorkflowState", position: list[StepRef]
+) -> int:
+    """Recorded decisions targeting this (workflow, step, position)."""
+    return sum(
+        1
+        for decision in (prev_state.gate_history or [])
+        if decision.is_for(prev_state.workflow, prev_state.step, position)
+    )
+
+
+def _hold_completions(prev_state: "WorkflowState", position: list[StepRef]) -> int:
+    """Runs of the gated step at this position — one hold instance each.
+
+    Legacy history entries may carry no position, so fall back to matching the
+    step alone rather than reporting zero holds (which would read as decided).
+    """
+    entries = [
+        entry
+        for entry in (prev_state.history or [])
+        if entry.step == prev_state.step
+    ]
+    at_position = [
+        entry for entry in entries if list(entry.position or []) == position
+    ]
+    return len(at_position) or len(entries)
 
 
 def _build_gate_decision(

@@ -8,6 +8,7 @@ from nebuko.engine.harness.credentials import (
     ClaudeCredentialError,
     ContinuationContext,
     authorize_bot_continuation,
+    authorize_lane_binding,
     backend_credentials_error,
     enforce_backend_credentials,
     is_bot_actor,
@@ -81,6 +82,43 @@ def test_failed_association_lookup_refuses():
     decision = authorize_bot_continuation(_ctx(), lambda _login: None)
     assert not decision.allowed
     assert decision.failed_rule == "caller-association"
+
+
+def _user_repo_ctx(**overrides):
+    fields = {
+        "previous_lane": "user-repo",
+        "previous_credential_owner": "alice",
+        "lane": None,
+        "credential_owner": None,
+    }
+    fields.update(overrides)
+    return _ctx(**fields)
+
+
+def test_user_repo_continuation_on_org_shared_token_is_refused():
+    decision = authorize_lane_binding(_user_repo_ctx())
+    assert not decision.allowed
+    assert decision.failed_rule == "lane-binding"
+    assert "alice/nebuko-claude-code" in decision.refusal_message()
+
+
+def test_user_repo_continuation_in_same_lane_and_owner_is_allowed():
+    decision = authorize_lane_binding(
+        _user_repo_ctx(lane="user-repo", credential_owner="alice")
+    )
+    assert decision.allowed, decision
+
+
+def test_user_repo_continuation_for_other_owner_is_refused():
+    decision = authorize_lane_binding(
+        _user_repo_ctx(lane="user-repo", credential_owner="bob")
+    )
+    assert not decision.allowed
+
+
+def test_shared_lane_state_is_not_bound_by_lane_binding():
+    decision = authorize_lane_binding(_ctx(previous_lane=None))
+    assert decision.allowed, decision
 
 
 def test_api_key_lane_hint_only_where_it_applies():

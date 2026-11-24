@@ -395,3 +395,160 @@ def test_live_claude_finalize_tool() -> None:  # pragma: no cover - opt-in
     )
     result = harness.make_closing_channel().elicit(built.session, None)
     assert isinstance(result.outcome, TurnOutcomePayload)
+
+
+def test_tool_uses_count_as_agent_tool_calls() -> None:
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+
+    from nebuko.engine.harness.claude_code import ClaudeCodeConversation, _events_of
+    from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import (
+        collect_llm_metrics,
+    )
+
+    session, _, _ = _session()
+    conversation = ClaudeCodeConversation(
+        session=session,
+        closing_channel=ClaudeCodeClosingChannel(),
+        workspace="/tmp/repo",
+    )
+    messages = [
+        AssistantMessage(
+            content=[
+                ToolUseBlock(id=f"t{i}", name="Read", input={"file_path": f"f{i}"})
+                for i in range(3)
+            ],
+            model="claude-x",
+        ),
+        UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="t0", content="ok", is_error=False),
+                ToolResultBlock(tool_use_id="t1", content="boom", is_error=True),
+                ToolResultBlock(tool_use_id="t2", content="ok", is_error=False),
+            ]
+        ),
+    ]
+    for message in messages:
+        for event in _events_of(message):
+            session._emit(event)
+
+    metrics = collect_llm_metrics(conversation)
+    assert metrics.error is None
+    assert metrics.nb_tool_calls == 3
+    assert metrics.tool_calls_per_tool == {"Read": 3}
+    assert round(metrics.tool_call_error_rate, 2) == 33.33
+
+
+def test_collect_llm_metrics_counts_cache_in_input_tokens() -> None:
+    from claude_agent_sdk import ResultMessage
+
+    from nebuko.engine.harness.claude_code import ClaudeCodeConversation, _events_of
+    from nebuko.engine.lib.agent_script.sub_domains.metrics.metrics_collector import (
+        collect_llm_metrics,
+    )
+
+    session, _, _ = _session()
+    conversation = ClaudeCodeConversation(
+        session=session,
+        closing_channel=ClaudeCodeClosingChannel(),
+        workspace="/tmp/repo",
+    )
+    for event in _events_of(
+        ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=900,
+            is_error=False,
+            num_turns=1,
+            session_id="s1",
+            total_cost_usd=0.5,
+            usage={
+                "input_tokens": 100,
+                "cache_read_input_tokens": 300,
+                "cache_creation_input_tokens": 50,
+                "output_tokens": 40,
+            },
+            result="done",
+        )
+    ):
+        session._emit(event)
+
+    metrics = collect_llm_metrics(conversation)
+    assert metrics.input_tokens == 450
+    assert metrics.output_tokens == 40
+    assert metrics.cache_hit_tokens == 300
+
+
+_TOKEN = "sk-ant-oat01-SECRET-VALUE"
+
+
+class _ErrorResultClient(_FakeClient):
+    """Replays one claude-code error result per turn, counting the turns."""
+
+    def __init__(self, text: str, *, is_error: bool = True) -> None:
+        super().__init__()
+        self.turns = 0
+        self._text = text
+        self._is_error = is_error
+
+    async def receive_response(self):
+        from claude_agent_sdk import ResultMessage
+
+        self.turns += 1
+        yield ResultMessage(
+            subtype="error",
+            duration_ms=10,
+            duration_api_ms=10,
+            is_error=self._is_error,
+            num_turns=1,
+            session_id="s1",
+            total_cost_usd=0.0,
+            usage={},
+            result=self._text,
+        )
+
+
+def test_401_result_raises_terminal_auth_error_once() -> None:
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        HarnessAuthError,
+        ProviderFailure,
+    )
+
+    session = ClaudeCodeSession(options=None, sink=FinalizeSink())
+    client = _ErrorResultClient(
+        "Failed to authenticate. API Error: 401 OAuth access token is invalid."
+    )
+    session._client = client
+
+    with pytest.raises(HarnessAuthError) as raised:
+        session.run(timeout_s=5)
+
+    assert isinstance(raised.value, ProviderFailure)
+    assert client.turns == 1
+    assert _TOKEN not in str(raised.value)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in str(raised.value)
+
+
+def test_other_error_results_do_not_raise_auth_error() -> None:
+    session = ClaudeCodeSession(options=None, sink=FinalizeSink())
+    session._client = _ErrorResultClient("tool crashed")
+
+    session.run(timeout_s=5)
+
+
+def test_auth_failure_notice_names_the_secret_and_omits_the_token(monkeypatch) -> None:
+    from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (
+        harness_auth_message,
+    )
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", _TOKEN)
+    message = harness_auth_message("acme/widgets")
+
+    assert message.startswith("claude-code authentication failed (401)")
+    assert "claude setup-token" in message
+    assert message.endswith("update the secret in acme/widgets.")
+    assert _TOKEN not in message

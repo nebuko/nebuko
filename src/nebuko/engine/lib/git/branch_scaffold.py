@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .base_branch import resolve_base_branch
 from .git_session import GIT_IDENTITY_EMAIL, GIT_IDENTITY_NAME
 
 if TYPE_CHECKING:
@@ -31,9 +32,6 @@ if TYPE_CHECKING:
 # ``propagate = True`` (the default), and importing it at module top dragged the
 # whole SDK (~5s) onto the engine's pre-first-log path (issue #1266).
 logger = logging.getLogger(__name__)
-
-#: The default base branch when neither the env nor the remote HEAD names one.
-DEFAULT_BASE_BRANCH = "main"
 
 #: Installed by the scaffold: agent commits may not stage workflow files.
 #:
@@ -100,7 +98,8 @@ def branch_slug(title: str) -> str:
 
 def feature_branch_name(issue_number: int, title: str) -> str:
     """The dev session's branch: ``feature/issue-<n>-<slug>``."""
-    return f"feature/issue-{issue_number}-{branch_slug(title)}"
+    slug = branch_slug(title)
+    return f"feature/issue-{issue_number}-{slug}" if slug else f"feature/issue-{issue_number}"
 
 
 def issue_title_from_payload(payload: object) -> str:
@@ -239,17 +238,13 @@ class BranchScaffold:
         return result
 
     def _base_branch(self) -> str:
-        """The base branch: ``GITHUB_BASE_REF`` when set, else the remote HEAD."""
-        override = self.env.get("GITHUB_BASE_REF", "").strip()
-        if override:
-            return override
+        return resolve_base_branch(self.env, self._origin_head)
+
+    def _origin_head(self) -> str | None:
         try:
-            head = self._git(
-                "symbolic-ref", "--short", "refs/remotes/origin/HEAD"
-            )
-            return head.removeprefix("origin/")
+            return self._git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
         except RuntimeError:
-            return DEFAULT_BASE_BRANCH
+            return None
 
     def _fetch_base(self, base: str) -> bool:
         """Fetch the base branch only (issue #1138: no tags, no full history)."""

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import threading
 from typing import Any, Callable, Literal, Optional, Protocol, runtime_checkable
 
@@ -31,16 +32,82 @@ __all__ = [
     "HarnessCapabilities",
     "HarnessEvent",
     "HarnessSession",
+    "build_closing_prompt",
     "drive_turn",
     "register_harness",
     "registered_harnesses",
     "resolve_harness",
+    "warn_if_hold_means_done",
 ]
 
 log = logging.getLogger(__name__)
 
 #: Watchdog budget for one engine-elicited closing turn (seconds).
 CLOSING_TURN_TIMEOUT_S = 240.0
+
+#: The outcome rules every closing prompt carries (issue #1437). One block, so
+#: the adapters cannot drift on what ``hold`` means.
+CLOSING_OUTCOME_RULES = (
+    "Set `turn_outcome.appreciation` to one of:\n"
+    "- 'approved' when the work meets this step's goal;\n"
+    "- 'rejected' when it does not;\n"
+    "- 'hold' only when you are blocked and need information from a human.\n"
+    "Never hold because your work is finished or your report is delivered; "
+    "finished work is 'approved'.\n"
+    "`turn_outcome.hold_kind` = 'awaiting_input' goes only together with a "
+    "'hold'; never set it as a default.\n"
+    "`turn_outcome.agent_call` = {agent_name, task} only when you are "
+    "imperatively naming the exact agent to run next. Set "
+    "`turn_outcome.round`, `note`, `complexity` and `pin` only when they apply.\n"
+    "Where the workflow goes next is engine topology, never your choice. "
+    "Nothing is posted if `report` is empty."
+)
+
+#: Completion phrases that make a ``hold`` suspicious (issue #1437).
+_DONE_PHRASE = re.compile(
+    r"\b(complete|completed|delivered|finished|done)\b", re.IGNORECASE
+)
+
+
+def build_closing_prompt(*, finalize_tool: str) -> str:
+    """The closing-turn prompt template, shared by every harness adapter.
+
+    Returns a ``str.format`` template with one ``{sections}`` slot; the adapter
+    varies only the tool name it asks the agent to call.
+    """
+    head = (
+        "Engine finalize turn - the work phase is over; do not call any work "
+        f"tool. Call the `{finalize_tool}` tool once. Put your COMPLETE, "
+        "self-contained report in its `report` argument - the full deliverable "
+        "that must be posted on the issue (never a one-line note) - and your "
+        "turn outcome in `turn_outcome`.\n\n"
+    )
+    return _escape(head) + "{sections}\n" + _escape(CLOSING_OUTCOME_RULES)
+
+
+def _escape(text: str) -> str:
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def warn_if_hold_means_done(step: str, model: str, turn_outcome: Any) -> bool:
+    """Log a warning when a ``hold`` note says the work is finished (issue #1437).
+
+    Routing is unchanged: the agent's verdict stands, the warning only makes a
+    parked finished step visible. Returns ``True`` when it warned.
+    """
+    if turn_outcome is None or getattr(turn_outcome, "appreciation", None) != "hold":
+        return False
+    note = getattr(turn_outcome, "note", None) or ""
+    if not _DONE_PHRASE.search(note):
+        return False
+    log.warning(
+        "[phase:agent] step %s (model %s) ended 'hold' but its note says the "
+        "work is done; verify the hold is a real block: %s",
+        step,
+        model or "-",
+        note,
+    )
+    return True
 
 
 class HarnessCapabilities(BaseModel):

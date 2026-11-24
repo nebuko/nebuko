@@ -33,6 +33,13 @@ def _fetch_workflow_state_from_history(
     Returns:
         Latest WorkflowState from comments, or None.
     """
+    # A later single-job loop step takes the state its predecessor handed over
+    # in-process instead of re-reading the comment it has just posted (#1457).
+    from nebuko.engine.lib.loop_step import handed_over_state
+
+    handed = handed_over_state()
+    if handed is not None:
+        return handed
     if not repo or not issue_number:
         return None
     try:

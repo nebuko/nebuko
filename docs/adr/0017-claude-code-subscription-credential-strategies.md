@@ -244,6 +244,17 @@ instrument is `claude setup-token`. Rejected.
 side-calls or provider routing). Rule 1 violation; also technically fragile
 (the token is a bearer validated for the binary's flows). Rejected.
 
+## Amendment: single-job lane (issue #1457)
+
+For the `user-repo` lane, bot-comment continuation routing is replaced by a
+single job. The engine's step driver runs the next automatic step in the same
+process, on the same runner, under the same human trigger (`TRIGGER_AUTHOR_*`
+stays the starter), so no bot comment hops back into the user repo and no org
+token is minted for a continuation. Step comments carry no continue token. The
+`lane-binding` guard stays as the safety net. Stops (gate, hold, failure, new
+human comment, budget, expired token) end the job; the next step needs a human
+comment or an explicit `step` dispatch.
+
 ## Consequences
 
 ### Implementation roadmap
@@ -322,3 +333,52 @@ WORKFLOW_STATE's `started_by` is a non-bot human who still holds a
 CALLER_AUTH association (and equals the credential owner in the per-user lane).
 The engine enforces this in `run_agent._enforce_harness_credentials`. The
 Lane D bridge (token-broker#53) needs the same rule; that is tracked there.
+
+### Lane binding (user-repo continuations)
+
+A workflow started in a user's own `<login>/nebuko-claude-code` repo (Lane D)
+records `lane: user-repo` and `credential_owner: <login>` in WORKFLOW_STATE
+(login only, never a secret). The fields come from the `WORKFLOW_LANE` and
+`CLAUDE_CREDENTIAL_OWNER` env vars on the first step and are carried forward by
+every later transition.
+
+`run_agent._enforce_harness_credentials` refuses a bot continuation whose
+previous state has `lane: user-repo` unless this run is in the same lane
+(`WORKFLOW_LANE=user-repo`) for the same `credential_owner`. This applies to
+every backend: a continuation that would move the payer or the model silently
+(for example the org's shared claude-code token, or an API-key profile) is
+refused with a message to resume in `<login>/nebuko-claude-code`. Human-triggered
+runs are not continuations and are not bound by this rule.
+
+Routing continuations to the user repo is option A of the design issue. The
+bridge (token-broker#53) owns it. It must accept `nebuko[bot]` continuations
+whose `started_by` owns a `<login>/nebuko-claude-code` repo and dispatch there,
+with `client_payload` carrying `step`, `agent_config` and `lane`. Until it lands,
+Lane D continuations are refused at the first hand-off (option C), never run on
+another payer (option B is not used silently).
+
+#### Dispatch payload contract (Lane D)
+
+- `client_payload.step` (optional): the step to run. Missing or blank means the
+  workflow's first step, so today's dispatch is unchanged.
+- `client_payload.agent_config` (optional): the agent config to run that step with.
+- The engine reads `step` and `agent_config` from the event's `client_payload`
+  (`Trigger.step` / `Trigger.agent_config`); the template does not forward them through
+  `with:`, so no reusable-workflow input is needed. The template never forwards
+  `lane` or `credential_owner`: the engine
+  derives the lane from a `repository_dispatch` run (owner = `GITHUB_REPOSITORY_OWNER`,
+  actor = `client_payload.actor`). `WORKFLOW_LANE` and `CLAUDE_CREDENTIAL_OWNER` are
+  overrides only, and the guard must hold when they are absent (ADR-0008: no
+  credential travels through `with:`).
+- **Re-baseline rule:** a fresh `/nebuko run workflow` (no `--step`) starts a new
+  workflow. It takes the shared lane unless its own run is in a user repo, so the
+  previous state's lane and owner are not carried into it. Continuations carry the
+  lane forward.
+- **Trusted-state rule:** only a state written by a trusted (bot) author is read as
+  the lane source. A thread whose only state comments are untrusted, or whose hand-off
+  is undecodable, is treated as user-repo (fail closed).
+- **Older engines:** the codec refuses a state with `schema_version` above the
+  engine's when it carries a lane, and a refused hand-off is treated as untrusted.
+  This does not protect a user repo pinned to an older reusable workflow, which drops
+  the lane on re-encode. That residual risk is documented here; pin bumps are not
+  automated by this change.

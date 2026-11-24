@@ -49,5 +49,11 @@ def test_caller_forwards_org_fields_and_maps_token_to_secret() -> None:
     agent = caller["jobs"]["agent"]
 
     assert {"prompt_body", "org_repo", "issue_number"} <= set(agent["with"])
+    # step is read by the engine from the event payload (Trigger.step); forwarding it
+    # through with: would require the reusable workflow to declare a step input.
+    assert "step" not in agent["with"]
+    # The payload's agent_config never reaches AGENT_CONFIG_PATH (a path read before
+    # the name allowlist); the engine selects it by name from the event payload.
+    assert agent["with"]["agent_config_path"] == "agent-config-anthropic.yaml"
     assert agent["secrets"]["GH_PAT"] == "${{ github.event.client_payload.gh_token }}"
     assert not any(CREDENTIAL.search(key) for key in agent["with"])

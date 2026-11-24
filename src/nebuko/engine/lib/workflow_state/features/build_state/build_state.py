@@ -20,6 +20,7 @@ from ...sub_domains.history_entry.history_entry import HistoryEntry
 from ...sub_domains.state_metrics.state_metrics import StateMetrics
 from ...sub_domains.step_resolution.step_resolution import StepResolution
 from ...sub_domains.run_prefs.run_prefs import RunPrefs
+from ...sub_domains.secret_scan.secret_scan import SecretScan
 from ...sub_domains.function_call import FunctionCall
 from ...sub_domains.gate_decision.gate_decision import GateDecision
 from ...sub_domains.gate_lock.gate_lock import GateLock
@@ -97,6 +98,8 @@ def build_state(
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
     agent_config: Optional[str] = None,
+    lane: Optional[str] = None,
+    credential_owner: Optional[str] = None,
     complexity_adjustment: Optional[ComplexityAdjustment] = None,
     complexity_review_request: Optional[ComplexityReviewRequest] = None,
     complexity_policy: Optional[ComplexityPolicy] = None,
@@ -178,6 +181,10 @@ def build_state(
             ``/nebuko run workflow --config <file>`` (issue #1389), as the raw
             flag value. None preserves the previous value, so a hand-off
             comment keeps the provider the human selected.
+        lane: Execution lane from ``WORKFLOW_LANE`` (ADR 0017). None preserves
+            the previous value, so a continuation keeps the lane it started on.
+        credential_owner: Per-user credential owner login from
+            ``CLAUDE_CREDENTIAL_OWNER``. None preserves the previous value.
         thread: The reconciled thread ledger (issue #872). Non-None replaces the
             ledger wholesale (the engine folds the full comment list into it
             before advancing); None preserves the previous ledger.
@@ -202,12 +209,17 @@ def build_state(
         base_started_by = None
         base_workflow_ref = None
         base_agent_config = None
+        base_lane = None
+        base_credential_owner = None
+        base_lane_changed_from = None
+        base_lane_changed_by = None
         base_circuit_breaker = CircuitBreakerState()
         base_gate_decision: Optional[GateDecision] = None
         base_gate_history: list[GateDecision] = []
         base_gate: Optional[GateLock] = None
         base_git = None
         base_complexity_policy: Optional[ComplexityPolicy] = None
+        base_secret_scan: Optional[SecretScan] = None
         base_thread: list[ThreadRecord] = []
     else:
         base_run_id = prev_state.run_id
@@ -223,12 +235,17 @@ def build_state(
         base_started_by = prev_state.started_by
         base_workflow_ref = prev_state.workflow_ref
         base_agent_config = prev_state.agent_config
+        base_lane = prev_state.lane
+        base_credential_owner = prev_state.credential_owner
+        base_lane_changed_from = prev_state.lane_changed_from
+        base_lane_changed_by = prev_state.lane_changed_by
         base_circuit_breaker = prev_state.circuit_breaker
         base_gate_decision = prev_state.gate_decision
         base_gate_history = list(prev_state.gate_history)
         base_gate = prev_state.gate
         base_git = prev_state.git
         base_complexity_policy = prev_state.complexity_policy
+        base_secret_scan = prev_state.secret_scan
         base_thread = list(prev_state.thread)
 
     # Build history entry for the current step
@@ -315,6 +332,17 @@ def build_state(
     new_agent_config = (
         agent_config if agent_config is not None else base_agent_config
     )
+    # Lane binding (ADR 0017): recorded on the first step, then carried forward
+    # so a continuation cannot silently drop the lane its workflow started on.
+    # The owner belongs to the lane: an explicit lane (e.g. a fresh run's shared lane)
+    # resets the carried owner, so a new lane never inherits the previous owner.
+    if lane is not None:
+        new_lane, new_credential_owner = lane, credential_owner
+    else:
+        new_lane = base_lane
+        new_credential_owner = (
+            credential_owner if credential_owner is not None else base_credential_owner
+        )
 
     # Human_gate decision (issue #648): when this run was started by an
     # identity-verified gate command, record the new decision as the latest
@@ -412,6 +440,10 @@ def build_state(
         started_by=new_started_by,
         workflow_ref=new_workflow_ref,
         agent_config=new_agent_config,
+        lane=new_lane,
+        credential_owner=new_credential_owner,
+        lane_changed_from=base_lane_changed_from,
+        lane_changed_by=base_lane_changed_by,
         position=position_refs,
         soft_retry=new_soft_retry,
         # Per-issue circuit-breaker policy (issue #839): carried forward
@@ -423,5 +455,9 @@ def build_state(
         gate=new_gate,
         git=base_git,
         complexity_policy=new_complexity_policy,
+        # A redaction is permanent for the run (issue #1347): the record is
+        # carried forward verbatim so a later step cannot re-introduce the
+        # value without the warning showing up again.
+        secret_scan=base_secret_scan,
         thread=thread if thread is not None else base_thread,
     )

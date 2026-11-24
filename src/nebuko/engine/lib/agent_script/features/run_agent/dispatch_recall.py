@@ -32,6 +32,8 @@ Call the `finalize` tool NOW with your factual turn outcome:
 - turn_outcome.appreciation: 'approved' (the work meets the step's goal),
   'rejected' (it does not), or 'hold' (you are blocked and need information
   from a human)
+  Never hold because your work is finished or the report is delivered:
+  finished work is 'approved'.
 - turn_outcome.hold_kind: REQUIRED with appreciation='hold', and only then:
   'awaiting_input' (an approval gate is engine-owned, never a hold kind)
 - turn_outcome.note: one short sentence justifying the verdict

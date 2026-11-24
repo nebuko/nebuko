@@ -54,6 +54,8 @@ class TestTrigger:
             "payload",
             "issue_body",
             "org_repo",
+            "step",
+            "agent_config",
         ]
 
     def test_issue_body_defaults_to_empty(self):
@@ -115,6 +117,7 @@ class TestRunOutcome:
             "state",
             "phases",
             "timings",
+            "skip_kind",
         ]
 
     def test_timings_default_to_empty(self):

@@ -46,6 +46,15 @@ SUBSCRIPTION_TOKEN_ENVS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 #: ``model_path`` prefix that routes a model through the Claude Code binary.
 CLAUDE_CODE_MODEL_PREFIX = "claude-code/"
 
+#: ``WORKFLOW_STATE.lane`` of a workflow dispatched into the user's own
+#: ``<login>/nebuko-claude-code`` repo (Lane D). Its continuations must run there.
+USER_REPO_LANE = "user-repo"
+
+#: Lane recorded once a user-repo workflow is re-baselined (the starter moved it
+#: to a non-subscription config). Any value other than ``USER_REPO_LANE`` releases
+#: the binding; the explicit name keeps the state self-describing.
+SHARED_LANE = "shared"
+
 
 class ClaudeCredentialError(RuntimeError):
     """A config pairs Claude Code credentials with another backend (ADR 0017).
@@ -178,6 +187,13 @@ class ContinuationContext:
         started_by: ``started_by`` of the previous WORKFLOW_STATE, if any.
         credential_owner: Login bound to the credential in the per-user lane;
             ``None`` in the shared lane, where no owner binding applies.
+        lane: ``WORKFLOW_LANE`` of this run; ``None`` when unset (shared lane).
+        previous_lane: ``lane`` of the previous WORKFLOW_STATE, if any.
+        previous_credential_owner: ``credential_owner`` of the previous
+            WORKFLOW_STATE, if any.
+        untrusted_only: True when the thread has only state comments from
+            untrusted authors (no trusted state). The lane is then assumed, not
+            read, and the refusal says so rather than naming a lane violation.
     """
 
     trigger_login: str
@@ -186,6 +202,10 @@ class ContinuationContext:
     comment_header: str
     started_by: str | None
     credential_owner: str | None = None
+    lane: str | None = None
+    previous_lane: str | None = None
+    previous_credential_owner: str | None = None
+    untrusted_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -206,7 +226,7 @@ class ContinuationDecision:
         """The terminal message for a refused run; names the failed rule."""
         hint = _API_KEY_LANE_HINT if self.api_key_lane_applies else ""
         return (
-            f"claude-code run refused for bot trigger: rule '{self.failed_rule}' "
+            f"run refused: rule '{self.failed_rule}' "
             f"failed ({self.detail}).{hint}"
         )
 
@@ -258,3 +278,93 @@ def authorize_bot_continuation(
         )
 
     return ContinuationDecision(True)
+
+
+def authorize_lane_rebaseline(
+    ctx: ContinuationContext,
+    subscription_free: bool,
+    association_of: Callable[[str], str | None],
+) -> ContinuationDecision:
+    """Let the human who started a user-repo workflow move it off its lane.
+
+    The escape hatch for an owner whose private repo is unavailable. Only the
+    recorded ``started_by`` human, resuming from their own comment, with a
+    CALLER_AUTH association still held, and a resolved config that bills no
+    subscription may re-baseline. Never a bot trigger, never another human.
+    """
+    if ctx.previous_lane != USER_REPO_LANE:
+        return ContinuationDecision(True)
+    login = (ctx.trigger_login or "").strip()
+    if not login or is_bot_actor(login, ctx.trigger_type):
+        return ContinuationDecision(
+            False, "rebaseline-trigger", False, "a bot trigger cannot re-baseline a lane"
+        )
+    if ctx.untrusted_only:
+        return ContinuationDecision(
+            False,
+            "rebaseline-untrusted",
+            False,
+            "no trusted starter is on record to re-baseline the lane",
+        )
+    started_by = (ctx.started_by or "").strip()
+    if not started_by or login != started_by:
+        return ContinuationDecision(
+            False,
+            "rebaseline-owner",
+            False,
+            f"only the workflow starter may re-baseline; '{login}' did not start it",
+        )
+    if not subscription_free:
+        return ContinuationDecision(
+            False,
+            "rebaseline-config",
+            False,
+            "re-baselining needs a non-subscription --config",
+        )
+    association = association_of(login)
+    if association is None or association not in CONTINUATION_CALLER_ASSOCIATIONS:
+        return ContinuationDecision(
+            False,
+            "caller-association",
+            False,
+            f"'{login}' no longer holds OWNER/MEMBER/COLLABORATOR (association {association or 'unknown'})",
+        )
+    return ContinuationDecision(True)
+
+
+def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
+    """Refuse a continuation of a user-repo workflow that leaves its user's lane.
+
+    A workflow started in ``<login>/nebuko-claude-code`` bills that user's
+    subscription for every step. A bot continuation may proceed only in the
+    same lane and for the same credential owner; any other lane (the org repo,
+    a shared token, an API-key profile) would move the payer silently (ADR 0017).
+    Applies to every backend, not only claude-code, because a silent change of
+    model is the same violation.
+    """
+    if ctx.previous_lane != USER_REPO_LANE:
+        return ContinuationDecision(True)
+    owner = (ctx.previous_credential_owner or "").strip()
+    if ctx.lane == USER_REPO_LANE and owner and ctx.credential_owner == owner:
+        return ContinuationDecision(True)
+    if ctx.untrusted_only:
+        return ContinuationDecision(
+            False,
+            "lane-binding",
+            False,
+            "no trusted workflow state was found on this thread: the state comments "
+            "were not written by this engine's identity (nebuko[bot]), so the user-repo "
+            "lane cannot be verified. This is not a lane violation, and it can follow a "
+            "token or identity change. To proceed, resume in the owner's "
+            "nebuko-claude-code repo, or start over with /nebuko run workflow",
+        )
+    resume_in = f"{owner}/nebuko-claude-code" if owner else "the user's nebuko-claude-code repo"
+    return ContinuationDecision(
+        False,
+        "lane-binding",
+        False,
+        f"the workflow runs in the user-repo lane; this run's lane is "
+        f"'{ctx.lane or 'shared'}'. To proceed: resume in {resume_in}; or have the "
+        "starter re-baseline the lane by resuming with a non-subscription --config; "
+        "or start over with /nebuko run workflow",
+    )

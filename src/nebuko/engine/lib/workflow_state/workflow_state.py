@@ -13,6 +13,7 @@ from .sub_domains.history_entry.history_entry import HistoryEntry
 from .sub_domains.issue_info.issue_info import IssueInfo
 from .sub_domains.pull_request_info.pull_request_info import PullRequestInfo
 from .sub_domains.run_prefs.run_prefs import RunPrefs
+from .sub_domains.secret_scan.secret_scan import SecretScan
 from .sub_domains.turn_outcome.turn_outcome import TurnOutcome
 from .sub_domains.gate_decision.gate_decision import GateDecision
 from .sub_domains.gate_lock.gate_lock import GateLock, GateStatus
@@ -137,8 +138,8 @@ class CircuitBreakerState(BaseModel):  # @stub-protected
 # universal position -> v4 (``run_id`` + ``schema_version`` split) -> v5 (thread
 # ledger + per-step input records, issue #872) -> v6 (``turn_outcome`` replaces
 # the legacy ``dispatch``, issue #964) -> v7 (``agent_config`` per-run agent
-# config selection, issue #1389).
-STATE_SCHEMA_VERSION = 7
+# config selection, issue #1389) -> v8 (``lane`` + ``credential_owner``, ADR 0017).
+STATE_SCHEMA_VERSION = 8
 
 
 class WorkflowState(BaseModel):
@@ -223,6 +224,10 @@ class WorkflowState(BaseModel):
             via the ``NEBUKO_WORKFLOW_REF`` env var. Provenance only — the
             checkout pin is resolved by the workflow YAML itself. None when the
             var is absent, so legacy blobs load and serialize unchanged.
+        secret_scan: Secret-scan record for this run (issue #1347): the status
+            (``clean`` / ``redacted``), the redacted locations and the step the
+            scan ran in. Never the value. None on legacy blobs and on a run
+            that never scanned.
         agent_config: Agent config selected for this run by
             ``/nebuko run workflow --config <file>`` (issue #1389), stored as the
             raw flag value. It selects which credentials the child process
@@ -230,6 +235,13 @@ class WorkflowState(BaseModel):
             persists across hand-off comments — each comment is a new job that
             would otherwise fall back to the workflow's own config. None when
             the run never selected one, so legacy blobs load unchanged.
+        lane: Execution lane the workflow was started on (``user-repo`` for a
+            Lane D run in the user's own repo), from ``WORKFLOW_LANE``. A
+            continuation of a ``user-repo`` state must run in that lane (ADR
+            0017). None on legacy blobs and shared-lane runs.
+        credential_owner: Login bound to the credential of a per-user lane, from
+            ``CLAUDE_CREDENTIAL_OWNER``. A login only, never a secret. None when
+            no owner is bound.
     """
 
     run_id: int = 0
@@ -293,6 +305,14 @@ class WorkflowState(BaseModel):
     # new job) keep the same provider; None on legacy blobs, which load
     # unchanged.
     agent_config: Optional[str] = None  # @stub-protected
+    # Execution lane and credential owner the workflow was started on (ADR 0017).
+    # Carried forward by every transition; None on legacy blobs.
+    lane: Optional[str] = None  # @stub-protected
+    credential_owner: Optional[str] = None  # @stub-protected
+    # Set when the starter re-baselines a user-repo lane (ADR 0017): the lane and
+    # owner it moved off, and the human who did it. Rendered in the footer.
+    lane_changed_from: Optional[str] = None
+    lane_changed_by: Optional[str] = None
     # Flat workflow step path, outermost-first, last ref = the step actually
     # executed (issue #638). Legacy v2 nested position blocks in posted
     # states are migrated to the flat refs by the validator below.
@@ -314,6 +334,10 @@ class WorkflowState(BaseModel):
     # auditability. Carries builtin->repo provenance. None on legacy blobs,
     # which load and serialize unchanged.
     complexity_policy: Optional[ComplexityPolicy] = None  # @stub-protected
+    # Secret-scan facts for this run (issue #1347): what the pre-push and
+    # pre-post scans redacted, by file/line/rule — never the value. None on
+    # legacy blobs and on a run that never scanned, which load unchanged.
+    secret_scan: Optional[SecretScan] = None  # @stub-protected
 
     @model_validator(mode="before")
     @classmethod
@@ -402,6 +426,98 @@ def agent_config_from_env(env: Mapping[str, str]) -> Optional[str]:
     return value or None
 
 
+def lane_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read this run's execution lane from ``WORKFLOW_LANE`` (ADR 0017).
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty ``WORKFLOW_LANE`` value, or ``None`` for the shared lane.
+    """
+    value = (env.get("WORKFLOW_LANE") or "").strip()
+    return value or None
+
+
+def dispatch_actor_from_event(env: Mapping[str, str]) -> Optional[str]:
+    """The ``client_payload.actor`` of a ``repository_dispatch`` run, else None.
+
+    Read from ``GITHUB_EVENT_PATH`` so it does not depend on which env vars the
+    workflow exported. Any non-dispatch event, or an unreadable file, is None.
+    """
+    import json
+
+    if (env.get("GITHUB_EVENT_NAME") or "").strip() != "repository_dispatch":
+        return None
+    path = (env.get("GITHUB_EVENT_PATH") or "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    client_payload = payload.get("client_payload") if isinstance(payload, dict) else None
+    actor = client_payload.get("actor") if isinstance(client_payload, dict) else None
+    value = str(actor or "").strip()
+    return value or None
+
+
+def lane_binding_from_env(
+    env: Mapping[str, str], dispatch_actor: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """This run's ``(lane, credential_owner)`` (ADR 0017).
+
+    ``WORKFLOW_LANE`` / ``CLAUDE_CREDENTIAL_OWNER`` override when set. Otherwise
+    a ``repository_dispatch`` run whose runner owner (``GITHUB_REPOSITORY_OWNER``)
+    matches the dispatch actor is the actor's own ``user-repo`` lane, bound to
+    that actor. Anything else is the shared lane: ``(None, None)``.
+    """
+    lane = lane_from_env(env)
+    owner = credential_owner_from_env(env)
+    if lane is not None or owner is not None:
+        return lane, owner
+    actor = (dispatch_actor or "").strip()
+    running_owner = (env.get("GITHUB_REPOSITORY_OWNER") or "").strip()
+    if not actor or running_owner.lower() != actor.lower():
+        return None, None
+    return "user-repo", actor
+
+
+def is_fresh_run(env: Mapping[str, str]) -> bool:
+    """True when the trigger comment is a human ``/nebuko run workflow`` without ``--step``.
+
+    A fresh run starts a new workflow rather than continuing the recorded one, so
+    it neither inherits nor is refused by the previous state's lane. A ``run``
+    carrying ``--step`` continues the recorded state at that step, so it is not
+    fresh and the state's lane applies.
+    """
+    from nebuko.engine.lib.resolve_config.sub_domains.workflow_command.workflow_command import (
+        parse_workflow_command,
+    )
+
+    command = parse_workflow_command(env.get("TRIGGER_COMMENT_HEADER") or "")
+    return (
+        command is not None
+        and command.action == "run"
+        and command.resource == "workflow"
+        and "step" not in command.params
+    )
+
+
+def credential_owner_from_env(env: Mapping[str, str]) -> Optional[str]:
+    """Read the per-user credential owner login from ``CLAUDE_CREDENTIAL_OWNER``.
+
+    Args:
+        env: Environment mapping (normally ``os.environ``).
+
+    Returns:
+        The non-empty owner login, or ``None`` when no owner is bound.
+    """
+    value = (env.get("CLAUDE_CREDENTIAL_OWNER") or "").strip()
+    return value or None
+
+
 def to_json(state: WorkflowState) -> str:
     from .features.to_json.to_json import state_to_json
     return state_to_json(state)
@@ -441,6 +557,8 @@ def go_next(
     workflow_ref: Optional[str] = None,
     gate: Optional[GateLock] = None,
     agent_config: Optional[str] = None,
+    lane: Optional[str] = None,
+    credential_owner: Optional[str] = None,
 ) -> WorkflowState:
     from .features.build_state.build_state import build_state
     return build_state(
@@ -469,4 +587,6 @@ def go_next(
         workflow_ref=workflow_ref,
         gate=gate,
         agent_config=agent_config,
+        lane=lane,
+        credential_owner=credential_owner,
     )

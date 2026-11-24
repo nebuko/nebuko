@@ -10,3 +10,6 @@ dist/
 node_modules/
 .claude
 *.swp
+
+# Generated task logs (local runs)
+nebuko-task-logs/

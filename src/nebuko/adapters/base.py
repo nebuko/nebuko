@@ -38,6 +38,7 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     GATED = "gated"
     FAILED = "failed"
+    REFUSED = "refused"
     REVIEW_NEEDED = "review_needed"
 
 

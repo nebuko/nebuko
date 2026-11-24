@@ -62,6 +62,7 @@ from nebuko.engine.lib.git import branch_scaffold
 from nebuko.engine.lib.git import git_session
 from nebuko.engine.lib.git import pr_finalize
 from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
+from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.workflow_state import extract_state_from_body
 from nebuko.engine.lib.workflow_state.step_output_record import StepOutputRecord
 
@@ -3484,6 +3485,120 @@ class TestIssueBodyContext:
         )
 
 
+class TestDispatchIssueBody:
+    """A repository_dispatch run shows the target issue's body, not the command (#1455)."""
+
+    @staticmethod
+    def _dispatch_prompt(tmp_path, monkeypatch, mocker, issue_reader) -> str:
+        import nebuko.engine.run_loop as run_loop
+
+        event = tmp_path / "event.json"
+        event.write_text(
+            json.dumps(
+                {
+                    "client_payload": {
+                        "actor": "olivier-norture",
+                        "prompt_body": "/nebuko run workflow",
+                        "issue_number": 1414,
+                        "org_repo": "olivier-norture/git-flow-ai",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "repository_dispatch")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/git-flow-ai")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+        mocker.patch(
+            "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
+            return_value=None,
+        )
+        mocker.patch("nebuko.engine.lib.github_client.get_issue", side_effect=issue_reader)
+        mocker.patch(
+            "nebuko.adapters.github.GitHubAdapter.load_context_entries", return_value=[]
+        )
+        mocker.patch(
+            "nebuko.adapters.github.GitHubAdapter.load_raw_thread",
+            return_value=(None, []),
+        )
+        run = mocker.patch.object(
+            run_loop.Engine, "run", autospec=True, return_value=mocker.Mock(exit_code=0)
+        )
+        run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
+        engine = run.call_args[0][0]
+        trigger = engine._with_dispatch_issue_body(engine.normalize())
+        return engine._render_context({_TRIGGER_KEY: trigger}, [])
+
+    def test_issue_body_appears_once_and_the_command_is_not_the_request(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        rendered = self._dispatch_prompt(
+            tmp_path,
+            monkeypatch,
+            mocker,
+            lambda repo, number: {"body": "Add the retry budget to the sync job."},
+        )
+
+        assert rendered.count("Add the retry budget to the sync job.") == 1
+        assert "**Issue body:**\nAdd the retry budget" in rendered
+        assert "/nebuko run workflow" not in rendered
+
+    def test_unreadable_issue_keeps_the_run_with_no_issue_body(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        def unreadable(repo, number):
+            raise RuntimeError("HTTP 404")
+
+        rendered = self._dispatch_prompt(tmp_path, monkeypatch, mocker, unreadable)
+
+        assert "**Issue body:**" not in rendered
+        assert "## Recent thread" in rendered
+
+    def test_comment_trigger_does_not_refetch_the_issue(self, tmp_path, mocker):
+        import nebuko.engine.run_loop as run_loop
+
+        get_issue = mocker.patch("nebuko.engine.lib.github_client.get_issue")
+        trigger = _trigger(body="@@dev fix it", issue_body="the real task")
+        engine = _engine(tmp_path, trigger=trigger)
+
+        assert engine._with_dispatch_issue_body(trigger) is trigger
+        get_issue.assert_not_called()
+        assert run_loop._is_bare_command("/nebuko run workflow") is True
+
+
+@pytest.mark.parametrize(
+    ("text", "bare"),
+    [
+        ("/nebuko run workflow", True),
+        ("/nebuko run workflow --name dev-review-loop", True),
+        ("/nebuko force-step --name implement", True),
+        ("/nebuko run workflow fix the login bug", False),
+        ("/nebuko --flag", True),
+        ("/nebuko", False),
+        ("make it so", False),
+        ("", False),
+    ],
+)
+def test_is_bare_command(text, bare):
+    from nebuko.engine.run_loop import _is_bare_command
+
+    assert _is_bare_command(text) is bare
+
+
+def test_is_bare_command_is_linear_on_adversarial_input():
+    import time
+
+    from nebuko.engine.run_loop import _is_bare_command
+
+    flags = " ".join(f"--a{n}" for n in range(200))
+    text = f"/nebuko {flags} BAD!"
+    started = time.perf_counter()
+    assert _is_bare_command(text) is False
+    assert time.perf_counter() - started < 0.5
+
+
 class TestHistoryWindowInjection:
     """Issue #844: bound the injected thread and drop engine bookkeeping.
 
@@ -5358,8 +5473,19 @@ class TestPrFinalizerWiring:
         seen: dict[str, object] = {}
 
         class _Finalizer:
-            def __init__(self, issue_title="", *, interrupted=False):
+            def __init__(
+                self,
+                issue_title="",
+                *,
+                interrupted=False,
+                issue_number=None,
+                repo="",
+                issue_repo="",
+            ):
                 seen["interrupted"] = interrupted
+                seen["issue_number"] = issue_number
+                seen["repo"] = repo
+                seen["issue_repo"] = issue_repo
 
             def finalize(self):
                 return pr_finalize.PrFinalizeResult(ok=True, skipped=True)
@@ -5369,6 +5495,10 @@ class TestPrFinalizerWiring:
         engine._pr_finalize(agent_result)
 
         assert seen["interrupted"] is interrupted
+        trigger = engine._active_trigger()
+        expected_number = trigger.number if trigger is not None and trigger.number > 0 else None
+        assert seen["issue_number"] == expected_number
+        assert seen["repo"] == resolve_repo(engine.env, trigger)
 
     def _run(self, monkeypatch, root, *, pr=None, invoke=None):
         engine = _engine_at_root(root.parent, root)
@@ -5495,3 +5625,93 @@ class TestPrFinalizerWiring:
         assert state.pull_request.url == (
             "https://github.com/olivier-norture/git-flow-ai/pull/42"
         )
+
+
+class TestRepositoryDispatchSeed:
+    """``client_payload.step`` / ``agent_config`` seed a dispatch run (ADR 0017, #1099)."""
+
+    @staticmethod
+    def _resolve_dispatch(tmp_path, monkeypatch, mocker, **client_payload):
+        import nebuko.engine.run_loop as run_loop
+
+        event = tmp_path / "event.json"
+        event.write_text(
+            json.dumps(
+                {
+                    "client_payload": {
+                        "actor": "olivier-norture",
+                        "prompt_body": "/nebuko run workflow --name dev-review-loop",
+                        "issue_number": 1447,
+                        "org_repo": "olivier-norture/git-flow-ai",
+                        **client_payload,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "repository_dispatch")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/git-flow-ai")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+        mocker.patch(
+            "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
+            return_value=None,
+        )
+        run = mocker.patch.object(
+            run_loop.Engine, "run", autospec=True, return_value=mocker.Mock(exit_code=0)
+        )
+        run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
+        engine = run.call_args[0][0]
+        return engine.resolve(engine.normalize())
+
+    def test_missing_step_runs_the_first_step(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker)
+
+        assert str(resolved.get("SKIP_AGENT", "")).lower() != "true"
+        assert resolved.get("WORKFLOW_STEP") == "implement"
+
+    def test_step_seeds_the_run_at_that_step(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker, step="review")
+
+        assert resolved.get("WORKFLOW_STEP") == "review"
+
+    def test_unknown_step_is_a_clean_skip(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(tmp_path, monkeypatch, mocker, step="no-such-step")
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert "no-such-step" in resolved.get("REASON", "")
+
+    def test_agent_config_is_stamped_for_the_run(self, tmp_path, monkeypatch, mocker):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, agent_config="agent-config-mistral.yaml"
+        )
+
+        assert resolved.get("AGENT_CONFIG") == "agent-config-mistral.yaml"
+
+    @pytest.mark.parametrize(
+        "prompt_body", ["continue the workflow", "/nebuko delete comments"]
+    )
+    def test_step_without_a_run_workflow_prompt_is_a_clean_skip(
+        self, tmp_path, monkeypatch, mocker, prompt_body
+    ):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, prompt_body=prompt_body, step="review"
+        )
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert resolved.get("REASON") == (
+            "dispatch step/agent_config require a /nebuko run workflow prompt"
+        )
+
+    @pytest.mark.parametrize("agent_config", ["../../etc/passwd", "/etc/passwd", "missing.yaml"])
+    def test_agent_config_outside_the_allowed_names_is_refused(
+        self, tmp_path, monkeypatch, mocker, agent_config
+    ):
+        resolved = self._resolve_dispatch(
+            tmp_path, monkeypatch, mocker, agent_config=agent_config
+        )
+
+        assert str(resolved.get("SKIP_AGENT")).lower() == "true"
+        assert "unknown agent config" in resolved.get("REASON", "")
+        assert "agent-config-anthropic.yaml" in resolved.get("REASON", "")

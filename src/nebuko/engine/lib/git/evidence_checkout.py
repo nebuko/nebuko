@@ -26,7 +26,8 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .branch_scaffold import DEFAULT_BASE_BRANCH, git_subprocess_env
+from .base_branch import resolve_base_branch
+from .branch_scaffold import git_subprocess_env
 from .git_session import GitSessionGuard
 
 logger = logging.getLogger(__name__)
@@ -243,13 +244,13 @@ class EvidenceCheckoutResolver:
         )
 
     def _base_branch(self) -> str:
-        override = self.env.get("GITHUB_BASE_REF", "").strip()
-        if override:
-            return override
-        head = _git(
-            self.repo_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+        return resolve_base_branch(self.env, self._origin_head)
+
+    def _origin_head(self) -> str | None:
+        return (
+            _git(self.repo_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+            or None
         )
-        return head.removeprefix("origin/") if head else DEFAULT_BASE_BRANCH
 
     def _fetch_ref(self, name: str) -> str:
         """Fetch one branch into its remote-tracking ref; a problem, or ``""``."""

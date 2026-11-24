@@ -73,6 +73,66 @@ The generated workflow refuses to run unless the triggering actor is the
 repository owner, so only you can start a run in that repo. An existing repo is
 refused before anything is written; a missing token creates nothing.
 
+### Dispatch payload fields
+
+A continuation dispatched to your repo may carry two optional `client_payload`
+fields, read by the engine from the event (not forwarded through `with:`):
+
+- `step`: the workflow step to run. Missing or blank runs the first step.
+- `agent_config`: the agent config file name to run that step with. It is matched
+  by name against the configs found in the repo; paths and unknown names are refused.
+
+Both are only valid with a `/nebuko run workflow` prompt; any other prompt is
+skipped with `dispatch step/agent_config require a /nebuko run workflow prompt`.
+
+`step` skips no gate check that `--step` does not already skip. A gated step still
+needs its human decision: the plan gate is approved in the org issue with
+`/nebuko approve gate`, and only then does the owner dispatch the next step.
+
+- `single_step`: `true` runs exactly one step and stops, as before single-job mode.
+  The same switch is `WORKFLOW_SINGLE_STEP=1` in the job environment.
+
+### Single-job user-repo runs
+
+While the lane is `user-repo` on a `repository_dispatch`, the engine runs the
+whole workflow in one job: each automatic step runs in the same process after the
+previous one, with a fresh engine and thread snapshot, and posts its own comment
+without the `<!-- workflow-continue -->` token (only `<!-- bot-workflow-terminal -->`).
+The loop stops at the first of:
+
+- a gate or hold, a failed step, a refusal, or the terminal step (the engine posts
+  its own notice);
+- a new human comment on the issue (it is left in the thread, not acted on);
+- the step cap `WORKFLOW_MAX_STEPS` (default 6);
+- the wall-clock budget `WORKFLOW_WALL_CLOCK_S` (default 3000 s): a step starts only
+  if `elapsed + step budget` fits, where the step budget is
+  `AGENT_SOFT_TIMEOUT_MINUTES` + `WIND_DOWN_TIMEOUT_MINUTES` (defaults 20 + 8 = 28 min
+  when unset: the soft run and its wind-down). Before each step the token is checked
+  with a cheap authenticated read; a 401 stops the run.
+
+The driver posts a notice only for the stops it causes (human comment, step cap,
+wall clock, expired token, unreadable thread). Each notice says how to continue
+today: dispatch the next step with `step=<next step>`, after `/nebuko approve gate`
+on the org issue when a gate is armed. `/nebuko resume` is the route only once the
+token broker routes human comments to dispatches (token-broker#53 slice 1); until
+then the lane-binding guard refuses it.
+
+In loop mode `timings.json` is a JSON list with one record per step
+(`{"step": N, ...phase timings}`), and the metrics file is per step
+(`metrics-<run_id>-step-N.json`).
+
+`WORKFLOW_SINGLE_JOB=1` turns the loop on for any lane; `WORKFLOW_SINGLE_JOB=0`
+turns it off.
+
+### Lane and re-baseline troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Bot continuation refused with `lane-binding`: "runs in the user-repo lane" | The workflow started in `<login>/nebuko-claude-code`, and this run is in another lane | Resume in `<login>/nebuko-claude-code` |
+| Refused with `lane-binding`: "no trusted workflow state" | The thread's state comments are not from `nebuko[bot]`, or the hand-off is undecodable | Resume in the owner's repo, or start over with `/nebuko run workflow` |
+| Fresh `/nebuko run workflow` still refused on a later step | Not expected: a fresh run re-baselines the lane to shared | Report it; it is a regression |
+| State shows `lane: user-repo` after a re-baseline | `lane_changed_from` / `lane_changed_by` record the move | Expected: the starter moved the lane on purpose |
+
 ## Lane D: per-user repo (manual dispatch and troubleshooting)
 
 Operator notes for the per-user repo above, from the manual dispatch runs on
@@ -159,12 +219,18 @@ produced the fix or the finding.
 
 ### Known limits
 
-Until the follow-ups land:
+Current behaviour and the follow-ups still open:
 
-- Continuation steps do not stay on the user repo (credential-bound
-  continuation design, #1433).
+- Automatic steps stay on the user repo: the whole workflow runs in one job
+  until a gate, a hold, a failed step, a human comment, the step cap or the wall
+  clock stops it (see "Single-job user-repo runs"). A gate or hold needs a new
+  owner dispatch with `step=<next step>` after `/nebuko approve gate`.
+- Bot-started continuations are not routed to the user repo yet
+  (credential-bound continuation design, #1433; token-broker#53 slice 1).
 - The bridge is not deployed (token-broker#53).
-- Per-run Actions minutes and the 6 h job cap apply to the user's repo.
+- Per-run Actions minutes apply to the user's repo. The 6 h job cap applies to
+  the single job, so the wall-clock budget (`WORKFLOW_WALL_CLOCK_S`, default 3000 s)
+  is what bounds a loop run.
 
 _Update this section after #1432 and #1433 are resolved._
 
@@ -219,6 +285,15 @@ by a `PreToolUse` hook) and asks for the same `turn_outcome` the `finalize` tool
 takes (`appreciation`, `hold_kind`, `agent_call`, `round`, `note`, `complexity`,
 `pin`); it is validated and recorded identically on both backends.
 
+The closing prompt is built by `build_closing_prompt` in
+`nebuko.engine.harness.base`, the same builder the OpenHands backend uses, so
+both backends carry one outcome rule block (`CLOSING_OUTCOME_RULES`): `hold`
+means blocked and needs a human, and finished work is `approved`. The recall
+prompt states the same rule. If a step ends `hold` with a note that says the
+work is complete or delivered, the engine logs a `step … ended 'hold' but its
+note says the work is done` warning naming the step and model. Routing is
+unchanged; the warning only makes a parked finished step visible.
+
 ## Differences to know about
 
 - `temperature`, sampling and `token_budget` are ignored: Claude Code owns its
@@ -240,6 +315,18 @@ takes (`appreciation`, `hold_kind`, `agent_call`, `round`, `note`, `complexity`,
   install is needed — `uv sync --extra runtime` is enough.
 - The live `claude` smoke test is opt-in (`NEBUKO_LIVE_CLAUDE=1`) and never
   runs in CI.
+- Metrics parity with OpenHands:
+  - `input_tokens` is the total prompt side, `input + cache_read + cache_creation`,
+    matching OpenHands where prompt tokens include cached ones. The governor's
+    `high-token-burn` threshold reads this value. The raw split is kept in
+    `cache_hit_tokens` (cache reads) and the cache-write field.
+  - Each Claude Code `tool_use` is recorded as an action and its `tool_result` as
+    an observation, so `nb_tool_calls`, `tool_calls_per_tool` and the tool error
+    rate are counted the same way as for OpenHands. The governor's `large-scope`
+    threshold therefore fires for this backend.
+  - The analyze/finalize summary is the agent's final text, truncated to 300
+    characters, as on OpenHands. Neither backend has a separate summary field, so
+    the engine does not fill a default. A bare summary means the agent gave none.
 
 ## Self-hosted runners
 

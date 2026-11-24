@@ -47,6 +47,12 @@ a failure, which is every CI host.
    `terminal`, an unclassified "nothing to do") stay silent as before.
 4. Notices remain best-effort (`log.warning` on a failed post) and pass through
    `_neutralize_agent_triggers`.
+5. **A credential refusal is a `REFUSED` stop (issue #1099).** A
+   `ClaudeCredentialError` from the credential guard is not a crash. The guard
+   runs host-side before the agent acknowledgment, so a refused run posts one
+   notice carrying the guard's own `To proceed` options, sets
+   `RunStatus.REFUSED` (`nebuko:refused`) and exits 0. It writes no state and
+   skips publish and routing.
 
 ## Alternatives considered
 

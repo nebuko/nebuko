@@ -283,6 +283,7 @@ is authoritative.
 | `resolution` | StepResolution \| null | Full context of the step-resolution decision (debugging): resolved role, prompt location, matched rule, applied config, timestamp. |
 | `gate_decision` | GateDecision \| null | Latest engine-owned human-gate decision (issue #648): `status` (`approved`/`rejected`), `decided_by`, `decided_at`, `feedback`, `comment_id`, and the `position` hold instance it consumes. |
 | `gate_history` | GateDecision[] | Append-only audit of every gate decision (issue #648). |
+| `secret_scan` | SecretScan \| null | Secret-scan record for the run (issue #1347): what the pre-push and pre-post scans redacted, by location and rule — never the value. `null` on legacy blobs and on a run that never scanned. See [SecretScan](#secretscan). |
 
 ### HistoryEntry
 
@@ -332,6 +333,24 @@ Persisted form of one materialized step input (issue #872).
 | `detail` | string | Failure detail (empty on success). |
 | `value` | string | Resolved value, truncated to `MAX_VALUE_CHARS`. |
 | `truncated` | bool | Whether `value` was capped. |
+
+### SecretScan
+
+Persisted secret-scan record (issue #1347), model
+`engine/lib/workflow_state/sub_domains/secret_scan/secret_scan.py`. Written by
+the pre-push git guard and the comment publish seam; the next comment renders a
+warning from it. See
+[features.md — Secret Scanning and Redaction](./features.md#secret-scanning-and-redaction-issue-1347).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `clean` when nothing matched, `redacted` once a value was replaced. A redaction is permanent for the run: a later clean scan never resets it. |
+| `findings` | SecretFinding[] | Every redaction, oldest first, deduplicated by location + rule. |
+| `at` | string | Step the latest scan ran in (`""` when unknown). |
+
+`SecretFinding` is `{file, line, rule}`: `file` is the path (or the comment
+source label, e.g. `answer`), `line` the 1-based line inside it, `rule` the
+scanner rule that matched. The matched value itself is never persisted.
 
 ### Annotated Example
 
@@ -462,6 +481,7 @@ Variables the orchestrator sets/consumes per run:
 | `AGENT_CONFIG` | `resolve_config` | Raw `--config` value of the run's `/nebuko run workflow` command (issue #1389); `build_output` persists it as `WorkflowState.agent_config` so later hand-off comments keep the same config. Absent when the run selected none. |
 | `CIRCUIT_BREAKER_THRESHOLD` | reusable workflow (`circuit_breaker_threshold`) / `.nebuko/nebuko.yaml` | Bot-marker count that trips the circuit breaker. Precedence: workflow input > manifest `circuit_breaker_threshold` > `15`. |
 | `PIN_COMMENT` | reusable workflow (`pin_comment`) / `.nebuko/nebuko.yaml` | Pin every agent step output comment. OR-ed: `true` from the input or the manifest's `pin_comment` wins. |
+| `NEBUKO_BASE_BRANCH` | `.nebuko/nebuko.yaml` (`base_branch`) | Base branch for the scaffold, evidence checkout, PR finalizer and handoff branches (e.g. `master`). Precedence: `NEBUKO_BASE_BRANCH` > `GITHUB_BASE_REF` > remote `origin/HEAD` > `main`. |
 | `DEBUG` | user (`DEBUG=true` in body) / flag | Enables verbose debug logging. |
 | `OPENROUTER_API_KEY` | repo secret | LLM provider token (OpenRouter). |
 | `LOCAL_VLLM_API_TOKEN` | repo secret (optional) | Local vLLM provider token. |

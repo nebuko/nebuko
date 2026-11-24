@@ -29,6 +29,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.loop_step import handed_over_state
 from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
@@ -36,6 +37,11 @@ from nebuko.engine.lib.git import (
     evidence_checkout,
     git_session,
     pr_finalize,
+)
+from nebuko.engine.lib.redaction import scan_text
+from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
+    SecretFinding,
+    SecretScan,
 )
 from nebuko.engine.hook_runner import (
     HookPhase,
@@ -79,6 +85,7 @@ from nebuko.engine.paths import (
     LIB_DIR,
     NebukoPaths,
     repo_root,
+    secret_scan_enabled,
 )
 
 from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import (
@@ -196,6 +203,7 @@ def _is_true(value: Any) -> bool:
 STATUS_EVENT_STARTED = "started"
 STATUS_EVENT_HUMAN_ACTION = "human_action"
 STATUS_EVENT_FAILURE = "failure"
+STATUS_EVENT_REFUSAL = "refusal"
 
 
 def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
@@ -217,6 +225,8 @@ def run_status_for(event: str, *, kind: str | None = None) -> RunStatus | None:
         return RunStatus.RUNNING
     if event == STATUS_EVENT_FAILURE:
         return RunStatus.FAILED
+    if event == STATUS_EVENT_REFUSAL:
+        return RunStatus.REFUSED
     if event == STATUS_EVENT_HUMAN_ACTION:
         if kind in (AWAITING_APPROVAL, AWAITING_INPUT):
             return RunStatus.GATED
@@ -1157,7 +1167,7 @@ class Engine:
         self._caller_root()
         try:
             self._enter(phases, "normalize")
-            trigger = self.normalize()
+            trigger = self._with_dispatch_issue_body(self.normalize())
 
             self._require_readable_target(trigger)
 
@@ -1219,6 +1229,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.kind is SkipKind.GATE_NOOP:
                     # An ``approve|reject gate`` command with nothing it may
@@ -1242,6 +1253,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
@@ -1267,6 +1279,7 @@ class Engine:
                         posted_body=posted,
                         state=self._record_terminal_skip(skip),
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 log.info("[phase:guards] skipping agent — %s", reason)
                 # A routine resolver skip stays silent as before; bot-authored
@@ -1382,12 +1395,22 @@ class Engine:
                     failure_reason = _hook_failure_note("pre", pre_result)
 
             if failure_reason is None:
-                self.notify_agent_started(self._agent_start_notice(trigger))
                 # Imported here, not at module scope: the agent assembly needs
                 # the runtime extra, and the engine imports without it.
+                from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+                    ClaudeCredentialError,
+                )
                 from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
                     ProviderFailure,
                 )
+
+                # The guard runs before the acknowledgment, so a refusal posts
+                # one notice and no "agent started" comment (issue #1099).
+                try:
+                    self._preflight_agent_credentials()
+                except ClaudeCredentialError as exc:
+                    return self._handle_refusal(str(exc), phases)
+                self.notify_agent_started(self._agent_start_notice(trigger))
 
                 try:
                     agent_result = self.invoke_agent(prompt)
@@ -1395,6 +1418,11 @@ class Engine:
                     # A provider failure is terminal (issue #1322): no finalize
                     # attempts, no validation, no publish and no routing.
                     return self._handle_provider_failure(exc, phases)
+                except ClaudeCredentialError as exc:
+                    # A credential-guard refusal is a deliberate human-actionable
+                    # stop (ADR 0015), not a crash: no placeholder answer, no
+                    # publish and no routing (issue #1099).
+                    return self._handle_refusal(str(exc), phases)
                 except Exception as exc:  # noqa: BLE001 - never crash the host
                     log.exception("[phase:agent] agent invocation failed: %s", exc)
                     # The bash runs the agent behind ``| tee console.txt``, so a
@@ -1486,6 +1514,17 @@ class Engine:
                         commit_id=finalize_result.auto_commit,
                         detail="committed work the agent left uncommitted",
                     )
+                if finalize_result.secret_findings:
+                    # A pre-push redaction is permanent for the run (#1347):
+                    # the record makes every later comment warn about it.
+                    state = self._merge_secret_scan(
+                        state, list(finalize_result.secret_findings)
+                    )
+                    if state is not None:
+                        # The comment framed below embeds the agent's own state
+                        # artifact, so the record is carried to the publish
+                        # seam explicitly.
+                        self._publish_state["secret_scan"] = state.secret_scan
                 # The pushed tip is the branch's head from here on (issue #1397).
                 state = self._record_head_sha(state)
                 if not finalize_result.ok:
@@ -2000,9 +2039,14 @@ class Engine:
         """
         error = str(failure.provider_error or "the LLM provider failed")
         from nebuko.engine.lib.agent_script.features.run_agent.run_failure import (  # noqa: PLC0415
+            HarnessAuthError,
+            harness_auth_message,
             redact_secrets,
         )
 
+        if isinstance(failure, HarnessAuthError):
+            # Fixed notice, never the backend's raw text (issue #1434).
+            error = harness_auth_message(str(self.env.get("GITHUB_REPOSITORY") or ""))
         error = redact_secrets(error, self._provider_secrets())
         phase = str(failure.agent_phase or "agent")
         pushed = False
@@ -2037,6 +2081,28 @@ class Engine:
             prompt=None,
             posted_body=None,
             state=state,
+            phases=tuple(phases),
+        )
+
+    def _handle_refusal(self, reason: str, phases: Sequence[str]) -> RunOutcome:
+        """Stop the run on a credential-guard refusal (issue #1099).
+
+        The guard refused before the agent ran, so there is nothing to publish
+        or route. The one notice carries the guard's own next steps; the run
+        exits 0 like the other human-actionable stops (ADR 0015) and writes no
+        workflow state.
+        """
+        log.info("[phase:agent] run refused by the credential guard — %s", reason)
+        self._set_status(run_status_for(STATUS_EVENT_REFUSAL))
+        posted = self._post_refusal_notice(reason)
+        return RunOutcome(
+            exit_code=ExitCode.ADVANCE,
+            turn_outcome=TurnOutcome.for_incomplete(
+                IncompleteReason.NO_OUTCOME, note=reason
+            ),
+            prompt=None,
+            posted_body=posted,
+            state=None,
             phases=tuple(phases),
         )
 
@@ -2218,6 +2284,16 @@ class Engine:
         return notice
 
     # @stub-protected
+    def _post_refusal_notice(self, reason: str) -> str | None:
+        """Post the credential guard's refusal as the run's one notice (#1099).
+
+        The reason is the guard's own message and its ``To proceed`` options;
+        it reaches the thread through the terminal-notice path (ping plus
+        neutralized triggers). Best-effort: a failed post returns ``None``.
+        """
+        return self._post_terminal_notice(reason)
+
+    # @stub-protected
     def _post_soft_kill_halt(self, reason: str) -> str:
         """Ping a human when the soft-kill retry budget is exhausted (issue #793).
 
@@ -2259,6 +2335,8 @@ class Engine:
                 repo=self._repo(trigger),
                 issue_number=trigger.number or None,
                 debug=_is_true(self.env.get("CONFIG_DEBUG")),
+                dispatch_step=trigger.step,
+                dispatch_agent_config=trigger.agent_config,
             )
         )
         _apply_prompt_layer(resolved, paths)
@@ -3130,6 +3208,38 @@ class Engine:
             str(roots[0]) if len(roots) > 1 else None,
         )
 
+    def _preflight_agent_credentials(self) -> None:
+        """Run the credential guard host-side, before the agent acknowledgment (#1099).
+
+        The guard also runs inside the agent seam, which starts after the
+        acknowledgment; a refusal there would post the ack beside the refusal.
+        Only a ``ClaudeCredentialError`` is acted on. Any other failure (an
+        unresolvable config, a missing runtime) is left to the agent seam, which
+        reports it as it always has.
+        """
+        from nebuko.engine.harness.credentials import (  # noqa: PLC0415
+            ClaudeCredentialError,
+        )
+
+        try:
+            from nebuko.engine.agent_host import _applied_env  # noqa: PLC0415
+            from nebuko.engine.lib.agent_script.features.resolve_llm_config.resolve_llm_config import (  # noqa: PLC0415
+                resolve_llm_config,
+            )
+            from nebuko.engine.lib.agent_script.features.run_agent.run_agent import (  # noqa: PLC0415
+                _enforce_harness_credentials,
+            )
+
+            with _applied_env(self._agent_env()):
+                llm_config, _, agent_cfg = resolve_llm_config(
+                    SimpleNamespace(prompt_location=None), ""
+                )
+                _enforce_harness_credentials(agent_cfg, llm_config)
+        except ClaudeCredentialError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the agent seam reports it
+            log.debug("[phase:agent] credential preflight skipped: %s", exc)
+
     # @stub-protected
     def invoke_agent(self, prompt: str) -> Any:
         """Run the agent through the engine's in-process seam.
@@ -3239,7 +3349,24 @@ class Engine:
             self.adapter.save_state(state)
         else:
             _clear_prev_state_handoff()
+        # ADR 0017: no trusted state but an untrusted one exists -> the guard
+        # must assume a lane may be bound (fail closed).
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec  # noqa: PLC0415
+
+        WorkflowStateCodec().mark_untrusted_handoff(
+            state is None and self._untrusted_state_only()
+        )
         return state
+
+    def _untrusted_state_only(self) -> bool:
+        """True when only untrusted state comments exist; an unknown result fails closed."""
+        probe = getattr(self.adapter, "has_untrusted_state_only", None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 - an unclassifiable thread is untrusted
+            return True
 
     def _seed_thread_ledger(self, state: WorkflowState | None) -> WorkflowState | None:
         """Fold this run's reconciled thread ledger into the hand-off state (#872).
@@ -3335,21 +3462,43 @@ class Engine:
         returned as data and the caller turns it into a run error.
         """
         trigger = self._active_trigger()
-        if trigger is None or trigger.type not in ("issue", "issue_comment"):
+        # A dispatch names its target issue by number only, so it scaffolds the
+        # same branch as a comment run once the issue is read (issue #1432).
+        targets_issue = trigger is not None and (
+            trigger.type in ("issue", "issue_comment")
+            or (trigger.type == "repository_dispatch" and trigger.number > 0)
+        )
+        if trigger is None or not targets_issue:
             # Branch mechanics only make sense for an issue-driven dev session;
-            # a PR-review or dispatch trigger carries no issue to scaffold for.
+            # a PR-review or workflow_dispatch trigger carries no issue to scaffold for.
             result = branch_scaffold.ScaffoldResult(
                 ok=True, skipped=True, detail="not an issue-triggered run"
+            )
+            log.info(
+                "[phase:prompt] branch scaffold skipped: trigger=%s number=%s",
+                trigger.type if trigger is not None else "none",
+                trigger.number if trigger is not None else 0,
             )
             self._scaffold_state["result"] = result
             return result
         issue_title = branch_scaffold.issue_title_from_payload(trigger.payload)
+        title_source = "payload"
+        if not issue_title and trigger.type == "repository_dispatch":
+            # A dispatch payload carries no issue title, so the target issue is read.
+            issue_title = self._fetched_issue_title(trigger)
+            title_source = "issue"
         if not issue_title:
-            # An issue-comment trigger carries no payload title: the request
-            # body, minus the markers and the @@mention that routed it, is the
-            # only title the branch can be named after.
+            # Still no title: the request body, minus the markers and the
+            # @@mention that routed it, is the last name the branch can take.
             body = re.sub(r"<!--.*?-->", " ", trigger.body or "", flags=re.DOTALL)
             issue_title = " ".join(re.sub(r"@@\S+", " ", body).split())
+            title_source = "body"
+        log.info(
+            "[phase:prompt] branch scaffold decision: trigger=%s issue=#%s title_source=%s",
+            trigger.type,
+            trigger.number,
+            title_source if issue_title else "none (issue-<N> fallback)",
+        )
         scaffold = branch_scaffold.BranchScaffold(
             self._caller_root(),
             self._session_env(),
@@ -3363,6 +3512,46 @@ class Engine:
         else:
             log.error("[phase:prompt] branch scaffold failed: %s", result.detail)
         return result
+
+    def _with_dispatch_issue_body(self, trigger: Trigger) -> Trigger:
+        """Fill a dispatch trigger's ``issue_body`` from the target issue (#1455).
+
+        A ``repository_dispatch`` payload carries only the command, so the
+        prompt would otherwise show no issue text. Best-effort: an unreadable
+        issue keeps the empty body and the run proceeds.
+        """
+        if trigger.type != "repository_dispatch" or trigger.issue_body or trigger.number <= 0:
+            return trigger
+        repo = self._repo(trigger)
+        if not repo:
+            return trigger
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the body is optional context
+            log.warning("[phase:normalize] could not read issue #%s: %s", trigger.number, exc)
+            return trigger
+        body = str((issue or {}).get("body") or "")
+        return replace(trigger, issue_body=body) if body else trigger
+
+    def _fetched_issue_title(self, trigger: Trigger) -> str:
+        """The target issue's title, read from GitHub; ``""`` when unreadable.
+
+        Best-effort: a dispatch payload carries no title, and a failed read
+        falls back to the request body rather than failing the scaffold.
+        """
+        repo = resolve_repo(self.env, trigger)
+        if not repo or trigger.number <= 0:
+            return ""
+        from nebuko.engine.lib import github_client
+
+        try:
+            issue = github_client.get_issue(repo, trigger.number)
+        except Exception as exc:  # noqa: BLE001 - the title is optional context
+            log.warning("[phase:prompt] could not read issue #%s: %s", trigger.number, exc)
+            return ""
+        return str((issue or {}).get("title") or "")
 
     def _render_scaffold_conflict(self) -> str:
         """The fix-first prompt section for a conflicted rebase (issue #1138).
@@ -3398,8 +3587,22 @@ class Engine:
         interrupted = (
             self._observed_status(agent_result) is OutcomeStatus.GRACEFULLY_TIMED_OUT
         )
+        issue_number = (
+            trigger.number if trigger is not None and trigger.number > 0 else None
+        )
+        if trigger is None:
+            issue_repo = ""
+        elif trigger.type == "repository_dispatch":
+            issue_repo = trigger.org_repo
+        else:
+            repository = (trigger.payload or {}).get("repository") or {}
+            issue_repo = str(repository.get("full_name") or "")
         result = pr_finalize.PrFinalizer(
-            issue_title=issue_title, interrupted=interrupted
+            issue_title=issue_title,
+            interrupted=interrupted,
+            issue_number=issue_number,
+            repo=resolve_repo(self.env, trigger),
+            issue_repo=issue_repo,
         ).finalize()
         if result.ok:
             log.info("[phase:state] pr finalize: %s", result.detail)
@@ -3440,6 +3643,63 @@ class Engine:
             branch_name=result.branch,
             base_branch=str(self.env.get("NEBUKO_BASE_BRANCH") or "main"),
         )
+
+    def _secret_scan_enabled(self) -> bool:
+        """Whether the secret-scan guard is on for the caller repo (issue #1347).
+
+        Opt-in via ``features.secret_scan`` in ``.nebuko/nebuko.yaml``; a
+        missing or invalid manifest reads as disabled.
+        """
+        return secret_scan_enabled(self._caller_root())
+
+    def _scan_comment_sources(
+        self, *, answer: str, final_message: str, console_log: str
+    ) -> list[SecretFinding]:
+        """Credential matches in the text that becomes the posted comment (#1347).
+
+        Scans the sources rather than the framed body so the findings can be
+        recorded on the state (the body is redacted again at the framing seam,
+        which is what actually removes the value).
+        """
+        findings: list[SecretFinding] = []
+        for label, text in (
+            ("answer", answer),
+            ("final_message", final_message),
+            ("console_log", console_log),
+        ):
+            if not text:
+                continue
+            for finding in scan_text(text, label):
+                findings.append(finding.as_state())
+        return findings
+
+    def _merge_secret_scan(
+        self,
+        state: WorkflowState | None,
+        findings: Sequence[SecretFinding],
+        *,
+        persist: bool = True,
+    ) -> WorkflowState | None:
+        """Merge redaction findings into the persisted ``secret_scan`` record.
+
+        The record is what renders the warning on this and every later comment.
+        ``persist=False`` returns the updated state without saving it — the
+        publish seam does that, because the state it frames is not the one the
+        post-publish merge saves. Best-effort: a write hiccup must not break
+        publication.
+        """
+        if state is None or not findings:
+            return state
+        step = str(self._get(self._resolved_config(), "WORKFLOW_STEP") or "")
+        merged = (state.secret_scan or SecretScan()).merge(list(findings), at=step)
+        updated = state.model_copy(update={"secret_scan": merged})
+        if not persist:
+            return updated
+        try:
+            self.adapter.save_state(updated)
+        except Exception:  # noqa: BLE001 - a state write hiccup is not fatal
+            log.warning("[phase:state] could not persist the secret scan record")
+        return updated
 
     def _record_git_action(
         self,
@@ -3940,6 +4200,32 @@ class Engine:
             ) or recorded_state
         else:
             publish_state = recorded_state
+        # Comment-body secret scan (issue #1347): a comment is a public artifact
+        # and a pasted log is the likeliest leak channel, so the sources are
+        # scanned before framing. The findings are merged into the run's
+        # ``secret_scan`` record (warning + persistence), never the values.
+        # Opt-in via ``features.secret_scan`` (disabled by default).
+        scan_enabled = self._secret_scan_enabled()
+        comment_findings = (
+            self._scan_comment_sources(
+                answer=answer, final_message=final_message, console_log=console_log
+            )
+            if scan_enabled
+            else []
+        )
+        recorded_scan = self._publish_state.get("secret_scan")
+        if recorded_scan is not None and publish_state is not None:
+            publish_state = publish_state.model_copy(
+                update={"secret_scan": recorded_scan}
+            )
+        if comment_findings:
+            publish_state = self._merge_secret_scan(
+                publish_state, comment_findings, persist=False
+            )
+            # The state was persisted before publish, so the record rides
+            # ``_publish_state`` and is folded in by the post-publish merge.
+            if publish_state is not None:
+                self._publish_state["secret_scan"] = publish_state.secret_scan
         header, body = bridge.build_comment_body_parts(
             latest_answer=answer,
             final_message=final_message,
@@ -3950,6 +4236,8 @@ class Engine:
             role_name=self._role_of(agent_result),
             state=publish_state,
             engine_failed=engine_failed,
+            secret_findings=comment_findings,
+            secret_scan=scan_enabled,
         )
         # Every continuation part must carry the bot marker too, or the ledger
         # reads it as human feedback and drops it from the next prompt (#913).
@@ -4020,6 +4308,12 @@ class Engine:
         if state is None:
             return None
         merged = self._backfill_step_output(state)
+        scan = self._publish_state.get("secret_scan")
+        if scan is not None and merged.secret_scan != scan:
+            # The comment-body scan ran after ``persist`` (issue #1347); the
+            # record must survive the merge or the next comment loses the
+            # warning and the run could re-introduce the value.
+            merged = merged.model_copy(update={"secret_scan": scan})
         if self._publish_state.get("failed") and not merged.publish_failed:
             # The journal must record that this run's deliverable was lost
             # (issue #805), so a later reader can tell a green run from a
@@ -4311,6 +4605,10 @@ class Engine:
                 if trigger.issue_body:
                     parts.append(f"**Issue body:**\n{trigger.issue_body}")
                 body = _agent_facing_body(trigger.body)
+                if trigger.type == "repository_dispatch" and _is_bare_command(body):
+                    # A dispatch's prompt is the command, not the task: the
+                    # issue body above is the request (issue #1455).
+                    body = ""
             if body:
                 parts.append(body)
         task = self._get(resolved, "TASK")
@@ -4418,7 +4716,9 @@ class Engine:
         trigger = self._get(self._handoff_config(), _TRIGGER_KEY)
         if not isinstance(trigger, Trigger):
             return False
-        return bool(trigger.issue_body or trigger.body) or trigger.type == "issue"
+        if trigger.type == "issue" or trigger.issue_body:
+            return True
+        return bool(trigger.body) and not _is_bare_command(trigger.body)
 
     def _context_bodies(self) -> dict[str, str]:
         """Every thread comment body by id, read once (issue #913 parts)."""
@@ -4664,6 +4964,9 @@ class Engine:
         seeded = self._seeded_prev_state.get("state")
         if seeded is not None:
             return seeded
+        handed = handed_over_state()
+        if handed is not None:
+            return handed
         try:
             return self.adapter.load_state()
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
@@ -4765,6 +5068,39 @@ def _agent_facing_body(body: str) -> str:
     from nebuko.engine.lib.workflow_state.features.comment.to_git_comment import strip_state_section
 
     return strip_state_section(body)
+
+
+_BARE_COMMAND_WORDS = frozenset({"run", "workflow", "force-step"})
+_BARE_COMMAND_FLAG = re.compile(r"--[\w-]+")
+_BARE_COMMAND_VALUE = re.compile(r"[\w.-]+")
+
+
+def _is_bare_command(text: str) -> bool:
+    """True when ``text`` is only a ``/nebuko`` command line, with no task text.
+
+    A linear token walk, not a regex: a flag/value regex backtracks
+    exponentially on non-matching input, and this runs on untrusted comments.
+    A flag consumes at most one following value token (never another flag).
+    """
+    tokens = text.split()
+    if len(tokens) < 2 or tokens[0] != "/nebuko":
+        return False
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _BARE_COMMAND_WORDS:
+            i += 1
+        elif _BARE_COMMAND_FLAG.fullmatch(token):
+            i += 1
+            if (
+                i < len(tokens)
+                and not tokens[i].startswith("--")
+                and _BARE_COMMAND_VALUE.fullmatch(tokens[i])
+            ):
+                i += 1
+        else:
+            return False
+    return True
 
 
 def _render_gate_decision(raw: Any) -> str:
@@ -5041,6 +5377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
     import argparse
 
+    job_started = time.monotonic()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "lint":
         from nebuko.engine.lint_cli import main as lint_main
@@ -5104,12 +5441,86 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     window = HistoryWindowConfig.from_env(env)
     init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
-    outcome = Engine(
-        adapter=adapter,
-        repo_root=repo_root(),
-        env=env,
-        history_limit=window.normalized_count(),
-        render_limit=window.render_limit(),
-        init_timings={"engine_init": init_ms},
-    ).run()
-    return outcome.process_exit_code()
+    from nebuko.engine.step_driver import DriverConfig, StepDriver, read_dispatch_payload
+    from nebuko.engine.lib.workflow_state.workflow_state import lane_binding_from_env
+
+    payload = read_dispatch_payload(os.environ)
+    lane, _owner = lane_binding_from_env(env, str(payload.get("actor") or "") or None)
+    driver_cfg = DriverConfig.from_env(
+        env,
+        lane=lane,
+        event=os.environ.get("GITHUB_EVENT_NAME", ""),
+        payload=payload,
+    )
+
+    def make_engine(index: int) -> Engine:
+        # A fresh adapter per step: its thread snapshot is read once (#805).
+        step_adapter = (
+            adapter
+            if index == 1
+            else _ContinuationAdapter(build_adapter(args.adapter, **kwargs))
+        )
+        return Engine(
+            adapter=step_adapter,
+            repo_root=repo_root(),
+            # A copy per step: an engine's env writes must not reach the next step.
+            env=dict(env),
+            history_limit=window.normalized_count(),
+            render_limit=window.render_limit(),
+            init_timings={"engine_init": init_ms} if index == 1 else {},
+        )
+
+    def human_comment_ids() -> frozenset[str]:
+        from nebuko.engine.lib.prepare_comment import BOT_MARKER
+
+        entries = build_adapter(args.adapter, **kwargs).load_history()
+        return frozenset(
+            entry.comment_id
+            for entry in entries
+            if entry.comment_id
+            # Line 1 only: the engine's own comments open with the marker; a human
+            # comment that quotes it further down is still a human message.
+            and BOT_MARKER not in entry.body.partition("\n")[0]
+            and not entry.author.endswith("[bot]")
+        )
+
+    def post_notice(body: str) -> None:
+        build_adapter(args.adapter, **kwargs).post(body)
+
+    driver = StepDriver(
+        driver_cfg,
+        engine_factory=make_engine,
+        adapter_probe=human_comment_ids,
+        clock=time.monotonic,
+        notify=post_notice,
+        origin=job_started,
+    )
+    return driver.run().process_exit_code()
+
+
+class _ContinuationAdapter:
+    """Adapter view of a step that continues the same human trigger (issue #1457).
+
+    The step carries no command and no ``step``/``agent_config``, so the resolver
+    routes on the previous state (the posted step comment) and the payload's
+    ``step`` is never re-seeded. Everything else is delegated to the adapter.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def read_trigger(self) -> Trigger:
+        return replace(self._inner.read_trigger(), body="", step=None, agent_config=None)
+
+    def load_state(self) -> WorkflowState | None:
+        # The previous step's in-process state (the driver persists it at the
+        # boundary); the posted comment is only the fallback.
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        loaded = WorkflowStateCodec().load_prev()
+        if loaded.status == "ok" and loaded.state is not None:
+            return loaded.state
+        return self._inner.load_state()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

@@ -306,6 +306,30 @@ def test_run_engine_agent_propagates_a_provider_failure(monkeypatch, tmp_path: P
     assert not isinstance(excinfo.value, EngineAgentUnavailable)
 
 
+def test_legacy_seam_maps_the_refusal_exit_code_back_to_a_credential_refusal(
+    tmp_path: Path,
+) -> None:
+    """A guard refusal in the child is a typed refusal, not a generic crash (#1099)."""
+    from nebuko.engine.harness.credentials import ClaudeCredentialError
+
+    repo_root = tmp_path / "checkout"
+    script = repo_root / ENTRY_POINT
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path('credential_refusal.json').write_text(json.dumps({\n"
+        "    'reason': \"run refused: rule 'lane-binding' failed (detail)\",\n"
+        "}), encoding='utf-8')\n"
+        "sys.exit(4)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ClaudeCredentialError) as excinfo:
+        run_legacy_agent("prompt", repo_root=repo_root)
+
+    assert str(excinfo.value) == "run refused: rule 'lane-binding' failed (detail)"
+
+
 def test_legacy_seam_maps_the_provider_exit_code_back_to_a_typed_failure(
     tmp_path: Path,
 ) -> None:

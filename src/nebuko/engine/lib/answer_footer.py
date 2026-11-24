@@ -109,6 +109,12 @@ class AnswerFooter:
             return ""
         status = self.resolve_status(state)
         segments = [state.workflow, self.render_steps(state, steps), status.value]
+        if state.lane_changed_from:
+            # ADR 0017: a re-baselined lane must stay visible on the thread.
+            by = state.lane_changed_by or "the workflow starter"
+            segments.append(
+                f"Lane re-baselined from {state.lane_changed_from} by {by}"
+            )
         hint = self.render_hint(status, state)
         if hint:
             segments.append(hint)

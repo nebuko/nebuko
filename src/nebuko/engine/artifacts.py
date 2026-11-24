@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from nebuko.engine.lib.loop_step import loop_step_index
+
 __all__ = [
     "APP_LOG_FILE",
     "ArtifactFile",
@@ -112,16 +114,37 @@ class RunArtifactStager:
 
     # @stub-protected
     def stage_console_log(self, console_log: str) -> None:
-        """Persist the captured console output as ``console.txt``."""
+        """Persist the captured console output as ``console.txt``.
+
+        Inside the single-job loop each step appends its block under a step
+        header, so the one uploaded file carries every step (issue #1457).
+        """
         self._base_dir.mkdir(parents=True, exist_ok=True)
-        (self._base_dir / CONSOLE_LOG_FILE).write_text(console_log, encoding="utf-8")
+        target = self._base_dir / CONSOLE_LOG_FILE
+        step = loop_step_index()
+        if step is None or step == 1:
+            target.write_text(console_log, encoding="utf-8")
+            return
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n=== step {step} ===\n{console_log}")
 
     def _rename_sdk_app_log(self) -> None:
-        """Give the SDK's ``app.log`` its browser-viewable ``.txt`` name (#894)."""
+        """Give the SDK's ``app.log`` its browser-viewable ``.txt`` name (#894).
+
+        A later loop step appends its log to the ``app.txt`` of the earlier steps.
+        """
         source = self._base_dir / SDK_APP_LOG_FILE
         if not source.is_file():
             return
-        source.replace(self._base_dir / APP_LOG_FILE)
+        target = self._base_dir / APP_LOG_FILE
+        step = loop_step_index()
+        if step is None or step == 1 or not target.is_file():
+            source.replace(target)
+            return
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n=== step {step} ===\n")
+            handle.write(source.read_text(encoding="utf-8"))
+        source.unlink()
 
     def _stage_event_log(self) -> None:
         """Bundle the persisted conversation events into ``events.jsonl`` (#1120).
@@ -154,12 +177,22 @@ class RunArtifactStager:
 
     # @stub-protected
     def stage_timings(self, timings: Mapping[str, Any]) -> None:
-        """Persist the run's timing payload as ``timings.json`` (issue #1375)."""
+        """Persist the run's timing payload as ``timings.json`` (issue #1375).
+
+        Inside the single-job loop ``timings.json`` is a list with one record
+        per step, each tagged with its ``step`` index (issue #1457).
+        """
         self._base_dir.mkdir(parents=True, exist_ok=True)
-        (self._base_dir / TIMINGS_FILE).write_text(
-            json.dumps(dict(timings), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        target = self._base_dir / TIMINGS_FILE
+        step = loop_step_index()
+        if step is None:
+            payload: Any = dict(timings)
+        else:
+            records = []
+            if step > 1 and target.is_file():
+                records = json.loads(target.read_text(encoding="utf-8"))
+            payload = [*records, {"step": step, **dict(timings)}]
+        target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     # @stub-protected
     def artifact_files(self) -> tuple[ArtifactFile, ...]:

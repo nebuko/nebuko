@@ -14,6 +14,7 @@ from typing import Optional
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
 from .sub_domains.workflow_command.workflow_command import (
+    WorkflowCommand,
     classify_comment,
     parse_command,
 )
@@ -145,6 +146,46 @@ def _update_circuit_breaker_env(value_param: Optional[str]) -> dict:
     }
 
 
+def _apply_dispatch_fields(
+    wf_cmd: Optional[WorkflowCommand],
+    step: Optional[str],
+    agent_config: Optional[str],
+) -> tuple[Optional[WorkflowCommand], Optional[str]]:
+    """Seed a ``run workflow`` command from a dispatch's ``step`` / ``agent_config``.
+
+    The dispatch fields (ADR 0017, ``client_payload``) enter through the same
+    ``--step`` / ``--config`` params a human command carries, so the entry and
+    agent-config paths validate and persist them unchanged. An explicit flag in
+    the command wins. ``agent_config`` must be the file name of an agent config
+    reachable from the search roots: it is matched by name, never read as a path.
+
+    Returns:
+        ``(command, error)``; ``error`` is a terminal usage message, else ``None``.
+    """
+    if not (step or agent_config):
+        return wf_cmd, None
+    if wf_cmd is None or wf_cmd.action != "run" or wf_cmd.resource != "workflow":
+        return wf_cmd, (
+            "dispatch step/agent_config require a /nebuko run workflow prompt"
+        )
+    params = dict(wf_cmd.params)
+    if step and not params.get("step"):
+        params["step"] = step
+    if agent_config and not params.get("config"):
+        from nebuko.engine.paths import ConfigPathAnchor
+
+        caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
+        available = _available_agent_configs(caller_root)
+        if agent_config not in available:
+            listing = ", ".join(available) if available else "none found"
+            return wf_cmd, (
+                f"unknown agent config '{agent_config}' in dispatch payload; "
+                f"available: {listing}"
+            )
+        params["config"] = agent_config
+    return WorkflowCommand(action=wf_cmd.action, resource=wf_cmd.resource, params=params), None
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -154,6 +195,8 @@ def resolve_config(
     issue_number: Optional[int] = None,
     debug: bool = False,
     local_workflows_dir: Optional[str] = None,
+    dispatch_step: Optional[str] = None,
+    dispatch_agent_config: Optional[str] = None,
 ) -> dict:
     """Resolve complete agent configuration from trigger body.
 
@@ -189,6 +232,11 @@ def resolve_config(
         local_workflows_dir: Optional consumer-local workflows dir that takes
             precedence over ``workflows_dir`` for workflow lookups (issue
             #529).
+        dispatch_step: ``client_payload.step`` of a repository_dispatch run;
+            seeds the run's entry step like ``--step``. ``None`` means the
+            workflow's first step.
+        dispatch_agent_config: ``client_payload.agent_config``; selects the agent
+            config like ``--config`` and is stamped into the state.
 
     Returns:
         Dict with all environment variables to set.
@@ -214,6 +262,12 @@ def resolve_config(
     # regardless of whether prev_state exists (they need to resolve the command)
     command_parse = parse_command(trigger_body)
     wf_cmd = command_parse.command
+    if not is_bot:
+        wf_cmd, dispatch_error = _apply_dispatch_fields(
+            wf_cmd, dispatch_step, dispatch_agent_config
+        )
+        if dispatch_error:
+            return {"SKIP_AGENT": "true", "REASON": dispatch_error, "COMMAND_ERROR": "true"}
 
     # Centralized fallback: if no state from current body, try comment history
     if not prev_state:

@@ -32,11 +32,27 @@ __all__ = [
     "DeterministicStep",
     "StepResult",
     "WorkflowCallFrame",
+    "NebukoFeatures",
     "NebukoManifest",
     "circuit_breaker_update_notice",
 ]
 
 log = logging.getLogger(__name__)
+
+
+# @stub-protected
+class NebukoFeatures(BaseModel):
+    """Opt-in engine features from ``.nebuko/nebuko.yaml`` (issue #1347).
+
+    Every flag defaults to ``False``: a feature ships disabled and a repo turns
+    it on explicitly, so an upgraded engine never changes what an existing
+    repository does.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Pre-push and pre-post secret scanning + redaction (issue #1347).
+    secret_scan: bool = False
 
 
 # @stub-protected
@@ -64,14 +80,18 @@ class NebukoManifest(BaseModel):
     skills_dir: str | None = None
     default_workflow: str | None = None
     merge_main: bool = True
+    features: NebukoFeatures = NebukoFeatures()
     agent_config: str | None = None
     circuit_breaker_threshold: int | None = Field(None, ge=1)
     history_comment_count: int | None = None
     pin_comment: bool | None = None
+    base_branch: str | None = None
 
     def env_defaults(self) -> dict[str, str]:
         """The env vars this manifest sets, as the workflow would export them."""
         values: dict[str, str] = {}
+        if self.base_branch and self.base_branch.strip():
+            values["NEBUKO_BASE_BRANCH"] = self.base_branch.strip()
         if self.agent_config is not None:
             values["AGENT_CONFIG_PATH"] = self.agent_config
         if self.circuit_breaker_threshold is not None:
@@ -141,6 +161,9 @@ class Trigger:
     issue_body: str = ""
     # ``owner/name`` the dispatch targets (``client_payload.org_repo``, "" otherwise)
     org_repo: str = ""
+    # ``client_payload.step`` / ``client_payload.agent_config`` (ADR 0017); None when absent
+    step: str | None = None
+    agent_config: str | None = None
 
 
 # @stub-protected
@@ -187,6 +210,10 @@ class RunOutcome:
     # Per-phase wall-clock durations in milliseconds (issue #1375), keyed by
     # phase name. Empty for a run that never entered a timed phase.
     timings: dict[str, float] = field(default_factory=dict)
+    # The guard's skip verdict when no agent ran (issue #1457): a benign skip
+    # exits ADVANCE, so the single-job driver needs the kind to tell "workflow
+    # ended" from "step completed".
+    skip_kind: "SkipKind | None" = None
 
     # @stub-protected
     def process_exit_code(self) -> int:

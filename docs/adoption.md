@@ -235,6 +235,7 @@ an input you pass explicitly wins over the manifest.
 | `runs_on` | string | `ubuntu-latest` | Runner label used by the jobs (section 6). |
 | `circuit_breaker_threshold` | number | unset (manifest `circuit_breaker_threshold`, else `15`) | Bot-marker count that trips the circuit breaker (per-issue override: `/nebuko update circuit-breaker --value <n>`). |
 | `pin_comment` | boolean | `false` (OR-ed with the manifest's `pin_comment`) | Pin every agent-step comment for verbatim context injection. |
+| `base_branch` (manifest) | string | remote HEAD, else `main` | Base branch for feature branches and PRs, set in `.nebuko/nebuko.yaml` (e.g. `master`). |
 | `history_comment_count` | number | unset (manifest `history_comment_count`, else `5`) | Most recent comments injected into each agent call. |
 | `python_version` | string | `3.13` | Python version installed on the runner. |
 | `enable_uv_cache` | boolean | `true` | Enable the `uv` dependency cache. |
