@@ -18,7 +18,7 @@ the seam itself.
 2. Store it as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`
    (*Settings → Secrets and variables → Actions*).
 3. Start from the tracked profile
-   [`agent-config-anthropic.yaml`](../.nebuko/agents/agent-config-anthropic.yaml)
+   [`agent-config-anthropic.yaml`](../defaults/agents/agent-config-anthropic.yaml)
    (every role on `backend: "claude-code"`), or switch individual roles as
    shown below.
 
@@ -115,6 +115,22 @@ takes (`appreciation`, `hold_kind`, `agent_call`, `round`, `note`, `complexity`,
   install is needed — `uv sync --extra runtime` is enough.
 - The live `claude` smoke test is opt-in (`NEBUKO_LIVE_CLAUDE=1`) and never
   runs in CI.
+
+## Gap verdicts (claude-code vs OpenHands)
+
+Static reads of the port, not a live comparison; the live run needs a
+subscription token and is still pending (`NEBUKO_LIVE_CLAUDE=1`).
+
+| Gap | Verdict | Basis |
+|---|---|---|
+| `skills_discover` | follow-up | Lint rejects discover-mode skills (C11), so it is not silent; inject mode covers shipped skills. |
+| `publication_guard` | follow-up (highest priority) | No guard on publication after a non-approved outcome. Call site in `run_loop` not yet traced. |
+| metrics / cost | follow-up (blocks governor evidence) | `metrics_collector` reads `conversation_stats`, which the shim lacks; cost and tokens likely read as zero. |
+| `condenser` | accept | Claude Code manages its own context. |
+| `native_tools` (`file_editor`) | accept | Lint already flags it. |
+| finalize / closing turn | accept | Closing turn and recall are implemented; a failed closing turn degrades to an empty result. |
+| MCP | accept | Engine tools and stdio servers both served. |
+| failure handling | follow-up | Whether `ResultMessage.is_error` reaches the #1322 provider-failure path is unverified. |
 
 ## Self-hosted runners
 

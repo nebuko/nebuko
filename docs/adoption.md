@@ -145,7 +145,7 @@ inherited from whatever Nebuko ships. Either write one (section 5,
 | [`agent-config-commandcode.yaml`](../defaults/agents/agent-config-commandcode.yaml) | CommandCode | `COMMANDCODE_API_KEY` |
 | [`agent-config-opencode.yaml`](../defaults/agents/agent-config-opencode.yaml) | OpenCode Go | `OPENCODE_GO_API_KEY` |
 | [`agent-config-mistral.yaml`](../defaults/agents/agent-config-mistral.yaml) | Mistral | `MISTRAL_API_KEY` |
-| [`agent-config-anthropic.yaml`](../.nebuko/agents/agent-config-anthropic.yaml) | Claude Code (see [claude-code.md](./claude-code.md)) | `CLAUDE_CODE_OAUTH_TOKEN` |
+| [`agent-config-anthropic.yaml`](../defaults/agents/agent-config-anthropic.yaml) | Claude Code (see [claude-code.md](./claude-code.md)) | `CLAUDE_CODE_OAUTH_TOKEN` |
 
 ```bash
 mkdir -p .nebuko/agents

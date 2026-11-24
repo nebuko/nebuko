@@ -242,6 +242,10 @@ class TestRuleScenarios:
         """ADR 0017 Lane K runs the binary with ANTHROPIC_API_KEY too."""
         assert _lint("clean_claude_code_api_key.yaml") == []
 
+    def test_the_shipped_anthropic_profile_lints_clean_in_strict_mode(self):
+        shipped = Path(__file__).resolve().parents[2] / "defaults" / "agents" / "agent-config-anthropic.yaml"
+        assert ConfigLinter(strict=True).lint(shipped) == []
+
     def test_c6_warns_on_an_unreferenced_mcp_catalog_entry(self):
         issues = _by_rule(_lint("c6_mcp_unreferenced.yaml"), "C6-unreferenced-entry")
         assert {issue.location for issue in issues} == {"mcp_servers.dead-server"}
@@ -298,7 +302,7 @@ class TestShippedConfigs:
         ran OpenHands with the key dropped. The linter now fails loud, so the
         profile has to stay servable by the backend it declares.
         """
-        path = REPO_ROOT / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        path = REPO_ROOT / "defaults" / "agents" / "agent-config-anthropic.yaml"
         issues = ConfigLinter().lint(path)
         backend_rules = {
             "C9-unknown-backend",
