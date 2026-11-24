@@ -39,7 +39,12 @@ def _outcome(code: ExitCode) -> RunOutcome:
 def _agent_turn(appreciation: str) -> dict:
     """What ``Engine.invoke_agent`` returns: the answer, turn outcome and state."""
     return {
-        "answer": "## step\n\nDone.",
+        # Every declared output section of the default workflow's steps, so the
+        # real validator accepts the answer (issue #1457 real-path tests).
+        "answer": "\n\n".join(
+            f"## {name}\n\nDone." for name in
+            ("headline", "context_request", "assumptions", "requirements", "decision", "coverage", "questions")
+        ),
         "turn_outcome": {"appreciation": appreciation},
         "state": WorkflowState(
             workflow="default",
