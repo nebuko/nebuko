@@ -22,7 +22,6 @@ from nebuko.engine.step_driver import (
 )
 from nebuko.engine.lib.github_client import BOT_MARKER
 from nebuko.engine.lib.prepare_comment import CONTINUE_TOKEN
-from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock
 from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.models import CommentEntry
 
@@ -66,8 +65,6 @@ def _agent_turn(appreciation: str, step: str) -> dict:
             agent=step,
             position=[{"workflow": "default", "step": step}],
             lane="user-repo",
-            # The plan gate arms the root lock; the engine must not advance past it.
-            gate=GateLock(step="plan") if step == "plan" else None,
         ),
     }
 
@@ -466,13 +463,14 @@ class TestHandOffAndArtifacts:
 
 class TestRealStepPath:
     def test_three_real_steps_post_no_continue_token(self, real_loop):
-        # analyze -> context -> plan; the plan gate turns the approval into a hold.
-        real_loop.state["agent_turns"] = ["approved", "approved", "approved"]
+        # analyze -> context -> plan; plan asks the human, so the loop stops there.
+        real_loop.state["agent_turns"] = ["approved", "approved", "hold"]
 
         assert real_loop.main() == 0, [b[:300] for b in real_loop.thread.posted]
 
         assert len(real_loop.agent_calls) == 3
         assert len(real_loop.thread.posted) == 3
+        assert not any(CONTINUE_TOKEN in body for body in real_loop.thread.posted)
         assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
         assert all('"lane": "user-repo"' in body or '"lane":"user-repo"' in body
                    for body in real_loop.thread.posted)
