@@ -211,11 +211,11 @@ produced the fix or the finding.
 
 | Symptom | Cause | Source |
 |---------|-------|--------|
-| `run-task` skipped, run is green | Workflow predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426; run link not recorded |
-| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | #1388 (operator report from the runs; run link not recorded) |
-| 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses. The issue also names #1430, which is not in repo history | #1429 (`4549738`), #1431 (`2469e36`); run link not recorded |
-| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | #1388 (operator report from the runs; run link not recorded) |
-| `refusing to push the base branch` | Dispatch-branch issue: the run must publish to its feature branch, never the base | #1388 (inferred: the code comments and tests that cite #1432 cover the dispatch feature branch; #1432 is not confirmed as an issue in history) |
+| `run-task` skipped, run is green | Workflow predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426; run not identified (user repo not reachable from the CI token; runs 44302540158 ... 44332921102 on `olivier-norture/nebuko-claude-code`) |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | Operator report in #1388; run not identified (runs 44302540158 ... 44332921102) |
+| 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses. The issue also names #1430, which is not in repo history | #1429 (`4549738`), #1431 (`2469e36`); run not identified (runs 44302540158 ... 44332921102) |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | Operator report in #1388; run not identified (runs 44302540158 ... 44332921102) |
+| `refusing to push the base branch` | Dispatch-branch issue: the run must publish to its feature branch, never the base | No issue yet; follow-up pending (#1388 names it, not filed). No run identified |
 
 ### Known limits
 
