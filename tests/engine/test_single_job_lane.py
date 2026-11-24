@@ -254,11 +254,11 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     run = None
     if real_steps:
         _init_checkout(tmp_path)
-        agent_turns: list[str] = state.setdefault("agent_turns", [])
 
         def fake_agent(self, prompt):
             n = len(agent_calls)
-            appreciation = agent_turns.pop(0) if agent_turns else "approved"
+            turns = state.get("agent_turns") or []
+            appreciation = turns.pop(0) if turns else "approved"
             if state["on_step"] is not None:
                 state["on_step"](n + 1, thread)
             agent_calls.append(prompt)
