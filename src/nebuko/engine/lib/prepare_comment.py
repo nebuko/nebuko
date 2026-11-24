@@ -483,6 +483,18 @@ _ROLE_DISPLAY_NAMES = {
 }
 
 
+def _live_header_line() -> str:
+    """Line 1 of a live turn: the continue token, unless single-job mode (issue #1457).
+
+    The step driver runs the next step in the same process, so no other workflow
+    needs the token; the driver sets ``WORKFLOW_NO_CONTINUE`` and the comment
+    keeps only the bot marker.
+    """
+    if os.environ.get("WORKFLOW_NO_CONTINUE", "").strip() in ("", "0", "false"):
+        return LIVE_HEADER_LINE
+    return BOT_MARKER
+
+
 def _display_name_for(role: str) -> str:
     """Human-readable role label for the answer header (legacy mapping)."""
     return _ROLE_DISPLAY_NAMES.get(role, role.capitalize())
@@ -512,17 +524,17 @@ def _header_line(state: WorkflowState | None, engine_failed: bool = False) -> st
     if engine_failed:
         return BOT_MARKER
     if state is None:
-        return LIVE_HEADER_LINE
+        return _live_header_line()
     turn_outcome = state.turn_outcome
     if turn_outcome is None:
-        return LIVE_HEADER_LINE
+        return _live_header_line()
     appreciation = turn_outcome.appreciation
     if appreciation is not None and appreciation.value == _HOLD_APPRECIATION:
         return BOT_MARKER
     reason = turn_outcome.incomplete_reason
     if reason is not None and reason.value in _NOTIFICATION_INCOMPLETE_REASONS:
         return BOT_MARKER
-    return LIVE_HEADER_LINE
+    return _live_header_line()
 
 
 def format_answer_header(
@@ -553,7 +565,7 @@ def format_answer_header(
     role = (role_name or "").strip() or "unknown"
     header_line = _header_line(state, engine_failed=engine_failed)
     if state is None and not engine_failed:
-        header_line = LIVE_HEADER_LINE
+        header_line = _live_header_line()
     section = "" if state is None else format_collapsed_section(state)
     return (
         f"{header_line}\n"

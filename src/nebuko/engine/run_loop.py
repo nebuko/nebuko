@@ -29,6 +29,7 @@ from nebuko.engine.finalize import (
     SectionExtractionError,
     step_output_contract,
 )
+from nebuko.engine.lib.loop_step import handed_over_state
 from nebuko.engine.lib.repo_resolution import resolve_repo
 from nebuko.engine.lib.run_timings import PhaseClock
 from nebuko.engine.lib.git import (
@@ -1228,6 +1229,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.kind is SkipKind.GATE_NOOP:
                     # An ``approve|reject gate`` command with nothing it may
@@ -1251,6 +1253,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
@@ -1276,6 +1279,7 @@ class Engine:
                         posted_body=posted,
                         state=self._record_terminal_skip(skip),
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 log.info("[phase:guards] skipping agent — %s", reason)
                 # A routine resolver skip stays silent as before; bot-authored
@@ -4960,6 +4964,9 @@ class Engine:
         seeded = self._seeded_prev_state.get("state")
         if seeded is not None:
             return seeded
+        handed = handed_over_state()
+        if handed is not None:
+            return handed
         try:
             return self.adapter.load_state()
         except Exception:  # noqa: BLE001 - a missing/corrupt state is not fatal
@@ -5370,6 +5377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
     import argparse
 
+    job_started = time.monotonic()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "lint":
         from nebuko.engine.lint_cli import main as lint_main
@@ -5433,12 +5441,86 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     window = HistoryWindowConfig.from_env(env)
     init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
-    outcome = Engine(
-        adapter=adapter,
-        repo_root=repo_root(),
-        env=env,
-        history_limit=window.normalized_count(),
-        render_limit=window.render_limit(),
-        init_timings={"engine_init": init_ms},
-    ).run()
-    return outcome.process_exit_code()
+    from nebuko.engine.step_driver import DriverConfig, StepDriver, read_dispatch_payload
+    from nebuko.engine.lib.workflow_state.workflow_state import lane_binding_from_env
+
+    payload = read_dispatch_payload(os.environ)
+    lane, _owner = lane_binding_from_env(env, str(payload.get("actor") or "") or None)
+    driver_cfg = DriverConfig.from_env(
+        env,
+        lane=lane,
+        event=os.environ.get("GITHUB_EVENT_NAME", ""),
+        payload=payload,
+    )
+
+    def make_engine(index: int) -> Engine:
+        # A fresh adapter per step: its thread snapshot is read once (#805).
+        step_adapter = (
+            adapter
+            if index == 1
+            else _ContinuationAdapter(build_adapter(args.adapter, **kwargs))
+        )
+        return Engine(
+            adapter=step_adapter,
+            repo_root=repo_root(),
+            # A copy per step: an engine's env writes must not reach the next step.
+            env=dict(env),
+            history_limit=window.normalized_count(),
+            render_limit=window.render_limit(),
+            init_timings={"engine_init": init_ms} if index == 1 else {},
+        )
+
+    def human_comment_ids() -> frozenset[str]:
+        from nebuko.engine.lib.prepare_comment import BOT_MARKER
+
+        entries = build_adapter(args.adapter, **kwargs).load_history()
+        return frozenset(
+            entry.comment_id
+            for entry in entries
+            if entry.comment_id
+            # Line 1 only: the engine's own comments open with the marker; a human
+            # comment that quotes it further down is still a human message.
+            and BOT_MARKER not in entry.body.partition("\n")[0]
+            and not entry.author.endswith("[bot]")
+        )
+
+    def post_notice(body: str) -> None:
+        build_adapter(args.adapter, **kwargs).post(body)
+
+    driver = StepDriver(
+        driver_cfg,
+        engine_factory=make_engine,
+        adapter_probe=human_comment_ids,
+        clock=time.monotonic,
+        notify=post_notice,
+        origin=job_started,
+    )
+    return driver.run().process_exit_code()
+
+
+class _ContinuationAdapter:
+    """Adapter view of a step that continues the same human trigger (issue #1457).
+
+    The step carries no command and no ``step``/``agent_config``, so the resolver
+    routes on the previous state (the posted step comment) and the payload's
+    ``step`` is never re-seeded. Everything else is delegated to the adapter.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def read_trigger(self) -> Trigger:
+        return replace(self._inner.read_trigger(), body="", step=None, agent_config=None)
+
+    def load_state(self) -> WorkflowState | None:
+        # The previous step's in-process state (the driver persists it at the
+        # boundary); the posted comment is only the fallback.
+        from nebuko.engine.lib.workflow_state.state_codec import WorkflowStateCodec
+
+        loaded = WorkflowStateCodec().load_prev()
+        if loaded.status == "ok" and loaded.state is not None:
+            return loaded.state
+        return self._inner.load_state()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

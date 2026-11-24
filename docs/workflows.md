@@ -92,8 +92,9 @@ file, select the config for **one run** from the command itself (issue #1389):
 > whose first two lines carry a continuation marker. The engine then requires
 > the workflow's `started_by` to be a non-bot human who is still
 > OWNER/MEMBER/COLLABORATOR (and the credential owner in the per-user lane).
-> Lane D's bridge (token-broker#53) must apply the same rule to continuation
-> comments; it is not implemented in this repository.
+> Lane D no longer routes bot continuations (single-job lane, #1457): the
+> user-repo workflow runs its steps in one job, so the bridge (token-broker#53)
+> only turns a human comment into a dispatch to that human's repo.
 >
 > **Lane binding (`lane-binding`).** A workflow started in a user's own
 > `<login>/nebuko-claude-code` repo records `lane: user-repo` and

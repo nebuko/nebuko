@@ -210,6 +210,10 @@ class RunOutcome:
     # Per-phase wall-clock durations in milliseconds (issue #1375), keyed by
     # phase name. Empty for a run that never entered a timed phase.
     timings: dict[str, float] = field(default_factory=dict)
+    # The guard's skip verdict when no agent ran (issue #1457): a benign skip
+    # exits ADVANCE, so the single-job driver needs the kind to tell "workflow
+    # ended" from "step completed".
+    skip_kind: "SkipKind | None" = None
 
     # @stub-protected
     def process_exit_code(self) -> int:
