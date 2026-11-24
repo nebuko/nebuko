@@ -3485,6 +3485,120 @@ class TestIssueBodyContext:
         )
 
 
+class TestDispatchIssueBody:
+    """A repository_dispatch run shows the target issue's body, not the command (#1455)."""
+
+    @staticmethod
+    def _dispatch_prompt(tmp_path, monkeypatch, mocker, issue_reader) -> str:
+        import nebuko.engine.run_loop as run_loop
+
+        event = tmp_path / "event.json"
+        event.write_text(
+            json.dumps(
+                {
+                    "client_payload": {
+                        "actor": "olivier-norture",
+                        "prompt_body": "/nebuko run workflow",
+                        "issue_number": 1414,
+                        "org_repo": "olivier-norture/git-flow-ai",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "repository_dispatch")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/git-flow-ai")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+        mocker.patch(
+            "nebuko.engine.lib.resolve_config.resolve_config._fetch_workflow_state_from_history",
+            return_value=None,
+        )
+        mocker.patch("nebuko.engine.lib.github_client.get_issue", side_effect=issue_reader)
+        mocker.patch(
+            "nebuko.adapters.github.GitHubAdapter.load_context_entries", return_value=[]
+        )
+        mocker.patch(
+            "nebuko.adapters.github.GitHubAdapter.load_raw_thread",
+            return_value=(None, []),
+        )
+        run = mocker.patch.object(
+            run_loop.Engine, "run", autospec=True, return_value=mocker.Mock(exit_code=0)
+        )
+        run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
+        engine = run.call_args[0][0]
+        trigger = engine._with_dispatch_issue_body(engine.normalize())
+        return engine._render_context({_TRIGGER_KEY: trigger}, [])
+
+    def test_issue_body_appears_once_and_the_command_is_not_the_request(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        rendered = self._dispatch_prompt(
+            tmp_path,
+            monkeypatch,
+            mocker,
+            lambda repo, number: {"body": "Add the retry budget to the sync job."},
+        )
+
+        assert rendered.count("Add the retry budget to the sync job.") == 1
+        assert "**Issue body:**\nAdd the retry budget" in rendered
+        assert "/nebuko run workflow" not in rendered
+
+    def test_unreadable_issue_keeps_the_run_with_no_issue_body(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        def unreadable(repo, number):
+            raise RuntimeError("HTTP 404")
+
+        rendered = self._dispatch_prompt(tmp_path, monkeypatch, mocker, unreadable)
+
+        assert "**Issue body:**" not in rendered
+        assert "## Recent thread" in rendered
+
+    def test_comment_trigger_does_not_refetch_the_issue(self, tmp_path, mocker):
+        import nebuko.engine.run_loop as run_loop
+
+        get_issue = mocker.patch("nebuko.engine.lib.github_client.get_issue")
+        trigger = _trigger(body="@@dev fix it", issue_body="the real task")
+        engine = _engine(tmp_path, trigger=trigger)
+
+        assert engine._with_dispatch_issue_body(trigger) is trigger
+        get_issue.assert_not_called()
+        assert run_loop._is_bare_command("/nebuko run workflow") is True
+
+
+@pytest.mark.parametrize(
+    ("text", "bare"),
+    [
+        ("/nebuko run workflow", True),
+        ("/nebuko run workflow --name dev-review-loop", True),
+        ("/nebuko force-step --name implement", True),
+        ("/nebuko run workflow fix the login bug", False),
+        ("/nebuko --flag", True),
+        ("/nebuko", False),
+        ("make it so", False),
+        ("", False),
+    ],
+)
+def test_is_bare_command(text, bare):
+    from nebuko.engine.run_loop import _is_bare_command
+
+    assert _is_bare_command(text) is bare
+
+
+def test_is_bare_command_is_linear_on_adversarial_input():
+    import time
+
+    from nebuko.engine.run_loop import _is_bare_command
+
+    flags = " ".join(f"--a{n}" for n in range(200))
+    text = f"/nebuko {flags} BAD!"
+    started = time.perf_counter()
+    assert _is_bare_command(text) is False
+    assert time.perf_counter() - started < 0.5
+
+
 class TestHistoryWindowInjection:
     """Issue #844: bound the injected thread and drop engine bookkeeping.
 
