@@ -46,7 +46,10 @@ def _agent_turn(appreciation: str) -> dict:
             SECTION_OPEN.format(name=name) + "\n\nDone.\n" + SECTION_CLOSE + "\n\n"
             for name in ("context_request", "assumptions", "requirements", "decision", "coverage", "questions")
         ),
-        "turn_outcome": {"appreciation": appreciation},
+        "turn_outcome": {
+            "appreciation": appreciation,
+            **({"hold_kind": "awaiting_input"} if appreciation == "hold" else {}),
+        },
         "state": WorkflowState(
             workflow="default",
             step="context",
