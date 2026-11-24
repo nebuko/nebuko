@@ -89,6 +89,33 @@ skipped with `dispatch step/agent_config require a /nebuko run workflow prompt`.
 needs its human decision: the plan gate is approved in the org issue with
 `/nebuko approve gate`, and only then does the owner dispatch the next step.
 
+- `single_step`: `true` runs exactly one step and stops, as before single-job mode.
+  The same switch is `WORKFLOW_SINGLE_STEP=1` in the job environment.
+
+### Single-job user-repo runs
+
+While the lane is `user-repo` on a `repository_dispatch`, the engine runs the
+whole workflow in one job: each automatic step runs in the same process after the
+previous one, with a fresh engine and thread snapshot, and posts its own comment
+without the `<!-- workflow-continue -->` token (only `<!-- bot-workflow-terminal -->`).
+The loop stops at the first of:
+
+- a gate or hold, a failed step, a refusal, or the terminal step (the engine posts
+  its own notice);
+- a new human comment on the issue (it is left in the thread, not acted on);
+- the step cap `WORKFLOW_MAX_STEPS` (default 6);
+- the wall-clock budget `WORKFLOW_WALL_CLOCK_S` (default 3000 s): a step starts only
+  if `elapsed + step budget` fits, where the step budget is
+  `AGENT_SOFT_TIMEOUT_MINUTES` (default 20 min when unset). Before each step the
+  token is checked with a cheap authenticated read; a 401 stops the run.
+
+The driver posts a notice only for the stops it causes (human comment, step cap,
+wall clock, expired token, unreadable thread). Continue after a stop with
+`/nebuko resume`, `/nebuko approve gate`, or a `step` dispatch.
+
+`WORKFLOW_SINGLE_JOB=1` turns the loop on for any lane; `WORKFLOW_SINGLE_JOB=0`
+turns it off.
+
 ### Lane and re-baseline troubleshooting
 
 | Symptom | Cause | Fix |

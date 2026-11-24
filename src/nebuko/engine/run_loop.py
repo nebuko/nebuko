@@ -5433,12 +5433,70 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     window = HistoryWindowConfig.from_env(env)
     init_ms = round((time.monotonic() - init_started) * 1000.0, 2)
-    outcome = Engine(
-        adapter=adapter,
-        repo_root=repo_root(),
-        env=env,
-        history_limit=window.normalized_count(),
-        render_limit=window.render_limit(),
-        init_timings={"engine_init": init_ms},
-    ).run()
-    return outcome.process_exit_code()
+    from nebuko.engine.step_driver import DriverConfig, StepDriver, read_dispatch_payload
+    from nebuko.engine.lib.workflow_state.workflow_state import lane_binding_from_env
+
+    payload = read_dispatch_payload(os.environ)
+    lane, _owner = lane_binding_from_env(env, str(payload.get("actor") or "") or None)
+    driver_cfg = DriverConfig.from_env(
+        env,
+        lane=lane,
+        event=os.environ.get("GITHUB_EVENT_NAME", ""),
+        payload=payload,
+    )
+
+    def make_engine(index: int) -> Engine:
+        # A fresh adapter per step: its thread snapshot is read once (#805).
+        step_adapter = (
+            adapter
+            if index == 1
+            else _ContinuationAdapter(build_adapter(args.adapter, **kwargs))
+        )
+        return Engine(
+            adapter=step_adapter,
+            repo_root=repo_root(),
+            env=env,
+            history_limit=window.normalized_count(),
+            render_limit=window.render_limit(),
+            init_timings={"engine_init": init_ms} if index == 1 else {},
+        )
+
+    def human_comment_ids() -> frozenset[str]:
+        from nebuko.engine.lib.prepare_comment import BOT_MARKER
+
+        entries = build_adapter(args.adapter, **kwargs).load_history()
+        return frozenset(
+            entry.comment_id
+            for entry in entries
+            if entry.comment_id and BOT_MARKER not in entry.body
+        )
+
+    def post_notice(body: str) -> None:
+        build_adapter(args.adapter, **kwargs).post(body)
+
+    driver = StepDriver(
+        driver_cfg,
+        engine_factory=make_engine,
+        adapter_probe=human_comment_ids,
+        clock=time.monotonic,
+        notify=post_notice,
+    )
+    return driver.run().process_exit_code()
+
+
+class _ContinuationAdapter:
+    """Adapter view of a step that continues the same human trigger (issue #1457).
+
+    The step carries no command and no ``step``/``agent_config``, so the resolver
+    routes on the previous state (the posted step comment) and the payload's
+    ``step`` is never re-seeded. Everything else is delegated to the adapter.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def read_trigger(self) -> Trigger:
+        return replace(self._inner.read_trigger(), body="", step=None, agent_config=None)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

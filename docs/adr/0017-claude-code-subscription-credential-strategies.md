@@ -244,6 +244,17 @@ instrument is `claude setup-token`. Rejected.
 side-calls or provider routing). Rule 1 violation; also technically fragile
 (the token is a bearer validated for the binary's flows). Rejected.
 
+## Amendment: single-job lane (issue #1457)
+
+For the `user-repo` lane, bot-comment continuation routing is replaced by a
+single job. The engine's step driver runs the next automatic step in the same
+process, on the same runner, under the same human trigger (`TRIGGER_AUTHOR_*`
+stays the starter), so no bot comment hops back into the user repo and no org
+token is minted for a continuation. Step comments carry no continue token. The
+`lane-binding` guard stays as the safety net. Stops (gate, hold, failure, new
+human comment, budget, expired token) end the job; the next step needs a human
+comment or an explicit `step` dispatch.
+
 ## Consequences
 
 ### Implementation roadmap
