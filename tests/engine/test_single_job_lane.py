@@ -12,6 +12,7 @@ import pytest
 from dataclasses import replace
 
 from nebuko.adapters.github import GitHubAdapter
+from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
 from nebuko.engine.models import ExitCode, RunOutcome
 from nebuko.engine.step_driver import (
     BoundaryContext,
@@ -39,11 +40,11 @@ def _outcome(code: ExitCode) -> RunOutcome:
 def _agent_turn(appreciation: str) -> dict:
     """What ``Engine.invoke_agent`` returns: the answer, turn outcome and state."""
     return {
-        # Every declared output section of the default workflow's steps, so the
-        # real validator accepts the answer (issue #1457 real-path tests).
-        "answer": "\n\n".join(
-            f"## {name}\n\nDone." for name in
-            ("headline", "context_request", "assumptions", "requirements", "decision", "coverage", "questions")
+        # Every declared output section of the default workflow's steps, in the
+        # engine's section markers, so the real validator accepts the answer.
+        "answer": "# Step\n\n" + "".join(
+            SECTION_OPEN.format(name=name) + "\n\nDone.\n" + SECTION_CLOSE + "\n\n"
+            for name in ("context_request", "assumptions", "requirements", "decision", "coverage", "questions")
         ),
         "turn_outcome": {"appreciation": appreciation},
         "state": WorkflowState(
