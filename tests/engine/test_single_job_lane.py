@@ -253,6 +253,8 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
 
         def fake_agent(self, prompt):
             appreciation = agent_turns.pop(0) if agent_turns else "approved"
+            _st = WorkflowState.model_validate(self.adapter.load_state().model_dump()) if self.adapter.load_state() else None
+            print('DBG', len(agent_calls)+1, appreciation, _st and (_st.step, _st.agent, _st.turn_outcome), file=__import__('sys').stderr)
             if state["on_step"] is not None:
                 state["on_step"](len(agent_calls) + 1, thread)
             agent_calls.append(prompt)
