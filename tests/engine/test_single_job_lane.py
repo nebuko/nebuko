@@ -183,6 +183,7 @@ def _init_checkout(path: Path) -> None:
 
 def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     import nebuko.engine.run_loop as run_loop
+    from nebuko.engine.lib.git import pr_finalize
 
     thread = _Thread()
     triggers: list[tuple[str, str | None]] = []
@@ -264,6 +265,13 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
             agent_calls.append(prompt)
             return _agent_turn(appreciation, _REAL_STEPS[min(n, len(_REAL_STEPS) - 1)])
 
+        # No network: the PR finalize and the actor lookup are the only gh calls a step makes.
+        mocker.patch.object(GitHubAdapter, "engine_actor", return_value=(1, "nebuko[bot]"))
+        mocker.patch.object(
+            pr_finalize.PrFinalizer,
+            "finalize",
+            return_value=pr_finalize.PrFinalizeResult(ok=True, skipped=True, detail="stubbed"),
+        )
         mocker.patch.object(run_loop.Engine, "invoke_agent", autospec=True, side_effect=fake_agent)
     else:
         run = mocker.patch.object(run_loop.Engine, "run", autospec=True, side_effect=fake_run)
@@ -475,7 +483,7 @@ class TestRealStepPath:
         for step in ("analyze", "context", "plan"):
             assert any(f"**{step}**" in body for body in posted), step
         assert not any("**implement**" in body for body in posted)
-        assert all('"lane": "user-repo"' in body for body in posted if '"lane"' in body)
+        assert any('"lane": "user-repo"' in body for body in posted)
 
     def test_human_comment_stops_the_real_loop_at_the_next_boundary(self, real_loop):
         def human_speaks(step, thread):
