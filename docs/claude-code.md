@@ -212,10 +212,10 @@ produced the fix or the finding.
 | Symptom | Cause | Source |
 |---------|-------|--------|
 | `run-task` skipped, run is green | Workflow predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426; run link not recorded |
-| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | run link not recorded |
-| 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses | #1429, #1431; run link not recorded |
-| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | run link not recorded |
-| `refusing to push the base branch` | Dispatch-branch issue | #1432 |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | No tracking issue (operator report from the runs; run link not recorded) |
+| 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses. The issue also names #1430, which is not in repo history | #1429 (`4549738`), #1431 (`2469e36`); run link not recorded |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | No tracking issue (operator report from the runs; run link not recorded) |
+| `refusing to push the base branch` | Dispatch-branch issue: the run must publish to its feature branch, never the base | #1432 (inferred: the code comments and tests that cite it cover the dispatch feature branch; no issue of that number is confirmed in history) |
 
 ### Known limits
 
@@ -225,8 +225,9 @@ Current behaviour and the follow-ups still open:
   until a gate, a hold, a failed step, a human comment, the step cap or the wall
   clock stops it (see "Single-job user-repo runs"). A gate or hold needs a new
   owner dispatch with `step=<next step>` after `/nebuko approve gate`.
-- Bot-started continuations are not routed to the user repo yet
-  (credential-bound continuation design, #1433; token-broker#53 slice 1).
+- Bot-started continuations are not routed to the user repo yet. The design is
+  recorded in `06eb25f` (#1433, credential-bound continuations); token-broker#53
+  slice 1 is the other prerequisite.
 - The bridge is not deployed (token-broker#53).
 - Per-run Actions minutes apply to the user's repo. The 6 h job cap applies to
   the single job, so the wall-clock budget (`WORKFLOW_WALL_CLOCK_S`, default 3000 s)
@@ -238,7 +239,8 @@ _Update this section after #1432 and #1433 are resolved._
 
 - The secret lives only in the user's repo. Never store it in a shared repo.
 - Guard 3 (`nebuko-workflow.yaml`): schedule, actor-less and bot-started runs
-  are refused. Bot continuations are allowed only under the #1427 rule.
+  are refused. Bot continuations are allowed only under the rule from #1427
+  (`9fb3ece`).
 - Guard 4 (`owner-guard` job): asserts `client_payload.actor` equals the
   repository owner before any job that can reach the token.
 - Never use the shared org token for a user-started workflow. The repo owner
