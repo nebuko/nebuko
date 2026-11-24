@@ -87,7 +87,7 @@ agents:
 
   review:
     backend: "claude-code"
-    model: "${llms.claude-sonnet}"
+    model: "${llms.claude-haiku}"
     role: "Code and plan reviewer — reviews PRs and plans round by round and runs retrospectives; never modifies code."
     temperature: 0.4
     prompt_file: "defaults/prompts/review.md"
