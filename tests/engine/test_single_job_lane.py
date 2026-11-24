@@ -436,7 +436,7 @@ class TestRealStepPath:
     def test_three_real_steps_post_no_continue_token(self, real_loop):
         real_loop.state["agent_turns"] = ["approved", "approved", "hold"]
 
-        assert real_loop.main() == 0
+        assert real_loop.main() == 0, [b[:300] for b in real_loop.thread.posted]
 
         assert len(real_loop.agent_calls) == 3
         assert real_loop.thread.posted
