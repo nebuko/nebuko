@@ -236,6 +236,15 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
             return _agent_turn(appreciation)
 
         mocker.patch.object(run_loop.Engine, "invoke_agent", autospec=True, side_effect=fake_agent)
+        # tmp_path is not a git checkout; the git guards are covered elsewhere.
+        mocker.patch.object(
+            run_loop.Engine, "_git_session_preflight",
+            return_value=SimpleNamespace(ok=True, detail="stubbed"),
+        )
+        mocker.patch.object(
+            run_loop.Engine, "_git_session_finalize",
+            return_value=SimpleNamespace(ok=True, detail="stubbed"),
+        )
     else:
         run = mocker.patch.object(run_loop.Engine, "run", autospec=True, side_effect=fake_run)
 
