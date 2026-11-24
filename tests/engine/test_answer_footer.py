@@ -179,6 +179,21 @@ class TestStepsSegment(unittest.TestCase):
         steps = AnswerFooter().render_steps(state, None)
         self.assertEqual(steps, "plan -> **spec**")
 
+    def test_visited_step_missing_from_declared_steps_still_renders(self):
+        """Given a history step absent from the declared list (renamed mid-run),
+        when rendering with declared steps, then it is kept and the current
+        step is still bold."""
+        state = _state(step="implement", history=[_entry("legacy"), _entry("plan")])
+        steps = AnswerFooter().render_steps(state, ["plan", "implement"])
+        self.assertEqual(steps, "plan -> **implement** -> legacy")
+
+    def test_current_step_missing_from_declared_steps_is_bold(self):
+        """Given the current step is not declared (synthesized step), when
+        rendering, then it still appears, bold."""
+        state = _state(step="synth", history=[_entry("plan")])
+        steps = AnswerFooter().render_steps(state, ["plan", "implement"])
+        self.assertEqual(steps, "plan -> implement -> **synth**")
+
     def test_current_step_in_history_is_shown_once(self):
         """Given the history's last entry is the current step (a gated step
         after its own turn), when rendering, then it appears once, bold."""

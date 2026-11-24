@@ -135,10 +135,11 @@ class AnswerFooter:
         when ``resolver`` is ``None`` or ``url_for`` returns ``""``); the
         current step is bold; pending steps are plain. Separator: ``" -> "``.
         """
-        if not steps:
-            steps = [entry.step for entry in state.history] + [state.step]
-        # Repeated visits (and the current step, already in history) collapse to one entry.
-        unique_steps = dict.fromkeys(steps)
+        visited = [entry.step for entry in state.history] + [state.step]
+        # Declared steps keep their order; visited steps missing from the declaration
+        # (renamed/removed mid-run, sub-workflow or synthesized steps) are appended so
+        # their history is never dropped. Repeats collapse to one entry.
+        unique_steps = dict.fromkeys([*(steps or []), *visited])
         return " -> ".join(self._render_step(state, step) for step in unique_steps)
 
     def _render_step(self, state: WorkflowState, step: str) -> str:

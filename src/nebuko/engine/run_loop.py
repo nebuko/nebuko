@@ -2719,6 +2719,7 @@ class Engine:
         name = str(workflow_name or "")
         if not name:
             return []
+        # Called for its memoizing side effect: it fills ``_declared_step_cache``.
         self._declared_step(name)
         return list(self._declared_step_cache.get(name) or {})
 
