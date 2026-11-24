@@ -212,10 +212,10 @@ produced the fix or the finding.
 | Symptom | Cause | Source |
 |---------|-------|--------|
 | `run-task` skipped, run is green | Workflow predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426; run link not recorded |
-| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | No tracking issue (operator report from the runs; run link not recorded) |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated | #1388 (operator report from the runs; run link not recorded) |
 | 404 on comments, issue or labels | Token not scoped to the org repo, or engine older than #1429 / #1431. The log line `[phase:repo] target repo ...` shows which repo the engine uses. The issue also names #1430, which is not in repo history | #1429 (`4549738`), #1431 (`2469e36`); run link not recorded |
-| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | No tracking issue (operator report from the runs; run link not recorded) |
-| `refusing to push the base branch` | Dispatch-branch issue: the run must publish to its feature branch, never the base | #1432 (inferred: the code comments and tests that cite it cover the dispatch feature branch; no issue of that number is confirmed in history) |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | #1388 (operator report from the runs; run link not recorded) |
+| `refusing to push the base branch` | Dispatch-branch issue: the run must publish to its feature branch, never the base | #1388 (inferred: the code comments and tests that cite #1432 cover the dispatch feature branch; #1432 is not confirmed as an issue in history) |
 
 ### Known limits
 
