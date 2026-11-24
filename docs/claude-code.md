@@ -106,12 +106,20 @@ The loop stops at the first of:
 - the step cap `WORKFLOW_MAX_STEPS` (default 6);
 - the wall-clock budget `WORKFLOW_WALL_CLOCK_S` (default 3000 s): a step starts only
   if `elapsed + step budget` fits, where the step budget is
-  `AGENT_SOFT_TIMEOUT_MINUTES` (default 20 min when unset). Before each step the
-  token is checked with a cheap authenticated read; a 401 stops the run.
+  `AGENT_SOFT_TIMEOUT_MINUTES` + `WIND_DOWN_TIMEOUT_MINUTES` (defaults 20 + 8 = 28 min
+  when unset: the soft run and its wind-down). Before each step the token is checked
+  with a cheap authenticated read; a 401 stops the run.
 
 The driver posts a notice only for the stops it causes (human comment, step cap,
-wall clock, expired token, unreadable thread). Continue after a stop with
-`/nebuko resume`, `/nebuko approve gate`, or a `step` dispatch.
+wall clock, expired token, unreadable thread). Each notice says how to continue
+today: dispatch the next step with `step=<next step>`, after `/nebuko approve gate`
+on the org issue when a gate is armed. `/nebuko resume` is the route only once the
+token broker routes human comments to dispatches (token-broker#53 slice 1); until
+then the lane-binding guard refuses it.
+
+In loop mode `timings.json` is a JSON list with one record per step
+(`{"step": N, ...phase timings}`), and the metrics file is per step
+(`metrics-<run_id>-step-N.json`).
 
 `WORKFLOW_SINGLE_JOB=1` turns the loop on for any lane; `WORKFLOW_SINGLE_JOB=0`
 turns it off.

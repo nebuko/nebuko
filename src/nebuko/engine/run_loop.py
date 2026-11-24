@@ -1229,6 +1229,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.kind is SkipKind.GATE_NOOP:
                     # An ``approve|reject gate`` command with nothing it may
@@ -1252,6 +1253,7 @@ class Engine:
                         posted_body=posted,
                         state=None,
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 if skip.is_benign and not (soft_kill_halt or command_error):
                     # A workflow that has no next agent (or reached its terminal
@@ -1277,6 +1279,7 @@ class Engine:
                         posted_body=posted,
                         state=self._record_terminal_skip(skip),
                         phases=tuple(phases),
+                        skip_kind=skip.kind,
                     )
                 log.info("[phase:guards] skipping agent — %s", reason)
                 # A routine resolver skip stays silent as before; bot-authored
@@ -5459,7 +5462,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return Engine(
             adapter=step_adapter,
             repo_root=repo_root(),
-            env=env,
+            # A copy per step: an engine's env writes must not reach the next step.
+            env=dict(env),
             history_limit=window.normalized_count(),
             render_limit=window.render_limit(),
             init_timings={"engine_init": init_ms} if index == 1 else {},

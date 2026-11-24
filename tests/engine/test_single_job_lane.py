@@ -13,7 +13,7 @@ from dataclasses import replace
 
 from nebuko.adapters.github import GitHubAdapter
 from nebuko.engine.finalize import SECTION_CLOSE, SECTION_OPEN
-from nebuko.engine.models import ExitCode, RunOutcome
+from nebuko.engine.models import ExitCode, RunOutcome, SkipKind, SkipOutcome
 from nebuko.engine.step_driver import (
     BoundaryContext,
     DriverConfig,
@@ -22,6 +22,9 @@ from nebuko.engine.step_driver import (
 )
 from nebuko.engine.lib.github_client import BOT_MARKER
 from nebuko.engine.lib.prepare_comment import CONTINUE_TOKEN
+from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock
+from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
+from nebuko.engine.lib.agent_script.features.run_agent.run_outcome import OutcomeStatus
 from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
 from nebuko.engine.models import CommentEntry
 
@@ -39,10 +42,15 @@ def _outcome(code: ExitCode) -> RunOutcome:
 
 # The default workflow's first three steps, in run order.
 _REAL_STEPS = ("analyze", "context", "plan")
+_GATED_STEPS = ("plan",)  # human_gate: true in defaults/workflows/default.yaml
 
 
 def _agent_turn(appreciation: str, step: str) -> dict:
     """What ``Engine.invoke_agent`` returns: the answer, turn outcome and state."""
+    turn = {
+        "appreciation": appreciation,
+        **({"hold_kind": "awaiting_input"} if appreciation == "hold" else {}),
+    }
     return {
         # Every declared output section of the default workflow's steps, in the
         # engine's section markers, so the real validator accepts the answer.
@@ -53,18 +61,19 @@ def _agent_turn(appreciation: str, step: str) -> dict:
                 "decision", "coverage", "questions",
             )
         ),
-        "turn_outcome": {
-            "appreciation": appreciation,
-            **({"hold_kind": "awaiting_input"} if appreciation == "hold" else {}),
-        },
+        "turn_outcome": turn,
         # The state the step hands to the next one: the real hand-off the next
         # in-process step reads (no posted-comment fallback in the real path).
+        # The gated step completes with its gate lock armed, as build_output does.
         "state": WorkflowState(
             workflow="default",
             step=step,
             agent=step,
             position=[{"workflow": "default", "step": step}],
             lane="user-repo",
+            # The resolver consults the gate only with a turn outcome on the state.
+            turn_outcome=TurnOutcome.from_agent_payload(turn, observed=OutcomeStatus.SUCCESS),
+            gate=GateLock(step=step) if step in _GATED_STEPS else None,
         ),
     }
 
@@ -98,6 +107,20 @@ class TestStopPolicy:
 
     def test_advance_continues(self):
         assert StopPolicy(_cfg()).decide(_outcome(ExitCode.ADVANCE), _ctx()) is None
+
+    @pytest.mark.parametrize(
+        ("kind", "reason"),
+        [
+            (SkipKind.NO_NEXT_AGENT, StopReason.TERMINAL),
+            (SkipKind.TERMINAL, StopReason.TERMINAL),
+            (SkipKind.GATE_NOOP, StopReason.NOT_ADVANCING),
+        ],
+    )
+    def test_benign_skip_exits_advance_but_still_stops(self, kind, reason):
+        # The skip exits ADVANCE; only the kind says that no step ran.
+        outcome = replace(_outcome(ExitCode.ADVANCE), skip_kind=kind)
+        assert SkipOutcome(kind, "").exit_code is ExitCode.ADVANCE
+        assert StopPolicy(_cfg()).decide(outcome, _ctx()) is reason
 
     def test_new_human_comment_stops(self):
         decision = StopPolicy(_cfg()).decide(
@@ -236,20 +259,31 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.delenv("WORKFLOW_MAX_STEPS", raising=False)
 
-    state = {"script": [], "on_step": None}
+    state = {"script": [], "on_step": None, "on_engine": None}
     seen_prev: list[WorkflowState | None] = []
     agent_calls: list[str] = []
+    engines: list[object] = []
 
     def fake_run(self):
         triggers.append((self.adapter.read_trigger().body, self.adapter.read_trigger().step))
         markers.append(os.environ.get("WORKFLOW_NO_CONTINUE", ""))
+        engines.append(self)
         if state["on_step"] is not None:
             state["on_step"](len(triggers), thread)
-        code = state["script"][len(triggers) - 1]
+        if state["on_engine"] is not None:
+            state["on_engine"](self, len(triggers))
+        entry = state["script"][len(triggers) - 1]
         if len(triggers) > 1:
             seen_prev.append(self.adapter.load_state())
         make_state = state.get("state_for")
-        outcome = _outcome(code)
+        if isinstance(entry, SkipKind):
+            # A benign skip exits ADVANCE; the engine posts the terminal notice itself
+            # for a human trigger (the real path, _post_terminal_skip_notice).
+            if entry is SkipKind.NO_NEXT_AGENT:
+                self._post_terminal_skip_notice("no next agent")
+            outcome = replace(_outcome(SkipOutcome(entry, "").exit_code), skip_kind=entry)
+        else:
+            outcome = _outcome(entry)
         return replace(outcome, state=make_state(len(triggers))) if make_state else outcome
 
     run = None
@@ -287,6 +321,7 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
     handle.state = state
     handle.seen_prev = seen_prev
     handle.agent_calls = agent_calls
+    handle.engines = engines
     handle.main = lambda: run_loop.main(["--adapter", "github", "--repo", "olivier-norture/git-flow-ai"])
     return handle
 
@@ -323,8 +358,40 @@ class TestSingleJobLoop:
         assert [c.comment_id for c in loop.thread.comments] == ["555"]
         (notice,) = loop.thread.posted
         assert notice.startswith(BOT_MARKER)
-        assert "/nebuko resume" in notice
+        assert "step=<next step>" in notice
+        assert "/nebuko approve gate" in notice
         assert "workflow-continue" not in notice
+
+    def test_workflow_end_stops_once_with_the_engines_own_notice(self, loop):
+        # analyze -> context -> plan approved, then the next run finds no next agent.
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE, SkipKind.NO_NEXT_AGENT]
+
+        assert loop.main() == 0
+
+        assert loop.run.call_count == 3
+        (notice,) = loop.thread.posted
+        assert "step cap" not in notice and "Token expiring" not in notice
+
+    def test_gate_skip_inside_the_loop_stops_without_a_driver_notice(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, SkipKind.GATE_NOOP, ExitCode.ADVANCE]
+
+        loop.main()
+
+        assert loop.run.call_count == 2
+        assert loop.thread.posted == []
+
+    def test_steps_do_not_share_the_engine_env(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.HOLD]
+        loop.state["on_engine"] = lambda engine, n: (
+            engine.env.__setitem__("LEAKED_BY_STEP", str(n)) if n == 1 else None
+        )
+
+        loop.main()
+
+        first, second = loop.engines
+        assert first.env is not second.env
+        assert first.env.get("LEAKED_BY_STEP") == "1"
+        assert "LEAKED_BY_STEP" not in second.env
 
     def test_error_outcome_stops_without_a_driver_notice(self, loop):
         loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ERROR, ExitCode.ADVANCE]
@@ -515,6 +582,17 @@ class TestRealStepPath:
             assert any(f"**{step}**" in body for body in posted), step
         assert not any("**implement**" in body for body in posted)
         assert any('"lane": "user-repo"' in body for body in posted)
+
+    def test_armed_gate_after_plan_approval_holds_once_and_ends_the_loop(self, real_loop):
+        # plan is the human gate: approved arms it, so the next run holds there.
+        real_loop.state["agent_turns"] = ["approved", "approved", "approved"]
+
+        assert real_loop.main() == 0
+
+        assert len(real_loop.agent_calls) == 3
+        gate_notices = [b for b in real_loop.thread.posted if "approve gate" in b]
+        assert len(gate_notices) == 1
+        assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
 
     def test_human_comment_stops_the_real_loop_at_the_next_boundary(self, real_loop):
         def human_speaks(step, thread):

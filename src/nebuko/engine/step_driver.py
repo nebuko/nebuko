@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
-from nebuko.engine.models import ExitCode, RunOutcome
+from nebuko.engine.models import ExitCode, RunOutcome, SkipKind
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.run_loop import Engine
@@ -39,13 +39,15 @@ class StopReason(Enum):
 
     NOT_ADVANCING = "not_advancing"  # engine error / refusal / provider failure
     HOLD = "hold"  # human gate or awaiting_input hold: the engine already said so
-    TERMINAL = "terminal"  # terminal step: the engine already said so
+    TERMINAL = "terminal"  # terminal step or no next agent: the workflow ended
     HUMAN_COMMENT = "human_comment"  # a human posted on the issue during the run
     STEP_CAP = "step_cap"
     WALL_CLOCK = "wall_clock"  # next step would outlive the org token
     TOKEN_EXPIRED = "token_expired"  # the thread probe was rejected (401)
     PROBE_FAILED = "probe_failed"  # thread unreadable: cannot rule out a human comment
 
+
+_WORKFLOW_END_SKIPS = frozenset({SkipKind.NO_NEXT_AGENT, SkipKind.TERMINAL})
 
 # Stops the driver causes itself; every other stop is announced by the engine.
 _DRIVER_NOTICE_REASONS = frozenset(
@@ -129,9 +131,12 @@ class StopPolicy:
         code = ExitCode(outcome.exit_code)
         if code is ExitCode.HOLD:
             return StopReason.HOLD
-        if code is ExitCode.TERMINAL:
+        if code is ExitCode.TERMINAL or outcome.skip_kind in _WORKFLOW_END_SKIPS:
+            # A benign skip exits ADVANCE, so the kind is what tells "no next agent"
+            # from "step completed" (the engine posted the terminal notice itself).
             return StopReason.TERMINAL
-        if code is not ExitCode.ADVANCE:
+        if outcome.skip_kind is not None or code is not ExitCode.ADVANCE:
+            # Any other skip ran no agent (e.g. an inert gate command): stop, the engine said why.
             return StopReason.NOT_ADVANCING
         if ctx.new_human_comments:
             return StopReason.HUMAN_COMMENT
@@ -185,7 +190,7 @@ class StepDriver:
             outcome = self._run_step(1, looping=True)
             # Gates, holds and failures stop with their own handling; only a step that
             # would have continued needs the notice explaining why the loop did not.
-            if ExitCode(outcome.exit_code) is ExitCode.ADVANCE:
+            if _continues(outcome):
                 reason = (
                     StopReason.TOKEN_EXPIRED if _is_auth_error(exc) else StopReason.PROBE_FAILED
                 )
@@ -212,7 +217,7 @@ class StepDriver:
         """Decide the stop at a boundary; probes the thread only after an ADVANCE."""
         notice = _NoticeContext(step_index=index, elapsed_s=elapsed)
         now = baseline
-        if ExitCode(outcome.exit_code) is ExitCode.ADVANCE:
+        if _continues(outcome):
             try:
                 now = frozenset(self._probe())
             except Exception as exc:  # noqa: BLE001 - classify, then stop
@@ -270,30 +275,41 @@ class _NoticeContext:
     elapsed_s: float
 
 
+# What works today: a `step` dispatch (the org's `/nebuko resume` is refused by
+# the lane-binding guard until token-broker#53 routes human comments to dispatches).
+_CONTINUE_TODAY = (
+    "To continue, dispatch the next step with `step=<next step>` "
+    "(if a gate is armed, run `/nebuko approve gate` on the org issue first). "
+    "`/nebuko resume` is the route once human comments are routed to dispatches."
+)
+
 _NOTICE_TEXT: dict[StopReason, str] = {
     StopReason.HUMAN_COMMENT: (
         "Single-job run paused after step {step}: a new human comment on the issue "
-        "was not acted on. Continue with `/nebuko resume` (or `/nebuko approve gate` "
-        "at a gate), or dispatch a `step`."
+        "was not acted on. " + _CONTINUE_TODAY
     ),
     StopReason.STEP_CAP: (
-        "Single-job run stopped after step {step} (step cap reached). Continue with "
-        "`/nebuko resume` or a `step` dispatch."
+        "Single-job run stopped after step {step} (step cap reached). " + _CONTINUE_TODAY
     ),
     StopReason.WALL_CLOCK: (
         "Token expiring, re-dispatch: the single-job run stopped after step {step} "
         "({minutes:.0f} min) so the next step does not outlive the credential. "
-        "Continue with `/nebuko resume`."
+        + _CONTINUE_TODAY
     ),
     StopReason.TOKEN_EXPIRED: (
         "Token expiring, re-dispatch: the credential was rejected before step "
-        "{step} + 1 started. Continue with `/nebuko resume`."
+        "{step} + 1 started. " + _CONTINUE_TODAY
     ),
     StopReason.PROBE_FAILED: (
         "Single-job run stopped after step {step}: the issue thread could not be read "
-        "to check for new human comments. Re-dispatch with `/nebuko resume`."
+        "to check for new human comments. " + _CONTINUE_TODAY
     ),
 }
+
+
+def _continues(outcome: RunOutcome) -> bool:
+    """True for a step that completed and may hand over to the next one."""
+    return ExitCode(outcome.exit_code) is ExitCode.ADVANCE and outcome.skip_kind is None
 
 
 def _is_auth_error(exc: BaseException) -> bool:

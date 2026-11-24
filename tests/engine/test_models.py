@@ -117,6 +117,7 @@ class TestRunOutcome:
             "state",
             "phases",
             "timings",
+            "skip_kind",
         ]
 
     def test_timings_default_to_empty(self):
