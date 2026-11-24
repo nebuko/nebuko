@@ -5377,6 +5377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Select the adapter, run once, map ``RunOutcome.exit_code`` to the process code."""
     import argparse
 
+    job_started = time.monotonic()
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     if raw_args and raw_args[0] == "lint":
         from nebuko.engine.lint_cli import main as lint_main
@@ -5477,7 +5478,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             entry.comment_id
             for entry in entries
             if entry.comment_id
-            and BOT_MARKER not in entry.body
+            # Line 1 only: the engine's own comments open with the marker; a human
+            # comment that quotes it further down is still a human message.
+            and BOT_MARKER not in entry.body.partition("\n")[0]
             and not entry.author.endswith("[bot]")
         )
 
@@ -5490,6 +5493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         adapter_probe=human_comment_ids,
         clock=time.monotonic,
         notify=post_notice,
+        origin=job_started,
     )
     return driver.run().process_exit_code()
 

@@ -29,7 +29,6 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_STEPS = 6
 # The org token lives one hour; the budget keeps the job inside it (issue #1457).
 _DEFAULT_WALL_CLOCK_S = 50 * 60.0
-_DEFAULT_STEP_BUDGET_S = 20 * 60.0
 _TRUE_VALUES = ("1", "true", "yes")
 _FALSE_VALUES = ("0", "false", "no")
 
@@ -66,10 +65,11 @@ class DriverConfig:
     """Opt-in and budgets for single-job mode (env ``WORKFLOW_*``)."""
 
     enabled: bool
+    # Always derived from the engine budget (``_step_budget_s``): no default, so no drift.
+    step_budget_s: float
     max_steps: int = _DEFAULT_MAX_STEPS
     # Token life fallback: the step budget must fit before this elapsed mark.
     wall_clock_s: float = _DEFAULT_WALL_CLOCK_S
-    step_budget_s: float = _DEFAULT_STEP_BUDGET_S
 
     @classmethod
     def from_env(
@@ -157,12 +157,15 @@ class StepDriver:
         adapter_probe: Callable[[], frozenset[str]],
         clock: Callable[[], float],
         notify: Callable[[str], None],
+        origin: float,
     ) -> None:
         self._cfg = cfg
         self._policy = StopPolicy(cfg)
         self._engine_factory = engine_factory
         self._probe = adapter_probe
         self._clock = clock
+        # The org token's life starts when the job mints it, before this driver exists.
+        self._origin = origin
         self._notify = notify
         self._env_snapshot: dict[str, str] = {}
         self.step_timings: list[dict[str, float]] = []
@@ -181,7 +184,7 @@ class StepDriver:
             os.environ.update(self._env_snapshot)
 
     def _run_loop(self) -> RunOutcome:
-        started = self._clock()
+        started = self._origin
         try:
             baseline = frozenset(self._probe())
         except Exception as exc:  # noqa: BLE001 - no baseline, no loop: one step only

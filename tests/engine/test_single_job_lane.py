@@ -17,6 +17,7 @@ from nebuko.engine.models import ExitCode, RunOutcome, SkipKind, SkipOutcome
 from nebuko.engine.step_driver import (
     BoundaryContext,
     DriverConfig,
+    StepDriver,
     StopPolicy,
     StopReason,
 )
@@ -140,6 +141,29 @@ class TestStopPolicy:
             policy.decide(_outcome(ExitCode.ADVANCE), _ctx(elapsed=1801.0))
             is StopReason.WALL_CLOCK
         )
+
+
+class TestClockOrigin:
+    def test_budget_is_measured_from_the_job_start_not_the_driver_start(self):
+        # The token was minted before the driver existed: 1900s of job life are gone.
+        factory_calls: list[int] = []
+
+        def engine_factory(index):
+            factory_calls.append(index)
+            return SimpleNamespace(run=lambda: _outcome(ExitCode.ADVANCE))
+
+        driver = StepDriver(
+            _cfg(wall_clock_s=3000.0, step_budget_s=1200.0),
+            engine_factory=engine_factory,
+            adapter_probe=frozenset,
+            clock=lambda: 1900.0,
+            notify=lambda _body: None,
+            origin=0.0,
+        )
+
+        driver.run()
+
+        assert factory_calls == [1]
 
 
 class TestDriverConfig:
@@ -424,6 +448,19 @@ class TestSingleJobLoop:
         assert loop.run.call_count == 1
         (notice,) = loop.thread.posted
         assert "Token expiring, re-dispatch" in notice
+
+    def test_human_comment_quoting_the_bot_marker_still_stops_the_loop(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE, ExitCode.HOLD]
+
+        def human_quotes_marker(_step, thread):
+            thread.add("556", f"/nebuko approve gate\nquoting {BOT_MARKER} here")
+
+        loop.state["on_step"] = human_quotes_marker
+
+        loop.main()
+
+        assert loop.run.call_count == 1
+        assert "556" in [c.comment_id for c in loop.thread.comments]
 
     def test_baseline_probe_failure_runs_one_step_without_continue_token(self, loop):
         loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE]
