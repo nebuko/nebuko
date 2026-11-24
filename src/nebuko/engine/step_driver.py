@@ -179,14 +179,19 @@ class StepDriver:
         started = self._clock()
         try:
             baseline = frozenset(self._probe())
-        except Exception:  # noqa: BLE001 - no baseline, no loop: one step only
+        except Exception as exc:  # noqa: BLE001 - no baseline, no loop: one step only
             log.warning("[driver] thread probe failed; running one step", exc_info=True)
             # Looping=True keeps the continue token off the wire: the lane never posts one.
             outcome = self._run_step(1, looping=True)
-            self._post_stop_notice(
-                StopReason.PROBE_FAILED,
-                _NoticeContext(step_index=1, elapsed_s=self._clock() - started),
-            )
+            # Gates, holds and failures stop with their own handling; only a step that
+            # would have continued needs the notice explaining why the loop did not.
+            if ExitCode(outcome.exit_code) is ExitCode.ADVANCE:
+                reason = (
+                    StopReason.TOKEN_EXPIRED if _is_auth_error(exc) else StopReason.PROBE_FAILED
+                )
+                self._post_stop_notice(
+                    reason, _NoticeContext(step_index=1, elapsed_s=self._clock() - started)
+                )
             return outcome
         index = 1
         outcome = self._run_step(index, looping=True)
