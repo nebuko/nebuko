@@ -221,7 +221,7 @@ class StepDriver:
     def _run_step(self, index: int, *, looping: bool) -> RunOutcome:
         if looping:
             self._reset_process_state(index)
-        outcome = self._engine_factory(index).run(); print("DBG", index, outcome.exit_code, getattr(outcome, "turn_outcome", None), file=__import__("sys").stderr)
+        outcome = self._engine_factory(index).run()
         timings = getattr(outcome, "timings", None)
         if isinstance(timings, Mapping):
             self.step_timings.append({"step": index, **timings})

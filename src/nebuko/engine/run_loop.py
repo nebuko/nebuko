@@ -5472,7 +5472,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return frozenset(
             entry.comment_id
             for entry in entries
-            if entry.comment_id and BOT_MARKER not in entry.body
+            if entry.comment_id
+            and BOT_MARKER not in entry.body
+            and not entry.author.endswith("[bot]")
         )
 
     def post_notice(body: str) -> None:
