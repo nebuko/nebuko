@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -167,6 +168,7 @@ def _loop_handle(tmp_path, monkeypatch, mocker, *, real_steps: bool):
 
     def post(_self, body):
         thread.posted.append(body)
+        return SimpleNamespace(comment_id=str(len(thread.posted)))
 
     mocker.patch.object(GitHubAdapter, "load_history", side_effect=load_history)
     mocker.patch.object(GitHubAdapter, "post", post)
