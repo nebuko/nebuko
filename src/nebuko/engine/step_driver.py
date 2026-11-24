@@ -181,7 +181,13 @@ class StepDriver:
             baseline = frozenset(self._probe())
         except Exception:  # noqa: BLE001 - no baseline, no loop: one step only
             log.warning("[driver] thread probe failed; running one step", exc_info=True)
-            return self._run_step(1, looping=False)
+            # Looping=True keeps the continue token off the wire: the lane never posts one.
+            outcome = self._run_step(1, looping=True)
+            self._post_stop_notice(
+                StopReason.PROBE_FAILED,
+                _NoticeContext(step_index=1, elapsed_s=self._clock() - started),
+            )
+            return outcome
         index = 1
         outcome = self._run_step(index, looping=True)
         while True:

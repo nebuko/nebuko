@@ -358,6 +358,19 @@ class TestSingleJobLoop:
         (notice,) = loop.thread.posted
         assert "Token expiring, re-dispatch" in notice
 
+    def test_baseline_probe_failure_runs_one_step_without_continue_token(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE]
+        loop.thread.probe_error = RuntimeError("503 Service Unavailable")
+
+        loop.main()
+
+        assert loop.run.call_count == 1
+        assert loop.markers == ["1"]  # WORKFLOW_NO_CONTINUE set: no workflow-continue token
+        (notice,) = loop.thread.posted
+        assert notice.startswith(BOT_MARKER)
+        assert "workflow-continue" not in notice
+        assert "could not be read" in notice
+
     def test_single_step_dispatch_runs_one_step(self, loop):
         event_path = Path(os.environ["GITHUB_EVENT_PATH"])
         event = json.loads(event_path.read_text(encoding="utf-8"))
