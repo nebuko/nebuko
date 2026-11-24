@@ -163,31 +163,32 @@ class StepDriver:
 
     def run(self) -> RunOutcome:
         """Run the workflow; returns the outcome of the last step run."""
+        if not self._cfg.enabled:
+            # Outside the loop the step runs exactly as before: same env, same token.
+            return self._run_step(1, looping=False)
         self._env_snapshot = dict(os.environ)
         try:
-            return self._run_steps()
+            return self._run_loop()
         finally:
             # The driver's own exports must not outlive it (in-process callers).
             os.environ.clear()
             os.environ.update(self._env_snapshot)
 
-    def _run_steps(self) -> RunOutcome:
-        if not self._cfg.enabled:
-            return self._run_step(1)
+    def _run_loop(self) -> RunOutcome:
         started = self._clock()
         try:
             baseline = frozenset(self._probe())
         except Exception:  # noqa: BLE001 - no baseline, no loop: one step only
             log.warning("[driver] thread probe failed; running one step", exc_info=True)
-            return self._run_step(1)
+            return self._run_step(1, looping=False)
         index = 1
-        outcome = self._run_step(index)
+        outcome = self._run_step(index, looping=True)
         while True:
             elapsed = self._clock() - started
             reason, notice_ctx = self._boundary(outcome, index, elapsed, baseline)
             if reason is None:
                 index += 1
-                outcome = self._run_step(index)
+                outcome = self._run_step(index, looping=True)
                 continue
             if reason in _DRIVER_NOTICE_REASONS:
                 self._post_stop_notice(reason, notice_ctx)
@@ -216,8 +217,9 @@ class StepDriver:
         )
         return self._policy.decide(outcome, ctx), notice
 
-    def _run_step(self, index: int) -> RunOutcome:
-        self._reset_process_state()
+    def _run_step(self, index: int, *, looping: bool) -> RunOutcome:
+        if looping:
+            self._reset_process_state()
         outcome = self._engine_factory(index).run()
         timings = getattr(outcome, "timings", None)
         if isinstance(timings, Mapping):
@@ -225,7 +227,7 @@ class StepDriver:
         return outcome
 
     def _reset_process_state(self) -> None:
-        """Undo what the previous step exported; keep the continue token off."""
+        """Undo what the previous step exported; keep the continue token off the loop."""
         os.environ.clear()
         os.environ.update(self._env_snapshot)
         os.environ["WORKFLOW_NO_CONTINUE"] = "1"
@@ -277,8 +279,10 @@ _NOTICE_TEXT: dict[StopReason, str] = {
 
 
 def _is_auth_error(exc: BaseException) -> bool:
-    text = str(exc)
-    return "401" in text or "Bad credentials" in text
+    """True for an HTTP 401 from the API (GitHub's body says "Bad credentials")."""
+    response = getattr(exc, "response", None)
+    status = getattr(exc, "status", None) or getattr(response, "status_code", None)
+    return status == 401 or "Bad credentials" in str(exc)
 
 
 def _positive_int(raw: str | None, default: int) -> int:
@@ -298,9 +302,13 @@ def _positive_float(raw: str | None, default: float) -> float:
 
 
 def _step_budget_s(env: Mapping[str, str]) -> float:
-    """One step's soft budget: ``AGENT_SOFT_TIMEOUT_MINUTES`` when set, else 20 min."""
-    minutes = _positive_float(env.get("AGENT_SOFT_TIMEOUT_MINUTES"), 0.0)
-    return minutes * 60.0 if minutes else _DEFAULT_STEP_BUDGET_S
+    """One step's worst case: the engine's soft run plus its wind-down (same source)."""
+    from nebuko.engine.lib.agent_script.features.run_agent.timeout_budget import (
+        resolve_timeout_budget,
+    )
+
+    budget = resolve_timeout_budget(dict(env))
+    return budget.soft_timeout_s + budget.wind_down_timeout_s
 
 
 def read_dispatch_payload(env: Mapping[str, str]) -> dict[str, object]:

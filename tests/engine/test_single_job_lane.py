@@ -280,3 +280,61 @@ class TestSingleJobLoop:
 
         assert loop.run.call_count == 1
         assert loop.thread.posted == []
+
+
+class TestContinueTokenOutsideTheLoop:
+    def test_org_lane_step_keeps_the_continue_token(self, loop, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_SINGLE_JOB", "0")
+        loop.state["script"] = [ExitCode.ADVANCE]
+
+        loop.main()
+
+        assert loop.run.call_count == 1
+        assert loop.markers == [""]
+
+    def test_single_step_dispatch_keeps_the_continue_token(self, loop):
+        event_path = Path(os.environ["GITHUB_EVENT_PATH"])
+        event = json.loads(event_path.read_text(encoding="utf-8"))
+        event["client_payload"]["single_step"] = True
+        event_path.write_text(json.dumps(event), encoding="utf-8")
+        loop.state["script"] = [ExitCode.ADVANCE]
+
+        loop.main()
+
+        assert loop.markers == [""]
+
+    def test_loop_steps_run_without_the_continue_token(self, loop):
+        loop.state["script"] = [ExitCode.ADVANCE, ExitCode.ADVANCE, ExitCode.HOLD]
+
+        loop.main()
+
+        assert loop.markers == ["1", "1", "1"]
+
+    def test_live_header_keeps_the_token_unless_the_loop_is_on(self, monkeypatch):
+        from nebuko.engine.lib import prepare_comment as pc
+
+        monkeypatch.delenv("WORKFLOW_NO_CONTINUE", raising=False)
+        assert pc._live_header_line() == pc.LIVE_HEADER_LINE
+        assert pc.CONTINUE_TOKEN in pc._live_header_line()
+        monkeypatch.setenv("WORKFLOW_NO_CONTINUE", "1")
+        assert pc._live_header_line() == pc.BOT_MARKER
+
+
+class TestDriverHelpers:
+    def test_auth_error_is_matched_by_status_not_by_text(self):
+        from nebuko.engine.step_driver import _is_auth_error
+
+        class _Status(Exception):
+            status = 401
+
+        assert _is_auth_error(_Status("nope"))
+        assert _is_auth_error(RuntimeError("401 Bad credentials"))
+        assert not _is_auth_error(RuntimeError("retry in 401 seconds"))
+        assert not _is_auth_error(RuntimeError("HTTP 503"))
+
+    def test_step_budget_comes_from_the_engine_budget(self):
+        from nebuko.engine.step_driver import _step_budget_s
+
+        assert _step_budget_s({}) == (20 + 8) * 60
+        env = {"AGENT_SOFT_TIMEOUT_MINUTES": "10", "WIND_DOWN_TIMEOUT_MINUTES": "5"}
+        assert _step_budget_s(env) == 15 * 60

@@ -447,18 +447,6 @@ CONTINUE_TOKEN = "<!-- workflow-continue -->"
 # posted body. Keep this the single source of that composition.
 LIVE_HEADER_LINE = BOT_MARKER + CONTINUE_TOKEN
 
-
-def _live_header_line() -> str:
-    """Line 1 of a live turn: the continue token, unless single-job mode (issue #1457).
-
-    The step driver runs the next step in the same process, so no other workflow
-    needs the token; the driver sets ``WORKFLOW_NO_CONTINUE`` and the comment
-    keeps only the bot marker.
-    """
-    if os.environ.get("WORKFLOW_NO_CONTINUE", "").strip() in ("", "0", "false"):
-        return LIVE_HEADER_LINE
-    return BOT_MARKER
-
 # Marks an answer comment as a *continuation* of a multi-part answer (issue
 # #1002). One logical answer is posted as several comments when it exceeds
 # ``CommentSizePolicy``; only the first part carries the trigger payload, so the
@@ -493,6 +481,18 @@ _ROLE_DISPLAY_NAMES = {
     "review": "Reviewer",
     "po": "Product Owner",
 }
+
+
+def _live_header_line() -> str:
+    """Line 1 of a live turn: the continue token, unless single-job mode (issue #1457).
+
+    The step driver runs the next step in the same process, so no other workflow
+    needs the token; the driver sets ``WORKFLOW_NO_CONTINUE`` and the comment
+    keeps only the bot marker.
+    """
+    if os.environ.get("WORKFLOW_NO_CONTINUE", "").strip() in ("", "0", "false"):
+        return LIVE_HEADER_LINE
+    return BOT_MARKER
 
 
 def _display_name_for(role: str) -> str:
