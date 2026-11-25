@@ -66,6 +66,12 @@ def _default_git_response(args, **kwargs):
         return ""  # no upstream yet → push needs --set-upstream
     if joined.startswith("rev-parse"):
         return "abc123def456"
+    if joined.startswith("merge-base --is-ancestor HEAD"):
+        raise RuntimeError(f"git {joined} failed (1): ")  # HEAD is ahead of base
+    if joined.startswith("diff --name-only") and "@{u}" not in joined:
+        return "some_file.py"
+    if joined.startswith("ls-remote"):
+        return f"abc123def456\trefs/heads/{args[-1]}"
     return ""
 
 
@@ -680,7 +686,7 @@ def _patch_git(
     is recorded in ``calls``.
     """
     calls: list[list[str]] = []
-    state = {"base": None}
+    state = {"base": None, "committed": False}
 
     def run_git(args, **kwargs):
         calls.append(list(args))
@@ -692,6 +698,7 @@ def _patch_git(
         if joined.startswith("rev-parse --abbrev-ref HEAD"):
             return "feature/issue-1080"
         if "commit" in args:
+            state["committed"] = True
             return ""
         if joined.startswith("rev-parse --verify"):
             return "1" if args[-1].split("^{")[0] == base_ref else ""
@@ -701,6 +708,17 @@ def _patch_git(
             if state["base"]:
                 return _porcelain_z(after_rebuild or "")
             return _porcelain_z(status)
+        # The branch is ahead of base once it holds unpushed or freshly
+        # committed work; until then HEAD is an ancestor of the base.
+        ahead = bool(committed) or state["committed"]
+        if joined.startswith("merge-base --is-ancestor HEAD"):
+            if ahead:
+                raise RuntimeError(f"git {joined} failed (1): ")
+            return ""
+        if joined.startswith("diff --name-only") and "@{u}" not in joined:
+            return "changed.md" if ahead else ""
+        if joined.startswith("ls-remote"):
+            return f"sha1\trefs/heads/{args[-1]}"
         if joined.startswith("diff --name-only"):
             return committed
         if joined.startswith("ls-files --unmerged"):
