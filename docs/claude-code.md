@@ -85,9 +85,11 @@ fields, read by the engine from the event (not forwarded through `with:`):
 Both are only valid with a `/nebuko run workflow` prompt; any other prompt is
 skipped with `dispatch step/agent_config require a /nebuko run workflow prompt`.
 
-`step` skips no gate check that `--step` does not already skip. A gated step still
-needs its human decision: the plan gate is approved in the org issue with
-`/nebuko approve gate`, and only then does the owner dispatch the next step.
+A `step` dispatch is a `run workflow` entry. `_resolve_human_path` in
+`resolve_route.py` enters the step without calling `_gate_pending` or `_armed_gate`,
+which only the resume, outcome and bot paths consult, so the dispatch does not check
+a gate lock. A `/nebuko approve gate` comment on the org issue cannot release a gate
+for a user-repo workflow (see Known limits).
 
 - `single_step`: `true` runs exactly one step and stops, as before single-job mode.
   The same switch is `WORKFLOW_SINGLE_STEP=1` in the job environment.
@@ -112,10 +114,9 @@ The loop stops at the first of:
 
 The driver posts a notice only for the stops it causes (human comment, step cap,
 wall clock, expired token, unreadable thread). Each notice says how to continue
-today: dispatch the next step with `step=<next step>`, after `/nebuko approve gate`
-on the org issue when a gate is armed. `/nebuko resume` is the route only once the
-token broker routes human comments to dispatches (token-broker#53 slice 1); until
-then the lane-binding guard refuses it.
+today: dispatch the next step with `step=<next step>`. `/nebuko resume` is the route
+only once the token broker routes human comments to dispatches (token-broker#53
+slice 1); until then the lane-binding guard refuses it.
 
 In loop mode `timings.json` is a JSON list with one record per step
 (`{"step": N, ...phase timings}`), and the metrics file is per step
@@ -132,6 +133,131 @@ turns it off.
 | Refused with `lane-binding`: "no trusted workflow state" | The thread's state comments are not from `nebuko[bot]`, or the hand-off is undecodable | Resume in the owner's repo, or start over with `/nebuko run workflow` |
 | Fresh `/nebuko run workflow` still refused on a later step | Not expected: a fresh run re-baselines the lane to shared | Report it; it is a regression |
 | State shows `lane: user-repo` after a re-baseline | `lane_changed_from` / `lane_changed_by` record the move | Expected: the starter moved the lane on purpose |
+
+## Lane D: per-user repo (manual dispatch and troubleshooting)
+
+Operator notes for the per-user repo above, from the manual dispatch runs (tracked
+in #1388 and #1099). Until the bridge is deployed, every run is started by hand.
+
+### Setup
+
+- Run `nebuko init claude-code-repo` (optional `--pin-ref <ref>`, default `main`)
+  where `gh` is logged in as the repo owner.
+- The token comes from the `CLAUDE_CODE_OAUTH_TOKEN` env var if set, otherwise
+  from a hidden prompt. Produce it with `claude setup-token`.
+- The command refuses if `<login>/nebuko-claude-code` already exists.
+- Install the GitHub App on that repo only:
+  <https://github.com/apps/nebuko/installations/new>. This is needed for the
+  bridge, **not** for the manual dispatch below.
+
+### Workflow template
+
+`.github/workflows/nebuko-run.yaml` is rendered by `render_workflow`:
+
+| Field | Value |
+|-------|-------|
+| `on` | `repository_dispatch`, type `nebuko-run` |
+| `owner-guard` job | asserts `client_payload.actor == github.repository_owner` (guard 4) |
+| `with:` `prompt_body` | `client_payload.prompt_body` |
+| `with:` `org_repo` | `client_payload.org_repo` |
+| `with:` `issue_number` | `client_payload.issue_number` |
+| `with:` `agent_config_path` | `agent-config-anthropic.yaml` |
+| `secrets:` `CLAUDE_CODE_OAUTH_TOKEN` | the user repo's own secret |
+| `secrets:` `GH_PAT` | `client_payload.gh_token` (org-repo token, see below) |
+
+- **Pin.** `uses:` must name a full 40-character commit SHA, because `uses:`
+  cannot track a branch. `render_workflow` rejects anything else.
+- **Bump.** There is no bump command. Resolve the new SHA with
+  `gh api repos/nebuko/nebuko/commits/main --jq .sha`, edit the `@<sha>` in
+  `nebuko-run.yaml`, and commit. Re-running `init` will not help, because it
+  refuses an existing repo.
+
+### Manual dispatch
+
+```bash
+gh api repos/<login>/nebuko-claude-code/dispatches \
+  -f event_type=nebuko-run \
+  -f 'client_payload[actor]=<login>' \
+  -f 'client_payload[org_repo]=<org>/<repo>' \
+  -F "client_payload[issue_number]=<N>" \
+  -f 'client_payload[prompt_body]=/nebuko run workflow' \
+  -f "client_payload[gh_token]=<org-repo token>"
+```
+
+- The agent reads the target issue's title and body; the prompt is only the command.
+- `actor` must equal the repo owner, or guard 4 fails the run.
+- Optional fields:
+  - `-f 'client_payload[step]=<step>'` runs that step. It needs the
+    `/nebuko run workflow` prompt above.
+  - `-f 'client_payload[agent_config]=agent-config-anthropic.yaml'` runs the step
+    with that agent config.
+  - `-F 'client_payload[single_step]=true'` runs exactly one step and stops. Send it
+    only to turn the loop off: never send the string `"false"`; any non-empty value
+    turns it on.
+- **Warning:** the org-repo token in `gh_token` is visible to the repo owner in
+  the run. Use a short-lived token (see below).
+
+### Org-repo token requirements
+
+Until the bridge mints the token:
+
+- Fine-grained token, resource owner = the org, scoped to the target repo only.
+- Permissions: Issues, Pull requests and Contents, read and write.
+- The org may need to approve the token before it works.
+- Fallback: a classic `repo` PAT. It needs SSO authorization for the org.
+- Use a 1-day expiry and revoke the token after the run.
+- See [adoption.md](./adoption.md) and [nebuko-init.md](./nebuko-init.md) for
+  the general setup; they are not repeated here.
+
+### Troubleshooting
+
+Each row cites the issue or PR that fixed the symptom, or the Lane D runs that showed it when no fix exists yet.
+
+| Symptom | Cause | Fix reference |
+|---------|-------|---------------|
+| `run-task` skipped, run is green | The workflow in the user repo predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426 |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated. Check it with `GH_TOKEN=<token> gh api repos/<org>/<repo>/issues/<N>` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue) |
+| 404 on comments, issue or labels | The token is not scoped to the org repo or lacks Issues permission, or the engine is older than the fixes in #1429 and #1431 (issues #1428, #1430). The log line `[phase:repo] target repo ...` shows which repo the engine uses | #1429, #1431 |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token`. #1434 (closed) only makes this a distinct error; it does not refresh the token | #1434 (error reporting) |
+| `refusing to push the base branch` | A dispatch run without a feature branch to push to | Open. No fix issue yet (the dispatch-branch issue is not filed). #1432 is a different symptom (a successful analyze reported as failed) and is not a fix for this row |
+| `run refused: rule 'lane-binding' failed (no trusted workflow state ...)`, posted by nebuko[bot], label `nebuko:refused` | The org workflow tried to run or continue a workflow that belongs to a user repo. Expected for any org-side command on such an issue; the refusal is the safety net. One extra such comment right after the first hand-off is a known wake-up of the org workflow | #1443, #1450 (merged); #1459 (open) |
+| skip `dispatch step/agent_config require a /nebuko run workflow prompt` | `step` or `agent_config` was sent with another prompt | #1449 |
+| A PR is not opened although commits were pushed to the feature branch | Observed once in a dispatch run; cause not identified yet. Open the PR by hand: `gh pr create --head <branch> --base main --body "Closes #<N>"` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue yet) |
+
+### Known limits
+
+Current behaviour and the follow-ups still open:
+
+- The loop runs in one job on the user repo until a gate, a hold, a failure, a
+  human comment, the step cap (6) or the wall-clock budget stops it (see
+  "Single-job user-repo runs"). After a stop the owner dispatches
+  `step=<next step>`. Bot-started continuations are not routed to the user repo yet: the
+  design issue #1433 is closed, but the routing is still open.
+- Comment commands on the org issue never use the user's credential. The org
+  workflow cannot run a user-repo workflow, so `/nebuko approve gate` and similar
+  comments are refused with `lane-binding` and the approval is NOT recorded. Until a
+  dispatch can approve a gate, the owner dispatches `step=<next step>` directly. That
+  entry does not check the gate lock (see "Manual dispatch"). The org-side notice in
+  `src/nebuko/engine/step_driver.py` (`_CONTINUE_TODAY`) still says to run
+  `/nebuko approve gate` on the org issue; that is a code fix, not a docs fix.
+- The bridge is not deployed (token-broker#53).
+- Per-run Actions minutes apply to the user's repo. The 6 h job cap applies to
+  the single job, so the wall-clock budget (`WORKFLOW_WALL_CLOCK_S`, default 3000 s)
+  is what bounds a loop run.
+
+Update this section after the dispatch-branch issue (not yet filed) and the
+continuation routing land. #1388's done-when criterion that every troubleshooting row
+links to its run stays open until per-run URLs are recorded.
+
+### Credential rules
+
+- The secret lives only in the user's repo. Never store it in a shared repo.
+- Guard 3 (`nebuko-workflow.yaml`): schedule, actor-less and bot-started runs
+  are refused. Bot continuations are allowed only under the rule from #1427.
+- Guard 4 (`owner-guard` job): asserts `client_payload.actor` equals the
+  repository owner before any job that can reach the token.
+- Never use the shared org token for a user-started workflow. The repo owner
+  can read it during the run.
 
 ## Per-role switch
 
