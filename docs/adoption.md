@@ -197,7 +197,7 @@ provider your config uses.
 COLLABORATOR association start a run; anyone else's comments are ignored at
 the caller workflow level. Comments authored by `nebuko[bot]` pass the caller
 gate, but the reusable workflow only runs them when they carry a continuation
-marker (`<!-- workflow-continue -->`, `<!-- bot-trigger:` or `"function_call"`),
+marker (`<!-- workflow-continue -->`, `<!-- bot-trigger:` or `"function_call"`; for human authors `"function_call"` does not count when the comment starts with `<!-- bot-workflow-terminal -->`),
 and never when they carry the terminal marker (anti-loop guard). `issues` events (issue-body `@@nebuko` mentions, and
 the cleanup that runs when an issue is closed) are gated by the reusable
 workflow as before.

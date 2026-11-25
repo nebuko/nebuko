@@ -1,0 +1,14 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index bbe0558..d7699c7 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -231,7 +231,8 @@ jobs:
+                   contains(github.event.comment.body, '@@genius') ||
+                   contains(github.event.comment.body, '@@ctx') ||
+                   contains(github.event.comment.body, '/nebuko'))) ||
+-                contains(github.event.comment.body, '"function_call"') ||
++                (!startsWith(github.event.comment.body, '<!-- bot-workflow-terminal -->') &&
++                 contains(github.event.comment.body, '"function_call"')) ||
+                 startsWith(github.event.comment.body, '<!-- bot-workflow-terminal --><!-- workflow-continue -->') ||
+                 contains(github.event.comment.body, '<!-- bot-trigger:'))) ||
+               (github.event.comment.user.type == 'Bot' &&
