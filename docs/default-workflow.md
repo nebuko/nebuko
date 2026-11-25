@@ -15,7 +15,7 @@ This workflow acts as a **multi-agent router**. It listens to GitHub events (`is
 | Trigger | Condition |
 |---------|-----------|
 | `issues` | Issue opened, edited, assigned, or closed - body must contain an agent mention (`@@architect`, `@@dev`, etc.) or `/nebuko`. Bot-tagged bodies (starting with `<!-- bot-agent-` or `<!-- bot-workflow-terminal -->`) never fire on `@@mentions` |
-| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON), `<!-- workflow-continue -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
+| `issue_comment` | New comment - body must contain an agent mention, or a machine trigger token: `"function_call"` (in the posted state JSON; for human authors, not when the comment starts with the bot-workflow-terminal marker), `<!-- workflow-continue -->`, `<!-- bot-trigger: agent -->`. `@@mention` firing is suppressed when the comment starts with a bot marker |
 | `workflow_call` | Reusable workflow invoked by another workflow; uses `prompt_body` input |
 
 ### Agent Roles
