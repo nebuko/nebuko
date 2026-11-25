@@ -216,13 +216,13 @@ Each row cites the issue or PR that fixed the symptom, or the Lane D runs that s
 | Symptom | Cause | Fix reference |
 |---------|-------|---------------|
 | `run-task` skipped, run is green | The workflow in the user repo predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426 |
-| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated. Check it with `GH_TOKEN=<token> gh api repos/<org>/<repo>/issues/<N>` | Lane D runs 44302540158–44332921102 (exact run not recorded; no fix issue) |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated. Check it with `GH_TOKEN=<token> gh api repos/<org>/<repo>/issues/<N>` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue) |
 | 404 on comments, issue or labels | The token is not scoped to the org repo or lacks Issues permission, or the engine is older than the fixes in #1429 and #1431 (issues #1428, #1430). The log line `[phase:repo] target repo ...` shows which repo the engine uses | #1429, #1431 |
-| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token` | #1434 |
-| `refusing to push the base branch` | A dispatch run without a feature branch. The engine now scaffolds the branch for a dispatch with an issue number | #1432 |
-| `run refused: rule 'lane-binding' failed (no trusted workflow state ...)`, posted by nebuko[bot], label `nebuko:refused` | The org workflow tried to run or continue a workflow that belongs to a user repo. Expected for any org-side command on such an issue; the refusal is the safety net. One extra such comment right after the first hand-off is a known wake-up of the org workflow | #1443, #1450, #1459 |
+| `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token`. #1434 (closed) only makes this a distinct error; it does not refresh the token | #1434 (error reporting) |
+| `refusing to push the base branch` | A dispatch run without a feature branch to push to | Open. No fix issue yet (the dispatch-branch issue is not filed). #1432 is a different symptom (a successful analyze reported as failed) and is not a fix for this row |
+| `run refused: rule 'lane-binding' failed (no trusted workflow state ...)`, posted by nebuko[bot], label `nebuko:refused` | The org workflow tried to run or continue a workflow that belongs to a user repo. Expected for any org-side command on such an issue; the refusal is the safety net. One extra such comment right after the first hand-off is a known wake-up of the org workflow | #1443, #1450 (merged); #1459 (open) |
 | skip `dispatch step/agent_config require a /nebuko run workflow prompt` | `step` or `agent_config` was sent with another prompt | #1449 |
-| A PR is not opened although commits were pushed to the feature branch | Observed once in a dispatch run; cause not identified yet. Open the PR by hand: `gh pr create --head <branch> --base main --body "Closes #<N>"` | Lane D runs 44302540158–44332921102 (exact run not recorded; no fix issue yet) |
+| A PR is not opened although commits were pushed to the feature branch | Observed once in a dispatch run; cause not identified yet. Open the PR by hand: `gh pr create --head <branch> --base main --body "Closes #<N>"` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue yet) |
 
 ### Known limits
 
@@ -231,8 +231,8 @@ Current behaviour and the follow-ups still open:
 - The loop runs in one job on the user repo until a gate, a hold, a failure, a
   human comment, the step cap (6) or the wall-clock budget stops it (see
   "Single-job user-repo runs"). After a stop the owner dispatches
-  `step=<next step>`. Bot-started continuations are not routed to the user repo yet
-  (#1433).
+  `step=<next step>`. Bot-started continuations are not routed to the user repo yet: the
+  design issue #1433 is closed, but the routing is still open.
 - Comment commands on the org issue never use the user's credential. The org
   workflow cannot run a user-repo workflow, so `/nebuko approve gate` and similar
   comments are refused with `lane-binding` and the approval is NOT recorded. Until a
@@ -245,7 +245,9 @@ Current behaviour and the follow-ups still open:
   the single job, so the wall-clock budget (`WORKFLOW_WALL_CLOCK_S`, default 3000 s)
   is what bounds a loop run.
 
-Update this section after the dispatch-branch issue (not yet filed) and #1433 land.
+Update this section after the dispatch-branch issue (not yet filed) and the
+continuation routing land. #1388's done-when criterion that every troubleshooting row
+links to its run stays open until per-run URLs are recorded.
 
 ### Credential rules
 
