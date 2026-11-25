@@ -2255,13 +2255,31 @@ class Engine:
         the hold.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n{self._human_ping()}{reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}{self._branch_publish_note()}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
         except Exception as exc:  # noqa: BLE001 - the notice is best-effort
             log.warning("[phase:guards] gate hold notice failed: %s", exc)
         return notice
+
+    def _branch_publish_note(self) -> str:
+        """Tell the thread how to open the PR when the branch has work but none (#1468).
+
+        Appended to the terminal and gate-hold notices as a safety net for an
+        ``ensure_pr`` that did not open the PR. ``""`` when there is no branch,
+        no work ahead of base, or an open PR already exists.
+        """
+        scaffold = self._scaffold_state.get("result")
+        branch = (
+            scaffold.branch
+            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
+            else ""
+        )
+        if not branch:
+            return ""
+        note = pr_finalize.branch_publish_note(branch)
+        return f"\n\n{note}" if note else ""
 
     # @stub-protected
     def _post_terminal_notice(self, reason: str) -> str:
@@ -2275,7 +2293,7 @@ class Engine:
         a failed post must not mask the terminal outcome.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n{self._human_ping()}{reason}"
+        body = f"{marker}\n{self._human_ping()}{reason}{self._branch_publish_note()}"
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)

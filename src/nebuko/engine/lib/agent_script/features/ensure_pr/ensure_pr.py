@@ -693,18 +693,6 @@ def _find_pr_for_branch(
     return url or None
 
 
-def _latest_pr_state(branch: str, *, transport: Optional[GitHubTransport] = None) -> str:
-    """State (OPEN, CLOSED, MERGED) of the newest PR for the branch, or ""."""
-    out = _run_gh(
-        [
-            "pr", "list", "--head", branch, "--state", "all",
-            "--json", "state", "--jq", '.[0].state // ""',
-        ],
-        transport=transport,
-    )
-    return out.strip().strip('"')
-
-
 def _is_ancestor(ancestor: str, descendant: str) -> bool:
     """``git merge-base --is-ancestor``; works on the grafted tips of a shallow CI clone."""
     try:
@@ -741,10 +729,29 @@ def _publish_gap(
         return f"its content is already in {patch_base}"
     if not pushed and not _run_git(["ls-remote", "--heads", remote, branch]):
         return f"branch {branch!r} is not on {remote}"
-    # A merged PR means this work landed; a closed one still needs a new PR.
-    if _latest_pr_state(branch, transport=transport) == "MERGED":
-        return "the PR for this branch is already merged"
     return None
+
+
+def unpublished_branch_note(branch: str, *, remote: str = "origin") -> str:
+    """A notice line when ``branch`` is on ``remote`` with commits ahead of base and no open PR.
+
+    Returns ``""`` when there is nothing to say. Best-effort: a failed check is
+    logged and reads as nothing to say, since it must not mask the run's notice.
+    """
+    try:
+        base = _default_base()
+        patch_base = _resolve_base_ref(base, remote)
+        if _find_pr_for_branch(branch) or _publish_gap(
+            branch, patch_base, remote, pushed=False
+        ):
+            return ""
+    except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+        logger.warning(f"ensure_pr: could not check the PR for '{branch}': {exc}")
+        return ""
+    return (
+        f"Branch `{branch}` has commits not in `{base}` and no open PR. "
+        f"Open it with `gh pr create --head {branch} --base {base}`."
+    )
 
 
 def _dirty_paths() -> tuple[str, ...]:

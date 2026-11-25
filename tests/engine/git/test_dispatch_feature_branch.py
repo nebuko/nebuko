@@ -190,7 +190,7 @@ class TestBranchAlreadyPushed:
         assert "already in origin/main" in result.message
         assert _pr_creates(gh_calls) == []
 
-    def test_a_merged_pr_for_the_branch_blocks_a_new_pr(
+    def test_a_merged_pr_does_not_block_a_pr_for_follow_up_commits(
         self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
     ):
         _stub_gh(monkeypatch, gh_calls, latest_state="MERGED")
@@ -198,10 +198,8 @@ class TestBranchAlreadyPushed:
 
         result = ep.ensure_pr(issue_title="t", issue_number=1388)
 
-        assert not result.error
-        assert not result.pr_url
-        assert "already merged" in result.message
-        assert _pr_creates(gh_calls) == []
+        assert result.pr_url == PR_URL
+        assert len(_pr_creates(gh_calls)) == 1
 
     def test_a_closed_pr_does_not_block_a_new_pr_for_new_commits(
         self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
@@ -217,13 +215,12 @@ class TestBranchAlreadyPushed:
     def test_an_uninspectable_branch_is_reported_not_read_as_nothing_to_publish(
         self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]], caplog
     ):
-        def _gh_fails_on_state(args, **kw):
-            gh_calls.append(list(args))
-            if "--state" in args:
-                raise RuntimeError("gh pr list failed (500): boom")
-            return "main" if args[:1] == ["api"] else ""
+        _stub_gh(monkeypatch, gh_calls)
 
-        monkeypatch.setattr(ep, "_run_gh", _gh_fails_on_state)
+        def _inspection_fails(*args, **kw):
+            raise RuntimeError("git diff failed (128): boom")
+
+        monkeypatch.setattr(ep, "_publish_gap", _inspection_fails)
         _commit_and_push_branch(dispatch_repo)
 
         result = ep.ensure_pr(issue_title="t", issue_number=1388)
@@ -233,6 +230,47 @@ class TestBranchAlreadyPushed:
         assert "boom" in result.message
         assert _pr_creates(gh_calls) == []
         assert "could not check whether" in caplog.text
+
+
+class TestUnpublishedBranchNote:
+    """The notice safety net names the missing PR; it stays silent otherwise."""
+
+    def test_pushed_branch_ahead_with_no_pr_gets_the_open_command(
+        self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
+    ):
+        _stub_gh(monkeypatch, gh_calls)
+        _commit_and_push_branch(dispatch_repo)
+
+        note = ep.unpublished_branch_note(BRANCH)
+
+        assert f"gh pr create --head {BRANCH} --base main" in note
+        assert _pr_creates(gh_calls) == []
+
+    def test_open_pr_gets_no_note(
+        self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
+    ):
+        _stub_gh(monkeypatch, gh_calls, open_url=PR_URL)
+        _commit_and_push_branch(dispatch_repo)
+
+        assert ep.unpublished_branch_note(BRANCH) == ""
+
+    def test_branch_without_commits_ahead_gets_no_note(
+        self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
+    ):
+        _stub_gh(monkeypatch, gh_calls)
+        _git(dispatch_repo, "push", "-q", "-u", "origin", BRANCH)
+
+        assert ep.unpublished_branch_note(BRANCH) == ""
+
+    def test_unpushed_branch_gets_no_note(
+        self, dispatch_repo: Path, monkeypatch, gh_calls: list[list[str]]
+    ):
+        _stub_gh(monkeypatch, gh_calls)
+        (dispatch_repo / "doc.md").write_text("work\n", encoding="utf-8")
+        _git(dispatch_repo, "add", "doc.md")
+        _git(dispatch_repo, "commit", "-q", "-m", "local only")
+
+        assert ep.unpublished_branch_note(BRANCH) == ""
 
 
 def test_a_shallow_clone_of_the_pushed_branch_still_opens_the_pr(
