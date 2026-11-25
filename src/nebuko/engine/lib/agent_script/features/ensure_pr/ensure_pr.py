@@ -693,6 +693,67 @@ def _find_pr_for_branch(
     return url or None
 
 
+def _is_ancestor(ancestor: str, descendant: str) -> bool:
+    """``git merge-base --is-ancestor``; works on the grafted tips of a shallow CI clone."""
+    try:
+        _run_git(["merge-base", "--is-ancestor", ancestor, descendant])
+    except RuntimeError as exc:
+        if " failed (1)" in str(exc):
+            return False
+        raise
+    return True
+
+
+_NOT_AHEAD = "no commits ahead of base"
+
+
+def _publish_gap(
+    branch: str,
+    patch_base: str,
+    remote: str,
+    *,
+    pushed: bool,
+    transport: Optional[GitHubTransport] = None,
+) -> Optional[str]:
+    """Decide whether ``branch`` needs a PR: None when it does, else the reason it does not.
+
+    Judged from the commits and the tree, not from whether anything is left to
+    push: an agent may have pushed the branch itself. Raises ``RuntimeError``
+    when a check cannot run; that is never read as "nothing to publish".
+    """
+    if _is_ancestor("HEAD", patch_base):
+        return _NOT_AHEAD
+    # A squash-merged branch keeps its commits "ahead" by count, but its tree
+    # is then the base's tree: the content is already in the base.
+    if not _run_git(["diff", "--name-only", patch_base, "HEAD"]):
+        return f"its content is already in {patch_base}"
+    if not pushed and not _run_git(["ls-remote", "--heads", remote, branch]):
+        return f"branch {branch!r} is not on {remote}"
+    return None
+
+
+def unpublished_branch_note(branch: str, *, remote: str = "origin") -> str:
+    """A notice line when ``branch`` is on ``remote`` with commits ahead of base and no open PR.
+
+    Returns ``""`` when there is nothing to say. Best-effort: a failed check is
+    logged and reads as nothing to say, since it must not mask the run's notice.
+    """
+    try:
+        base = _default_base()
+        patch_base = _resolve_base_ref(base, remote)
+        if _find_pr_for_branch(branch) or _publish_gap(
+            branch, patch_base, remote, pushed=False
+        ):
+            return ""
+    except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+        logger.warning(f"ensure_pr: could not check the PR for '{branch}': {exc}")
+        return ""
+    return (
+        f"Branch `{branch}` has commits not in `{base}` and no open PR. "
+        f"Open it with `gh pr create --head {branch} --base {base}`."
+    )
+
+
 def _dirty_paths() -> tuple[str, ...]:
     """Working-tree paths git reports, minus the engine-owned ones."""
     paths = []
@@ -1156,13 +1217,28 @@ def _ensure_pr_impl(
 
     existing = _find_pr_for_branch(branch, transport=transport)
     pr_url = existing or ""
+    # Whether a PR is needed is decided apart from the push: a branch the agent
+    # already pushed, with commits ahead of base, still gets its PR.
+    gap: Optional[str] = None
+    inspect_error = ""
+    if not pr_url:
+        try:
+            gap = _publish_gap(
+                branch, patch_base, remote, pushed=pushed, transport=transport
+            )
+        except RuntimeError as exc:
+            inspect_error = str(exc)
+            logger.warning(
+                f"ensure_pr: could not check whether '{branch}' needs a PR: {exc}"
+            )
+    open_pr = not pr_url and not inspect_error and gap is None
     # The engine's own issue number and repo win; the env is the fallback.
     # Resolved lazily: paths that never link (no PR and nothing to open) must
     # not fail on a missing remote.
     issue_number = issue_number or _issue_number_from_env()
-    if not repo and (pr_url or not no_push):
+    if not repo and (pr_url or open_pr):
         repo = _run_git(["remote", "get-url", remote])
-    if not pr_url and not no_push:
+    if open_pr:
         title = pr_title(issue_number, issue_title) or branch
         # The PR goes to the target repo, not the checkout's remote (a dispatch
         # session's checkout may point at the per-user repo, issue #1432).
@@ -1233,7 +1309,12 @@ def _ensure_pr_impl(
         )
 
 
-    if pr_url:
+    if inspect_error:
+        message = (
+            f"error: could not check whether branch {branch!r} needs a PR, "
+            f"so none was opened: {inspect_error}"
+        )
+    elif pr_url:
         message = "PR opened: " + pr_url
     elif delivery.comment_url or delivery.artifact:
         message = "workflow patch delivered"
@@ -1241,10 +1322,13 @@ def _ensure_pr_impl(
         # Honest terminal state (issue #1180): "workflow patch delivered" here
         # masqueraded as a delivery when nothing was published at all.
         message = "nothing to publish: no plain delta and no PR opened"
+        if gap and gap != _NOT_AHEAD:
+            message += f" ({gap})"
     return EnsurePrResult(
         commit_hash=commit_hash,
         pushed=pushed,
         pr_url=pr_url,
+        error=bool(inspect_error),
         message=message,
         patch_comment_url=delivery.comment_url,
         patch_paths=split.workflow_paths,

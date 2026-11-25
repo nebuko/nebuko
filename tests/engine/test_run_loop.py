@@ -5715,3 +5715,107 @@ class TestRepositoryDispatchSeed:
         assert str(resolved.get("SKIP_AGENT")).lower() == "true"
         assert "unknown agent config" in resolved.get("REASON", "")
         assert "agent-config-anthropic.yaml" in resolved.get("REASON", "")
+
+
+
+# Captured before the autouse fixture stubs ``PrFinalizer.finalize``.
+_REAL_PR_FINALIZE = pr_finalize.PrFinalizer.finalize
+
+
+class TestPrFinalizerEngineEntry:
+    """A comment run and a dispatch run both reach the real ``PrFinalizer`` (#1468).
+
+    The branch was pushed by the agent, with commits ahead of ``main`` and no
+    PR yet: the engine's finalizer must still open the PR.
+    """
+
+    BRANCH = "feature/issue-590-x"
+
+    @pytest.mark.parametrize("trigger_kind", ["comment", "dispatch"])
+    def test_a_branch_the_agent_pushed_gets_its_pr(
+        self, tmp_path, monkeypatch, trigger_kind
+    ):
+        import nebuko.engine.lib.agent_script.features.ensure_pr.ensure_pr as ep
+
+        monkeypatch.setattr(pr_finalize.PrFinalizer, "finalize", _REAL_PR_FINALIZE)
+        root = tmp_path / "repo"
+        root.mkdir()
+        trigger = (
+            Trigger(
+                author="nebuko[bot]",
+                body="",
+                type="repository_dispatch",
+                number=590,
+                org_repo="nebuko/nebuko",
+            )
+            if trigger_kind == "dispatch"
+            else None
+        )
+        # The caller workspace must be the temp repo: the autouse guard treats a
+        # workspace without ``.git`` as benign.
+        engine = _engine_at_root(
+            tmp_path, root, trigger, env={"GITHUB_WORKSPACE": str(root)}
+        )
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+
+        def run(*args):
+            subprocess.run([*git, *args], check=True, capture_output=True)
+
+        (root / "base.txt").write_text("base\n", encoding="utf-8")
+        run("add", "base.txt")
+        run("commit", "-q", "-m", "base")
+        run("push", "-q", "origin", "HEAD:main")
+        run("checkout", "-q", "-b", self.BRANCH)
+        (root / "doc.md").write_text("work\n", encoding="utf-8")
+        run("add", "doc.md")
+        run("commit", "-q", "-m", "agent work")
+        run("push", "-q", "-u", "origin", self.BRANCH)
+
+        calls: list[list[str]] = []
+
+        def _fake_gh(args, **kw):
+            calls.append(list(args))
+            if args[:1] == ["api"]:
+                return "main"
+            if args[:2] == ["pr", "create"]:
+                return "https://github.com/nebuko/nebuko/pull/1500"
+            return ""
+
+        monkeypatch.setattr(ep, "_run_gh", _fake_gh)
+        monkeypatch.setenv("GFA_REPO_ROOT", str(root))
+        monkeypatch.setenv("REPO_NAME", "nebuko/nebuko")
+
+        result = engine._pr_finalize({})
+
+        assert result.ok
+        assert result.pr_url == "https://github.com/nebuko/nebuko/pull/1500", result
+        [create] = [c for c in calls if c[:2] == ["pr", "create"]]
+        assert create[create.index("--head") + 1] == self.BRANCH
+
+
+class TestUnpublishedBranchNotice:
+    """The terminal and gate-hold notices name the PR the branch still needs (#1468)."""
+
+    def test_terminal_notice_carries_the_open_command_when_no_pr_exists(
+        self, tmp_path, monkeypatch
+    ):
+        from nebuko.engine.lib.git import branch_scaffold
+
+        root = tmp_path / "repo"
+        root.mkdir()
+        engine = _engine_at_root(tmp_path, root)
+        engine._scaffold_state["result"] = branch_scaffold.ScaffoldResult(
+            ok=True, branch="feature/issue-590-x"
+        )
+        monkeypatch.setattr(
+            pr_finalize,
+            "branch_publish_note",
+            lambda branch: f"Open it for `{branch}`.",
+        )
+        posted: list[str] = []
+        monkeypatch.setattr(engine.adapter, "post", posted.append)
+
+        engine._post_terminal_notice("the workflow ended")
+
+        assert "the workflow ended" in posted[0]
+        assert "Open it for `feature/issue-590-x`." in posted[0]
