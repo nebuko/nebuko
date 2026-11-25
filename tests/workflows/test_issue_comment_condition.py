@@ -260,10 +260,6 @@ class TestIssueCommentCondition:
     def _triggers(self, condition: str, body: str, **kwargs: Any) -> bool:
         return bool(evaluate(condition, _comment_context(body, **kwargs)))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="needs the human-applied guard: nebuko-task-logs/workflow-patch.diff; remove this marker when applied",
-    )
     def test_marker_led_state_comment_with_function_call_does_not_trigger(self, condition):
         # Case (a): the comment that woke the org run on #1414.
         assert self._triggers(condition, STATE_COMMENT) is False
