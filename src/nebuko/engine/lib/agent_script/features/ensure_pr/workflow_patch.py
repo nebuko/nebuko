@@ -180,6 +180,49 @@ def render_patch_comment(
     )
 
 
+def render_unlanded_patch_comment(
+    *,
+    diff: str,
+    workflow_paths: Sequence[str],
+    base_name: str,
+    max_chars: int = DEFAULT_MAX_COMMENT_CHARS,
+) -> str:
+    """Comment carrying a workflow patch the branch could not commit.
+
+    Used when the committed copy failed: this comment is then the only place
+    the change survives, so the diff text goes in it. A diff over the budget is
+    cut at a line boundary and the cut is stated in the comment.
+    """
+    listed = "\n".join(f"- `{path}`" for path in workflow_paths)
+    header = [
+        "### ⚠️ Workflow change NOT committed — a human must apply it",
+        "",
+        "The branch does not carry these workflow files because the patch could "
+        "not be committed. The patch text below is the only copy:",
+        "",
+        listed,
+        "",
+        f"Save the block as `{PATCH_FILENAME}` and run `{APPLY_COMMAND}` on a "
+        f"clean checkout of `{base_name}`, then commit with a `workflow`-scoped token.",
+        "",
+        "```diff",
+    ]
+    footer = ["```"]
+    note_template = (
+        "> ⚠️ TRUNCATED: the patch is {total} characters and only {kept} fit in "
+        "this comment. The rest is not recoverable from GitHub; ask for the change "
+        "to be re-run."
+    )
+    diff_text = diff.strip("\n")
+    frame = len("\n".join(header + footer)) + len(note_template) + 200
+    budget = max_chars - frame
+    if len(diff_text) > budget:
+        kept = diff_text[:budget].rsplit("\n", 1)[0]
+        note = note_template.format(total=len(diff_text), kept=len(kept))
+        return "\n".join(header + [kept] + footer + ["", note])
+    return "\n".join(header + [diff_text] + footer)
+
+
 # @stub-protected
 def stage_patch_artifact(diff: str) -> str:
     """Write the patch under ``$RUNNER_TEMP`` for the workflow's upload step.

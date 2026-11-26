@@ -108,6 +108,13 @@ add/modify `.github/workflows/*` are rejected by GitHub. The `GH_TOKEN` env var 
 `workflow` scope: clear the global `http.https://github.com/.extraheader` extraheader,
 run `gh auth setup-git`, push, then restore the saved gitconfig.
 
+Agent-made workflow changes do not reach the branch as files. The engine commits them as
+`nebuko-task-logs/workflow-patch.diff` (force-added, since the logs directory may be
+gitignored) and the PR notes that a human must apply it: fetch the branch and run
+`git apply nebuko-task-logs/workflow-patch.diff`. If that commit fails, the PR body and an
+issue comment carry the patch text instead, and the run's notice says the change was not
+committed and a human must apply it from the comment.
+
 ## Github workflow
 Under `.github/workflows/` the `nebuko-workflow.yaml` is build to be use externally.
 So by contention all repo's workflow related file are prefixed with `internal-`.

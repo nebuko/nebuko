@@ -892,7 +892,11 @@ class TestWorkflowPatchPublication(unittest.TestCase):
         self.assertEqual(result.pr_url, "")
         self.assertIn("issuecomment-1", result.patch_comment_url)
         self.assertEqual(result.patch_paths, (_WORKFLOW,))
-        self.assertEqual(result.message, "workflow patch delivered")
+        # The seam has no real checkout, so the patch is not committed and the
+        # message carries the not-committed warning (issue: ignored logs dir).
+        self.assertTrue(
+            result.message.startswith("workflow patch delivered"), result.message
+        )
         # No push and no PR for an all-workflow delta. The empty checkpoint
         # commit is harmless: with no plain delta it is never pushed.
         self.assertEqual([c for c in git.calls if c and c[0] == "push"], [])
@@ -1368,6 +1372,224 @@ class TestRealGitNewWorkflowFileBecomesCommittedPatch(unittest.TestCase):
             ).split()
             self.assertIn("nebuko-task-logs/workflow-patch.diff", pushed)
             self.assertNotIn(workflow, pushed)
+
+
+class TestRealGitIgnoredLogsWorkflowPatch(unittest.TestCase):
+    """AGENTS.md "Pushing CI workflow files" with ``nebuko-task-logs/`` ignored.
+
+    The patch file is force-added; when it still cannot be committed the dev's
+    work is pushed and the patch text is posted where a human can apply it.
+    """
+
+    workflow = ".github/workflows/new-pipeline.yaml"
+    patch_path = "nebuko-task-logs/workflow-patch.diff"
+
+    def _git(self, *args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+
+    def _publish(self, root, *, refuse_patch_commit=False):
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
+
+        remote = os.path.join(root, "origin.git")
+        work = os.path.join(root, "work")
+        os.makedirs(work)
+        self._git("init", "-q", "--bare", "-b", "main", remote, cwd=root)
+        self._git("init", "-q", "-b", "main", work, cwd=root)
+        for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+            self._git("config", key, value, cwd=work)
+        self._git("remote", "add", "origin", remote, cwd=work)
+        os.makedirs(os.path.join(work, "src"))
+        with open(os.path.join(work, "src", "a.py"), "w", encoding="utf-8") as fh:
+            fh.write("a = 1\n")
+        with open(os.path.join(work, ".gitignore"), "w", encoding="utf-8") as fh:
+            fh.write("nebuko-task-logs/\n")
+        self._git("add", "-A", cwd=work)
+        self._git("commit", "-qm", "base", cwd=work)
+        self._git("push", "-q", "-u", "origin", "main", cwd=work)
+        self._git("checkout", "-q", "-b", "feature/issue-1-x", cwd=work)
+
+        with open(os.path.join(work, "src", "b.py"), "w", encoding="utf-8") as fh:
+            fh.write("b = 2\n")
+        os.makedirs(os.path.join(work, ".github", "workflows"))
+        with open(os.path.join(work, self.workflow), "w", encoding="utf-8") as fh:
+            fh.write("on: [push]\njobs: {}\n")
+        if refuse_patch_commit:
+            # A commit that carries the logs directory is refused; the retry
+            # without the patch goes through.
+            hook = os.path.join(work, ".git", "hooks", "pre-commit")
+            with open(hook, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "#!/bin/sh\n"
+                    "if git diff --cached --name-only | grep -q '^nebuko-task-logs/'; then\n"
+                    "  echo refused >&2\n  exit 1\nfi\n"
+                )
+            os.chmod(hook, 0o755)
+
+        calls: list[list[str]] = []
+
+        class _Transport:
+            def call(self, args, *, mutative=False, cwd=None, timeout=None):
+                calls.append(list(args))
+                joined = " ".join(args)
+
+                class _R:
+                    ok = True
+                    status = 200
+                    detail = ""
+                    payload = ""
+
+                if "default_branch" in joined:
+                    _R.payload = "main"
+                elif args[:2] == ["pr", "list"]:
+                    _R.payload = ""
+                elif args[:2] == ["pr", "create"]:
+                    _R.payload = "https://github.com/acme/repo/pull/1"
+                elif "/comments" in joined:
+                    _R.payload = "https://github.com/acme/repo/issues/1#c1"
+                return _R()
+
+        real_git = mod._run_git
+        real_render = mod.render_patch_comment
+
+        def git_here(args, **kwargs):
+            return real_git(args, cwd=work, **kwargs)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(mod, "_run_git", git_here))
+            stack.enter_context(
+                patch.object(mod, "GitHubTransport", lambda *a, **k: _Transport())
+            )
+            stack.enter_context(
+                patch.dict(
+                    os.environ,
+                    {"TARGET_NUMBER": "1", "GITHUB_REPOSITORY": "acme/repo"},
+                    clear=False,
+                )
+            )
+            if refuse_patch_commit:
+                # Oversized delivery: the inline diff is absent, so only the
+                # fallback comment can carry the patch text.
+                stack.enter_context(
+                    patch.object(
+                        mod,
+                        "render_patch_comment",
+                        lambda **kw: real_render(**{**kw, "max_chars": 200}),
+                    )
+                )
+            result = mod.ensure_pr()
+        return result, calls, remote, work
+
+    def _pushed(self, remote):
+        return self._git(
+            "ls-tree", "-r", "--name-only", "feature/issue-1-x", cwd=remote
+        ).split()
+
+    def test_ignored_logs_dir_patch_is_force_added_and_pushed(self):
+        with tempfile.TemporaryDirectory() as root:
+            result, _, remote, _ = self._publish(root)
+
+            self.assertFalse(result.error, result.message)
+            self.assertEqual(result.pr_url, "https://github.com/acme/repo/pull/1")
+            pushed = self._pushed(remote)
+            self.assertIn(self.patch_path, pushed)
+            self.assertIn("src/b.py", pushed)
+            self.assertNotIn(self.workflow, pushed)
+
+    def test_refused_patch_commit_keeps_the_work_and_posts_the_patch_text(self):
+        with tempfile.TemporaryDirectory() as root:
+            result, calls, remote, work = self._publish(
+                root, refuse_patch_commit=True
+            )
+
+            self.assertFalse(result.error, result.message)
+            self.assertIn("WARNING", result.message)
+            pushed = self._pushed(remote)
+            self.assertIn("src/b.py", pushed, "the dev's work must be pushed")
+            self.assertNotIn(self.patch_path, pushed)
+            self.assertNotIn(self.workflow, pushed)
+
+            # The PR body names the missing change and where its text is.
+            create = next(c for c in calls if c[:2] == ["pr", "create"])
+            pr_body = create[create.index("--body") + 1]
+            self.assertIn("NOT committed", pr_body)
+
+            # The patch text is what was posted: it applies to a clean checkout.
+            bodies = [
+                arg[len("body="):]
+                for c in calls
+                if "/comments" in " ".join(c)
+                for arg in c
+                if arg.startswith("body=")
+            ]
+            notices = [b for b in bodies if "NOT committed" in b]
+            self.assertEqual(len(notices), 1)
+            start = notices[0].index("```diff\n") + len("```diff\n")
+            diff = notices[0][start : notices[0].index("\n```", start)] + "\n"
+            self.assertIn("+on: [push]", diff)
+            recovered = os.path.join(root, "recovered.diff")
+            with open(recovered, "w", encoding="utf-8") as fh:
+                fh.write(diff)
+            self._git("apply", recovered, cwd=work)
+            with open(os.path.join(work, self.workflow), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "on: [push]\njobs: {}\n")
+
+    def test_only_the_named_path_is_force_added(self):
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
+
+        with tempfile.TemporaryDirectory() as root:
+            work = os.path.join(root, "work")
+            self._git("init", "-q", "-b", "main", work, cwd=root)
+            for key, value in (("user.name", "t"), ("user.email", "t@e.com")):
+                self._git("config", key, value, cwd=work)
+            with open(os.path.join(work, ".gitignore"), "w", encoding="utf-8") as fh:
+                fh.write("nebuko-task-logs/\nsecret.log\n")
+            self._git("add", "-A", cwd=work)
+            self._git("commit", "-qm", "base", cwd=work)
+            os.makedirs(os.path.join(work, "nebuko-task-logs"))
+            for rel in (self.patch_path, "secret.log", "src/c.py"):
+                os.makedirs(os.path.dirname(os.path.join(work, rel)), exist_ok=True)
+                with open(os.path.join(work, rel), "w", encoding="utf-8") as fh:
+                    fh.write("x\n")
+
+            real_git = mod._run_git
+            with patch.object(
+                mod, "_run_git", lambda args, **kw: real_git(args, cwd=work, **kw)
+            ):
+                with self.assertRaises(RuntimeError):
+                    mod._commit_pending_changes(["secret.log"], "m")
+                mod._commit_pending_changes(
+                    ["src/c.py"], "m", force_paths=[self.patch_path]
+                )
+
+            tracked = self._git("ls-files", cwd=work).split()
+            self.assertIn(self.patch_path, tracked)
+            self.assertIn("src/c.py", tracked)
+            self.assertNotIn("secret.log", tracked)
+
+    def test_unlanded_patch_raises_when_the_comment_is_refused(self):
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr as mod
+
+        with patch.object(mod, "_post_patch_comment", return_value=""):
+            with self.assertRaises(RuntimeError):
+                mod._post_unlanded_patch(
+                    "diff --git a/x b/x\n", [self.workflow], "main"
+                )
+
+    def test_unlanded_comment_truncates_with_a_note(self):
+        from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
+            render_unlanded_patch_comment,
+        )
+
+        body = render_unlanded_patch_comment(
+            diff="+line\n" * 2000,
+            workflow_paths=[self.workflow],
+            base_name="main",
+            max_chars=3000,
+        )
+        self.assertIn("TRUNCATED", body)
+        self.assertLessEqual(len(body), 3000)
 
 
 class TestRealGitMissingLocalBase(unittest.TestCase):
