@@ -13,10 +13,10 @@ from nebuko.engine.models import Trigger
 
 
 def _dispatch_trigger() -> Trigger:
-    # The caller repo (olivier-norture/nebuko-claude-code) is the event's repository.
+    # The caller repo (olivier-norture/nebuko-personal) is the event's repository.
     return normalize_trigger(
         {
-            "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+            "repository": {"full_name": "olivier-norture/nebuko-personal"},
             "client_payload": {
                 "actor": "alice",
                 "org_repo": "nebuko/nebuko",
@@ -29,7 +29,7 @@ def _dispatch_trigger() -> Trigger:
 
 class TestResolveRepo:
     def test_env_wins_over_dispatch_payload_repository(self):
-        env = {"REPO_NAME": "nebuko/nebuko", "GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code"}
+        env = {"REPO_NAME": "nebuko/nebuko", "GITHUB_REPOSITORY": "olivier-norture/nebuko-personal"}
 
         assert resolve_repo(env, _dispatch_trigger()) == "nebuko/nebuko"
 
@@ -111,7 +111,7 @@ class _Client:
 def _adapter_for(client, monkeypatch, env_repo="nebuko/nebuko"):
     from nebuko.adapters.github import GitHubAdapter
 
-    monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/nebuko-claude-code")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "olivier-norture/nebuko-personal")
     monkeypatch.setenv("REPO_NAME", env_repo)
     adapter = GitHubAdapter(client=client)
     adapter._trigger = _dispatch_trigger()
@@ -170,7 +170,7 @@ class TestMainTargetsTheDispatchRepo:
     def test_dispatch_env_targets_the_org_repo_not_the_caller(self, monkeypatch, adapter_kwargs):
         self._run(
             monkeypatch,
-            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-personal", "REPO_NAME": "nebuko/nebuko"},
         )
 
         assert adapter_kwargs["repo"] == "nebuko/nebuko"
@@ -178,7 +178,7 @@ class TestMainTargetsTheDispatchRepo:
     def test_explicit_repo_flag_wins(self, monkeypatch, adapter_kwargs):
         self._run(
             monkeypatch,
-            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-personal", "REPO_NAME": "nebuko/nebuko"},
             argv=("--repo", "someone/else"),
         )
 
@@ -194,7 +194,7 @@ class TestMainTargetsTheDispatchRepo:
 
         self._run(
             monkeypatch,
-            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-claude-code", "REPO_NAME": "nebuko/nebuko"},
+            {"GITHUB_REPOSITORY": "olivier-norture/nebuko-personal", "REPO_NAME": "nebuko/nebuko"},
         )
 
         markers = [r.getMessage() for r in caplog.records if "[phase:repo]" in r.getMessage()]

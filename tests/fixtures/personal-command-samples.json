@@ -1,0 +1,85 @@
+{
+  "_provenance": "Shared classification samples for the --personal lane (issue #1479). Mirror of the broker table; re-sync when the broker table changes. class is 'personal dispatch' (the project side must skip) or 'project run'.",
+  "samples": [
+    {
+      "name": "run with lane flag on its line",
+      "body": "/nebuko run workflow --name default --personal",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "approve gate on personal lane",
+      "body": "/nebuko approve gate --personal",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "reject gate with feedback",
+      "body": "/nebuko reject gate --personal --feedback no",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "resume on personal lane",
+      "body": "/nebuko resume --personal",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "flag on a later line of the comment",
+      "body": "thanks\n/nebuko approve gate --personal",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "CRLF line endings",
+      "body": "/nebuko approve gate --personal\r\nthanks",
+      "class": "personal dispatch"
+    },
+    {
+      "name": "project run with lane flag",
+      "body": "/nebuko run workflow --name default --project",
+      "class": "project run"
+    },
+    {
+      "name": "approve gate on project lane",
+      "body": "/nebuko approve gate --project",
+      "class": "project run"
+    },
+    {
+      "name": "flag in prose",
+      "body": "run this with /nebuko run workflow --personal please",
+      "class": "project run"
+    },
+    {
+      "name": "flag with a value",
+      "body": "/nebuko run workflow --personal=x",
+      "class": "project run"
+    },
+    {
+      "name": "flag before the command",
+      "body": "--personal /nebuko run workflow",
+      "class": "project run"
+    },
+    {
+      "name": "hyphenated command name",
+      "body": "/nebuko-foo --personal",
+      "class": "project run"
+    },
+    {
+      "name": "flag inside a closed fence",
+      "body": "```\n/nebuko approve gate --personal\n```",
+      "class": "project run"
+    },
+    {
+      "name": "flag after an unclosed fence",
+      "body": "```\n/nebuko approve gate --personal",
+      "class": "project run"
+    },
+    {
+      "name": "quoted command",
+      "body": "> /nebuko approve gate --personal",
+      "class": "project run"
+    },
+    {
+      "name": "flag on a non-command line",
+      "body": "approve --personal",
+      "class": "project run"
+    }
+  ]
+}

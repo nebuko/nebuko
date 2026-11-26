@@ -97,12 +97,12 @@ file, select the config for **one run** from the command itself (issue #1389):
 > only turns a human comment into a dispatch to that human's repo.
 >
 > **Lane binding (`lane-binding`).** A workflow started in a user's own
-> `<login>/nebuko-claude-code` repo records `lane: user-repo` and
+> `<login>/nebuko-personal` repo records `lane: user-repo` and
 > `credential_owner: <login>`. A bot continuation is refused with rule
 > `lane-binding` unless it runs in that same lane for the same owner. Refusal
 > messages:
 > - Lane mismatch: `the workflow runs in the user-repo lane; this run's lane is
->   '<lane>'`, with the fix "resume in `<login>/nebuko-claude-code`".
+>   '<lane>'`, with the fix "resume in `<login>/nebuko-personal`".
 > - Untrusted thread: `no trusted workflow state was found on this thread`. This is
 >   not a lane violation. Resume in the owner's repo, or start over with
 >   `/nebuko run workflow`.

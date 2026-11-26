@@ -69,6 +69,8 @@ __all__ = [
     "CommentKind",
     "CommandClass",
     "classify_comment",
+    "is_personal_dispatch",
+    "lane_flag_of",
 ]
 
 
@@ -79,6 +81,15 @@ class WorkflowCommand:
     action: str  # "run" | "resume" | "force-step" | "delete" | "clean" | "update"
     resource: Optional[str]  # "workflow" | "step" | "comments" | "circuit-breaker" | None
     params: Dict[str, str]  # named flags, e.g. {"name": "spec-driven-impl"}
+
+    @property
+    def lane_flag(self) -> Optional[Literal["personal", "project"]]:
+        """The execution lane the command asks for (``--personal`` / ``--project``)."""
+        if self.params.get("personal"):
+            return "personal"
+        if self.params.get("project"):
+            return "project"
+        return None
 
 
 #: Parse status: ``"absent"`` (no command intent), ``"valid"`` (a well-formed
@@ -99,6 +110,7 @@ CommandDetail = Literal[
     "bare_flag_value",
     "invalid_flag_value",
     "missing_required_flag",
+    "lane_conflict",
 ]
 
 
@@ -139,20 +151,26 @@ RESOURCE_BY_ACTION: Dict[str, Optional[str]] = {
 }
 
 FLAGS_BY_ACTION: Dict[str, Set[str]] = {
-    "run": {"name", "step", "config"},
+    "run": {"name", "step", "config", "personal", "project"},
     "force-step": {"name"},
-    "resume": {"feedback"},
+    "resume": {"feedback", "personal", "project"},
     "delete": {"issue", "from"},
     "update": {"value"},
-    "approve": {"feedback"},
-    "reject": {"feedback"},
+    "approve": {"feedback", "personal", "project"},
+    "reject": {"feedback", "personal", "project"},
 }
+
+#: Valueless lane flags (issue #1479). Accepted only where ``FLAGS_BY_ACTION``
+#: lists them; passing both is a ``lane_conflict``.
+_BOOLEAN_FLAGS: Set[str] = {"personal", "project"}
 
 #: Classification outcome for a single issue comment (issues #679/#867).
 #: ``"command_attempt"`` is a malformed ``/nebuko`` invocation: recognized as
 #: an intent, never as a command, and answered with a usage hint by the
 #: resolver without consulting the workflow-continuation cascade.
-CommentKind = Literal["command", "command_attempt", "agent_trigger", "none"]
+CommentKind = Literal[
+    "command", "command_attempt", "personal_dispatch", "agent_trigger", "none"
+]
 
 #: Command class: ``"workflow"`` commands bootstrap the agent pipeline,
 #: ``"local"`` commands run only their deterministic script (issue #679),
@@ -301,6 +319,10 @@ def _parse_flags(
             return None, "unknown_flag"
         if flag in params:
             return None, "duplicate_flag"
+        if flag in _BOOLEAN_FLAGS:
+            params[flag] = "true"
+            i += 1
+            continue
         if flag in _MULTIWORD_FLAGS:
             # Consume everything up to the next "--" token or end of line.
             j = i + 1
@@ -322,6 +344,8 @@ def _parse_flags(
                 return None, "bare_flag_value"
             params[flag] = tokens[i + 1]
             i += 2
+    if "personal" in params and "project" in params:
+        return None, "lane_conflict"
     return params, None
 
 
@@ -478,6 +502,64 @@ def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
     )
 
 
+_FENCE_OPEN_RE = re.compile(r"^(`{3,}|~{3,})")
+
+_COMMAND_LINE_RE = re.compile(rf"^/{re.escape(COMMAND_GRAMMAR.primary)}(?=\s|$)")
+
+
+def _command_candidate_lines(body: str) -> List[str]:
+    """Lines of ``body`` that may carry a ``/nebuko`` command (issue #1479).
+
+    Shared classification rule for the lane flags: lines split on ``\r?\n``;
+    fenced blocks are skipped, and an unclosed fence hides the rest of the
+    body; indented code (four spaces or a tab) is skipped; up to three leading
+    spaces are ignored; ``>`` quotes never start with the command prefix.
+    """
+    lines: List[str] = []
+    fence: Optional[str] = None
+    for raw in re.split(r"\r?\n", body):
+        stripped = raw.lstrip(" ")
+        if fence is not None:
+            closing = stripped.rstrip()
+            if len(closing) >= len(fence) and closing == fence[0] * len(closing):
+                fence = None
+            continue
+        if raw.startswith("\t") or len(raw) - len(stripped) >= 4:
+            continue
+        opening = _FENCE_OPEN_RE.match(stripped)
+        if opening:
+            fence = opening.group(1)
+            continue
+        lines.append(stripped)
+    return lines
+
+
+def _line_has_flag(line: str, flag: str) -> bool:
+    """True when ``line`` is a command line carrying ``--flag`` as a standalone token."""
+    return bool(_COMMAND_LINE_RE.match(line)) and bool(
+        re.search(rf"(?<!\S)--{flag}(?!\S)", line)
+    )
+
+
+def is_personal_dispatch(body: str) -> bool:
+    """True when a command line of ``body`` carries ``--personal`` (issue #1479).
+
+    The project side ignores such comments: the broker dispatches them to the
+    user's personal repo, where the flag is consumed as the lane marker.
+    """
+    return any(_line_has_flag(line, "personal") for line in _command_candidate_lines(body))
+
+
+def lane_flag_of(body: str) -> Optional[Literal["personal", "project"]]:
+    """The lane flag of the first command line of ``body`` that carries one."""
+    for line in _command_candidate_lines(body):
+        if _line_has_flag(line, "personal"):
+            return "personal"
+        if _line_has_flag(line, "project"):
+            return "project"
+    return None
+
+
 # @stub-protected: signature defined by architect — do not modify
 @dataclass(frozen=True)
 class CommentIntent:
@@ -548,7 +630,7 @@ def _attempted_action(body: str) -> Optional[str]:
 
 
 # @stub-protected: signature defined by architect — do not modify
-def classify_comment(body: str) -> CommentIntent:
+def classify_comment(body: str, *, consume_lane_flag: bool = False) -> CommentIntent:
     """Classify an issue comment into command / command-attempt / trigger / none.
 
     A comment is a ``"command"`` only when it is a **well-formed** registered
@@ -567,13 +649,25 @@ def classify_comment(body: str) -> CommentIntent:
     form at the start of the (trimmed) first line, never a substring search,
     so prose that merely mentions "clean comments" is not misclassified.
 
+    A ``--personal`` command line is a ``"personal_dispatch"`` (issue #1479)
+    unless ``consume_lane_flag`` is set: the personal repo's own run consumes
+    the flag as its lane marker and classifies the body normally.
+
     Args:
         body: Raw comment body.
+        consume_lane_flag: True when this run is the personal repo's own run
+            (or a bot body), where the lane flag is not a dispatch request.
 
     Returns:
         A frozen :class:`CommentIntent`.
     """
     parse = parse_command(body)
+    # ``parse_command`` strips the first line, so an indented command the shared
+    # rule skips must still be caught here: a parsed ``--personal`` command is a
+    # dispatch, never a project command.
+    personal_command = parse.command is not None and parse.command.lane_flag == "personal"
+    if not consume_lane_flag and (personal_command or is_personal_dispatch(body)):
+        return CommentIntent(kind="personal_dispatch", command=None, raw=body)
     if (
         parse.status == "valid"
         and parse.command is not None

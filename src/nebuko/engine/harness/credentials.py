@@ -13,8 +13,9 @@ implementation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
+from typing import Literal, Optional
 
 __all__ = [
     "CLAUDE_CODE_BACKEND",
@@ -47,7 +48,7 @@ SUBSCRIPTION_TOKEN_ENVS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 CLAUDE_CODE_MODEL_PREFIX = "claude-code/"
 
 #: ``WORKFLOW_STATE.lane`` of a workflow dispatched into the user's own
-#: ``<login>/nebuko-claude-code`` repo (Lane D). Its continuations must run there.
+#: ``<login>/nebuko-personal`` repo (Lane D). Its continuations must run there.
 USER_REPO_LANE = "user-repo"
 
 #: Lane recorded once a user-repo workflow is re-baselined (the starter moved it
@@ -335,7 +336,7 @@ def authorize_lane_rebaseline(
 def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
     """Refuse a continuation of a user-repo workflow that leaves its user's lane.
 
-    A workflow started in ``<login>/nebuko-claude-code`` bills that user's
+    A workflow started in ``<login>/nebuko-personal`` bills that user's
     subscription for every step. A bot continuation may proceed only in the
     same lane and for the same credential owner; any other lane (the org repo,
     a shared token, an API-key profile) would move the payer silently (ADR 0017).
@@ -356,9 +357,9 @@ def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
             "were not written by this engine's identity (nebuko[bot]), so the user-repo "
             "lane cannot be verified. This is not a lane violation, and it can follow a "
             "token or identity change. To proceed, resume in the owner's "
-            "nebuko-claude-code repo, or start over with /nebuko run workflow",
+            "nebuko-personal repo, or start over with /nebuko run workflow",
         )
-    resume_in = f"{owner}/nebuko-claude-code" if owner else "the user's nebuko-claude-code repo"
+    resume_in = f"{owner}/nebuko-personal" if owner else "the user's nebuko-personal repo"
     return ContinuationDecision(
         False,
         "lane-binding",
@@ -368,3 +369,80 @@ def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
         "starter re-baseline the lane by resuming with a non-subscription --config; "
         "or start over with /nebuko run workflow",
     )
+
+
+@dataclass(frozen=True)
+class LaneDecision:
+    """Outcome of a lane flag on a human comment (issue #1479).
+
+    Attributes:
+        action: ``"allow"`` (continue in the current lane), ``"refuse"`` (a
+            flagless comment on a personal thread), ``"takeover"`` (another
+            person runs on their own credential), ``"move_to_project"`` or
+            ``"switch_to_personal"``.
+        message: Refusal text when ``action == "refuse"``; empty otherwise.
+        notice: Thread notice for an action that changes the lane or owner.
+    """
+
+    action: Literal["allow", "refuse", "takeover", "move_to_project", "switch_to_personal"]
+    message: str = ""
+    notice: Optional[str] = None
+
+
+def decide_lane(
+    previous_lane: Optional[str],
+    previous_owner: Optional[str],
+    flag: Optional[Literal["personal", "project"]],
+    actor: str,
+) -> LaneDecision:
+    """Stickiness and takeover rules for a human comment (issue #1479).
+
+    A run that started personal stays personal: a flagless comment on its
+    thread is refused, whoever wrote it. ``--personal`` by someone else is a
+    takeover; ``--project`` moves the run back. A project run given
+    ``--personal`` switches. Refusal and notice texts avoid the engine's
+    marker literals.
+    """
+    owner = (previous_owner or "").strip()
+    if previous_lane != USER_REPO_LANE:
+        if flag == "personal":
+            return LaneDecision(
+                "switch_to_personal",
+                notice=f"lane switched to the personal credential of {actor}",
+            )
+        return LaneDecision("allow")
+    if flag == "project":
+        return LaneDecision("move_to_project", notice="lane moved back to the project")
+    if flag == "personal":
+        if actor == owner:
+            return LaneDecision("allow")
+        return LaneDecision(
+            "takeover",
+            notice=f"credential owner changed from {owner or 'unknown'} to {actor}",
+        )
+    return LaneDecision(
+        "refuse",
+        message=(
+            f"this run is on the personal lane of {owner or 'its credential owner'}, "
+            "and the comment has no lane flag. Add --personal to continue on that "
+            "credential (or on your own, as a takeover), or --project to move the run "
+            "to the project lane."
+        ),
+    )
+
+
+def check_personal_secrets(
+    config_name: str, required_envs: list[str], env: Mapping[str, str]
+) -> Optional[str]:
+    """The stop message when a personal config needs a secret the lane lacks.
+
+    A personal run never receives the project's secrets, so only the personal
+    environment is consulted. Returns ``None`` when every name is set.
+    """
+    for name in required_envs:
+        if not (env.get(name) or "").strip():
+            return (
+                f"config {config_name} needs secret {name}, not available in the personal lane"
+            )
+    return None
+

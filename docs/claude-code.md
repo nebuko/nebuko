@@ -63,7 +63,7 @@ runs:
 nebuko init claude-code-repo               # --pin-ref <ref> (default: main)
 ```
 
-It creates a private `<your-login>/nebuko-claude-code` repository, asks for
+It creates a private `<your-login>/nebuko-personal` repository, asks for
 your `claude setup-token` value and stores it only as that repo's
 `CLAUDE_CODE_OAUTH_TOKEN` secret (piped to `gh secret set`; Nebuko never stores
 or logs it), writes a thin workflow pinned to the reusable workflow's commit
@@ -129,7 +129,7 @@ turns it off.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Bot continuation refused with `lane-binding`: "runs in the user-repo lane" | The workflow started in `<login>/nebuko-claude-code`, and this run is in another lane | Resume in `<login>/nebuko-claude-code` |
+| Bot continuation refused with `lane-binding`: "runs in the user-repo lane" | The workflow started in `<login>/nebuko-personal`, and this run is in another lane | Resume in `<login>/nebuko-personal` |
 | Refused with `lane-binding`: "no trusted workflow state" | The thread's state comments are not from `nebuko[bot]`, or the hand-off is undecodable | Resume in the owner's repo, or start over with `/nebuko run workflow` |
 | Fresh `/nebuko run workflow` still refused on a later step | Not expected: a fresh run re-baselines the lane to shared | Report it; it is a regression |
 | State shows `lane: user-repo` after a re-baseline | `lane_changed_from` / `lane_changed_by` record the move | Expected: the starter moved the lane on purpose |
@@ -145,7 +145,7 @@ in #1388 and #1099). Until the bridge is deployed, every run is started by hand.
   where `gh` is logged in as the repo owner.
 - The token comes from the `CLAUDE_CODE_OAUTH_TOKEN` env var if set, otherwise
   from a hidden prompt. Produce it with `claude setup-token`.
-- The command refuses if `<login>/nebuko-claude-code` already exists.
+- The command refuses if `<login>/nebuko-personal` already exists.
 - Install the GitHub App on that repo only:
   <https://github.com/apps/nebuko/installations/new>. This is needed for the
   bridge, **not** for the manual dispatch below.
@@ -175,7 +175,7 @@ in #1388 and #1099). Until the bridge is deployed, every run is started by hand.
 ### Manual dispatch
 
 ```bash
-gh api repos/<login>/nebuko-claude-code/dispatches \
+gh api repos/<login>/nebuko-personal/dispatches \
   -f event_type=nebuko-run \
   -f 'client_payload[actor]=<login>' \
   -f 'client_payload[org_repo]=<org>/<repo>' \
@@ -216,13 +216,13 @@ Each row cites the issue or PR that fixed the symptom, or the Lane D runs that s
 | Symptom | Cause | Fix reference |
 |---------|-------|---------------|
 | `run-task` skipped, run is green | The workflow in the user repo predates #1426, or the event is not `repository_dispatch` `nebuko-run` | #1426 |
-| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated. Check it with `GH_TOKEN=<token> gh api repos/<org>/<repo>/issues/<N>` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue) |
+| `Bad credentials` at checkout | `gh_token` is invalid, expired or truncated. Check it with `GH_TOKEN=<token> gh api repos/<org>/<repo>/issues/<N>` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-personal (per-run URLs not recorded; no fix issue) |
 | 404 on comments, issue or labels | The token is not scoped to the org repo or lacks Issues permission, or the engine is older than the fixes in #1429 and #1431 (issues #1428, #1430). The log line `[phase:repo] target repo ...` shows which repo the engine uses | #1429, #1431 |
 | `Failed to authenticate ... 401 OAuth access token is invalid` | `CLAUDE_CODE_OAUTH_TOKEN` expired or revoked; rotate it with `claude setup-token`. #1434 (closed) only makes this a distinct error; it does not refresh the token | #1434 (error reporting) |
 | `refusing to push the base branch` | A dispatch run without a feature branch to push to | Open. No fix issue yet (the dispatch-branch issue is not filed). #1432 is a different symptom (a successful analyze reported as failed) and is not a fix for this row |
 | `run refused: rule 'lane-binding' failed (no trusted workflow state ...)`, posted by nebuko[bot], label `nebuko:refused` | The org workflow tried to run or continue a workflow that belongs to a user repo. Expected for any org-side command on such an issue; the refusal is the safety net. One extra such comment right after the first hand-off is a known wake-up of the org workflow | #1443, #1450 (merged); #1459 (open) |
 | skip `dispatch step/agent_config require a /nebuko run workflow prompt` | `step` or `agent_config` was sent with another prompt | #1449 |
-| A PR is not opened although commits were pushed to the feature branch | Observed once in a dispatch run; cause not identified yet. Open the PR by hand: `gh pr create --head <branch> --base main --body "Closes #<N>"` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-claude-code (per-run URLs not recorded; no fix issue yet) |
+| A PR is not opened although commits were pushed to the feature branch | Observed once in a dispatch run; cause not identified yet. Open the PR by hand: `gh pr create --head <branch> --base main --body "Closes #<N>"` | Open. Lane D runs 44302540158–44332921102 on olivier-norture/nebuko-personal (per-run URLs not recorded; no fix issue yet) |
 
 ### Known limits
 
@@ -368,3 +368,21 @@ The workflow refuses these combinations with an error:
 
 Credentials reach steps through `env`, never through `with:` inputs (ADR-0008).
 A caller-provided `GH_PAT` is used directly and skips the OIDC token broker.
+
+## Lane flags and personal config (issue #1479)
+
+- Add `--personal` to a `/nebuko run|resume|approve gate|reject gate` comment to
+  run it on your own credential and agent config (`nebuko-personal` repo).
+  `--project` moves a personal run back to the project lane. Both together is
+  refused. A flagless comment on a personal thread is refused; name the lane
+  you want with the flag.
+- Personal runs take their agent config only from `nebuko-personal`
+  (`.nebuko/agents`) or the shipped defaults. The project's `.nebuko/agents` is
+  not used, so a project's dedicated dev prompt does not apply to personal runs.
+- `nebuko-personal/.nebuko/nebuko.yaml` reads only `agent_config`; other keys
+  are ignored with a warning.
+- A config that needs a secret the personal repo does not provide stops the run
+  with the missing secret's name.
+- The project's caller workflow is unchanged: it starts a runner for a `--personal`
+  comment, and the engine skips that comment without a reply.
+
