@@ -3221,10 +3221,12 @@ class Engine:
         """
         paths = NebukoPaths.discover(self._caller_root())
         roots = paths.search_roots(ConfigKind.WORKFLOW)
-        return (
-            str(roots[-1]),
-            str(roots[0]) if len(roots) > 1 else None,
+        # ``NEBUKO_STAGED_WORKFLOWS_DIR`` pins the override layer for ``nebuko run agent``,
+        # whose generated one-step workflow lives in a temp dir (not the caller's workspace).
+        local = os.environ.get("NEBUKO_STAGED_WORKFLOWS_DIR") or (
+            str(roots[0]) if len(roots) > 1 else None
         )
+        return (str(roots[-1]), local)
 
     def _preflight_agent_credentials(self) -> None:
         """Run the credential guard host-side, before the agent acknowledgment (#1099).
@@ -5411,6 +5413,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         from nebuko.engine.init.cli import main as init_main
 
         return init_main(raw_args[1:])
+
+    if raw_args and raw_args[0] == "run":
+        from nebuko.engine.run_cli import main as run_cli_main
+
+        return run_cli_main(raw_args[1:])
 
     from nebuko.adapters import build_adapter
 
