@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,11 +29,6 @@ def _job_steps_running_the_engine() -> list[dict]:
     raise AssertionError("no job runs the orchestration engine")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the personal checkout step ships as nebuko-task-logs/workflow-patch.diff; "
-    "a human applies it and removes this marker (issue #1485, AGENTS.md)",
-)
 def test_reusable_workflow_checks_out_the_personal_repo_read_only():
     checkouts = [
         step
