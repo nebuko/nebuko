@@ -109,10 +109,11 @@ class TestShippedWorkflowsReachReviewThroughEvidence:
     def test_the_review_prompt_trusts_the_evidence_and_refuses_pre_existing_claims(self):
         for workflow in ("default", "dev-review-loop"):
             steps = {s["name"]: s for s in yaml.safe_load((SHIPPED / f"{workflow}.yaml").read_text())["steps"]}
-            prompt = steps["review"]["prompt"]
+            prompt = " ".join(steps["review"]["prompt"].split())
 
             assert "run_tests" in prompt
-            assert "no test_command is configured" in prompt
+            assert "no test_command configured" in prompt
+            assert "no test_command was checked" in prompt
             assert "on the base branch" in prompt
             assert "Do not run the whole test suite" in prompt
 

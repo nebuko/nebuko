@@ -143,8 +143,9 @@ steps:
       claim in `implement`, and check that their `head` matches. A failed
       `run_tests` is a finding. Call a failure pre-existing only with proof: say
       how you know, by a run of that test on the base branch and its result.
-      If `run_tests` reports that no test_command is configured, there is no
-      test evidence: say so, and do not claim the tests passed.
+      If `run_tests` shows no test run ("no test_command configured" or
+      "no test_command was checked"), there is no test evidence: say so, and
+      do not claim the tests passed.
       Do not run the whole test suite yourself when `run_tests` exists.
       Long output is truncated in the middle, so read the branch for what's cut.
     conditions:
