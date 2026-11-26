@@ -6067,6 +6067,9 @@ class TestPersonalConfigFrozenForAgentInvocation:
         )
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
         monkeypatch.setenv("GITHUB_REPOSITORY", "alice/nebuko-personal")
+        # The agent child resolves its role from the environment; pin it so the test
+        # does not depend on what the surrounding process happens to export.
+        monkeypatch.setenv("ROLE_NAME", "architect")
         monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
         return workspace
 
