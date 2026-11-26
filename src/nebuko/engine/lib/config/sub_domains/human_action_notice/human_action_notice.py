@@ -37,21 +37,34 @@ KINDS = frozenset({AWAITING_APPROVAL, AWAITING_INPUT, WORKFLOW_COMPLETE})
 
 # ``{ping}`` is the ``@login`` mention; it is the *only* place a human is
 # notified, and the engine owns it.
+# ``{subject}`` and ``{where}`` come from :func:`_identity_phrase`, so a stop
+# whose workflow or step is unknown never renders an empty ``****`` or empty
+# backticks.
 _LINES = {
     AWAITING_APPROVAL: (
-        "{ping}workflow **{workflow}** is waiting for your approval at step "
-        "`{step}`. Review the output above, then run `/nebuko resume` to "
-        "continue."
+        "{ping}{subject} is waiting for your approval{where}. Review the output "
+        "above, then {action}."
     ),
     AWAITING_INPUT: (
-        "{ping}workflow **{workflow}** is paused at step `{step}` and needs "
-        'your input. Run `/nebuko resume --feedback "<your feedback>"` to continue.'
+        "{ping}{subject} is paused{where} and needs your input. Run "
+        '`/nebuko resume --feedback "<your feedback>"` to continue.'
     ),
     WORKFLOW_COMPLETE: (
-        "{ping}workflow **{workflow}** has finished at step `{step}`. "
-        "Please review the result."
+        "{ping}{subject} has finished{where}. Please review the result."
     ),
 }
+
+_RESUME_ACTION = "run `/nebuko resume` to continue"
+_GATE_ACTION = (
+    "run `/nebuko approve gate` to approve or `/nebuko reject gate` to reject"
+)
+
+
+def _identity_phrase(workflow: str, step: str) -> tuple[str, str]:
+    """``(subject, where)`` naming whichever of workflow and step are known."""
+    subject = f"workflow **{workflow}**" if workflow else "the workflow"
+    where = f" at step `{step}`" if step else ""
+    return subject, where
 
 
 def _ping(login: str) -> str:
@@ -74,6 +87,8 @@ class HumanActionNotice(BaseModel):
         workflow: Active workflow name.
         reason: Raw stop reason (e.g. ``human_gate:plan``); recorded verbatim
             but rendered inert by :meth:`render` (see there for why).
+        gate_pending: True when an engine gate blocks the advance; the approval
+            notice then names the gate commands instead of ``/nebuko resume``.
     """
 
     kind: str
@@ -81,6 +96,7 @@ class HumanActionNotice(BaseModel):
     step: str = ""
     workflow: str = ""
     reason: Optional[str] = None
+    gate_pending: bool = False
 
     # Frozen: a notice describes one already-finished run (functional-first
     # value object); nothing downstream may rewrite its classification.
@@ -143,6 +159,7 @@ class HumanActionNotice(BaseModel):
             step=step or "",
             workflow=workflow or "",
             reason=getattr(turn_outcome, "note", "") or None,
+            gate_pending=gate_pending,
         )
 
     # @stub-protected
@@ -157,14 +174,17 @@ class HumanActionNotice(BaseModel):
         responsibility inversion issue #795 removes. Only ``target`` may be a
         live ping.
         """
+        subject, where = _identity_phrase(self.workflow, self.step)
+        action = _GATE_ACTION if self.gate_pending else _RESUME_ACTION
         body = "\n".join(
             [
                 _BOT_MARKER,
                 _HUMAN_ACTION_MARKER,
                 _LINES[self.kind].format(
                     ping=_ping(self.target),
-                    workflow=self.workflow,
-                    step=self.step,
+                    subject=subject,
+                    where=where,
+                    action=action,
                 ),
             ]
         )

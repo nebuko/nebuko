@@ -3123,16 +3123,41 @@ class Engine:
             skip_kind == "terminal" and route_key in ("approved", "rejected")
         )
 
+        gate_pending = self._gate_pending(state)
+        workflow, step = self._notice_identity(resolved, state, gate_pending)
         return HumanActionNotice.classify(
             turn_outcome,
             terminal=terminal,
             agent_ran=agent_ran,
             target=self._trigger_author(state),
-            step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
-            workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+            step=step,
+            workflow=workflow,
             unresolved=unresolved,
-            gate_pending=self._gate_pending(state),
+            gate_pending=gate_pending,
         )
+
+    def _notice_identity(
+        self,
+        resolved: Any,
+        state: WorkflowState | None,
+        gate_pending: bool,
+    ) -> tuple[str, str]:
+        """Workflow and step for the notice: resolver first, then the state.
+
+        Direct agent calls leave ``resolved`` identity empty while the state
+        still knows it (issue #1465). A pending gate's step is the authoritative
+        pending step, so it wins over the state's current step.
+        """
+        workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")
+        if not workflow and state is not None:
+            workflow = state.workflow or ""
+        step = str(self._get(resolved, "WORKFLOW_STEP") or "")
+        gate = getattr(state, "gate", None) if state is not None else None
+        if gate_pending and gate is not None and gate.step:
+            step = gate.step
+        if not step and state is not None:
+            step = state.step or ""
+        return workflow, step
 
     @staticmethod
     def _gate_pending(state: WorkflowState | None) -> bool:

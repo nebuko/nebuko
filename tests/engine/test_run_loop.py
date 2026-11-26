@@ -1941,6 +1941,58 @@ class TestStepSkipKindIsOnlyForAStop:
         assert kind == "terminal"
 
 
+class TestHumanActionNoticeIdentity:
+    """Issue #1465: a direct agent call leaves the resolver's identity empty.
+
+    The notice must then fall back to the workflow state, and a pending gate's
+    step is the authoritative step to name.
+    """
+
+    def test_direct_call_at_a_gate_renders_workflow_and_step_from_state(self, tmp_path):
+        from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import GateLock, GateStatus
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+
+        engine = _engine(tmp_path)
+        state = WorkflowState(
+            workflow="spec-tdd",
+            step="plan",
+            started_by="olivier-norture",
+            gate=GateLock(step="plan", status=GateStatus.ARMED),
+        )
+
+        notice = engine.human_action_notice(
+            turn_outcome=_outcome("approved"),
+            agent_ran=True,
+            state=state,
+            resolved={},
+        )
+
+        assert notice is not None
+        assert notice.kind == "awaiting_approval"
+        body = notice.render()
+        assert "workflow **spec-tdd** is waiting for your approval at step `plan`" in body
+        assert "/nebuko approve gate" in body
+        assert "/nebuko reject gate" in body
+        assert "****" not in body
+
+    def test_resolver_identity_still_wins_over_state(self, tmp_path):
+        from nebuko.engine.lib.workflow_state.workflow_state import WorkflowState
+
+        engine = _engine(tmp_path)
+        state = WorkflowState(workflow="spec-tdd", step="context", started_by="olivier-norture")
+
+        notice = engine.human_action_notice(
+            turn_outcome=_outcome("hold", hold_kind="awaiting_input"),
+            agent_ran=True,
+            state=state,
+            resolved={"WORKFLOW_NAME": "default", "WORKFLOW_STEP": "plan"},
+        )
+
+        assert notice is not None
+        assert notice.workflow == "default"
+        assert notice.step == "plan"
+
+
 class TestHumanActionNoticeOnAnAdvance:
     """Issue #996: the notice boundary must not fabricate a stop."""
 
