@@ -5,6 +5,10 @@ default_workflow: default
 # out with NEBUKO_MERGE_MAIN=0 (git_diff does, to keep the diff clean).
 merge_main: true
 
+# Shell command that runs this repo's tests; the `run_tests` step of the shipped
+# dev-review-loop workflows runs it. Read from the base branch's committed copy.
+test_command: uv run --extra runtime pytest tests src/nebuko/engine/lib -q --tb=short -rf
+
 features:
   # Pre-push and pre-post secret scanning + redaction (issue #1347).
   secret_scan: false

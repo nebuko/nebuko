@@ -53,6 +53,11 @@ class GhInitClient:
         self.secret_args: list[list[str]] = []
         self.secret_stdin: list[str] = []
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {path: self.existing_files.get(path, False) for path in paths}
 
@@ -354,6 +359,9 @@ def test_run_init_writes_no_local_files(monkeypatch, tmp_path):
 # exception propagates (no silent empty set, no accidental "create" plan)
 def test_run_init_propagates_existing_secrets_failure():
     class RaisingHost:
+        def read_file(self, target, path):
+            return None
+
         def get_existing_files(self, target, paths):
             return {}
 

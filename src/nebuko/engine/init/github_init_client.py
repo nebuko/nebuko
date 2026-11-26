@@ -8,6 +8,7 @@ the client's own ``gh`` CLI: branch upsert, pull request, and secret writes.
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 from typing import Any, Callable
@@ -37,6 +38,21 @@ class GhInitClient:
             )
             found[path] = result.returncode == 0 and bool(result.stdout.strip())
         return found
+
+    # @stub-protected
+    def read_file(self, target: SecretTarget, path: str) -> str | None:
+        """The file's text on the default branch; None only on a 404.
+
+        Any other failure raises: reading an unreadable manifest as absent would
+        let the write replace keys that are there.
+        """
+        endpoint = f"repos/{target.repo}/contents/{path}"
+        result = self._gh(["api", endpoint, "--jq", ".content"], check=False)
+        if result.returncode != 0:
+            if "HTTP 404" in (result.stderr or ""):
+                return None
+            raise SetupError(f"could not read {path}: {(result.stderr or result.stdout).strip()}")
+        return base64.b64decode(result.stdout.strip()).decode("utf-8")
 
     # @stub-protected
     def existing_secrets(self, target: SecretTarget) -> frozenset[str]:

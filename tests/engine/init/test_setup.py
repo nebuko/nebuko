@@ -27,6 +27,11 @@ class FakeSource:
 class RaisingHost:
     """Stand-in client whose secret listing fails (decision 9 / R9)."""
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {}
 
@@ -51,6 +56,11 @@ def _answers() -> InitAnswers:
 
 class ProbeHostBase:
     """Minimal client stand-in; tests override the failing method."""
+
+    def read_file(self, target, path):
+
+        return None
+
 
     def get_existing_files(self, target, paths):
         return {}
@@ -120,6 +130,9 @@ def test_run_init_probed_prompted_and_written_path_is_agent_config_path():
     recorded: dict[str, object] = {}
 
     class ProbeHost:
+        def read_file(self, target, path):
+            return None
+
         def get_existing_files(self, target, paths):
             recorded["probe"] = list(paths)
             return {AGENT_CONFIG_PATH: True}
@@ -155,7 +168,7 @@ def test_run_init_probed_prompted_and_written_path_is_agent_config_path():
     )
     assert recorded["probe"] == [AGENT_CONFIG_PATH, WORKFLOW_PATH]
     assert AGENT_CONFIG_PATH in recorded["confirm"]
-    assert recorded["written"] == [AGENT_CONFIG_PATH, WORKFLOW_PATH]
+    assert recorded["written"] == [AGENT_CONFIG_PATH, WORKFLOW_PATH, ".nebuko/nebuko.yaml"]
     assert f"${{agent_config_path}}" not in recorded["workflow"]
     assert AGENT_CONFIG_PATH in recorded["workflow"]
     assert outcome.code == setup.EXIT_OK
@@ -165,6 +178,9 @@ def test_run_init_probed_prompted_and_written_path_is_agent_config_path():
 # run_init runs, then the error propagates (only 404 ⇒ absent, N13)
 def test_run_init_propagates_non_404_probe_errors():
     class ExplodingProbeHost(ProbeHostBase):
+        def read_file(self, target, path):
+            return None
+
         def get_existing_files(self, target, paths):
             raise RuntimeError("gh api failed: 500")
 
@@ -185,6 +201,9 @@ def test_run_init_writes_no_local_files(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     class RecordingHost:
+        def read_file(self, target, path):
+            return None
+
         def get_existing_files(self, target, paths):
             return {}
 

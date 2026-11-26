@@ -13,6 +13,7 @@ nothing.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -33,33 +34,35 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 def _declared_step(
     workflow: str = "plan-dev-review-cmd",
+    directory: str = ".nebuko/workflows",
 ):
-    path = REPO_ROOT / ".nebuko" / "workflows" / f"{workflow}.yaml"
+    path = REPO_ROOT / directory / f"{workflow}.yaml"
     definition = load_workflow(str(path))
     step = next(s for s in definition.steps if s.name == "git_diff")
     assert step.script is not None
     return step.script
 
 
-def _declared_argv() -> list[str]:
-    script = _declared_step()
+def _declared_argv(
+    workflow: str = "plan-dev-review-cmd", directory: str = ".nebuko/workflows"
+) -> list[str]:
+    script = _declared_step(workflow, directory=directory)
     return [script.command, *(script.args or [])]
 
 
-@pytest.fixture()
-def shallow_checkout(tmp_path: Path) -> Path:
-    """A checkout shaped like CI's: one commit ahead of ``main``, no ``origin/main``.
+def _shallow_checkout(tmp_path: Path, base: str = "main") -> Path:
+    """A checkout shaped like CI's: one commit ahead of ``base``, no ``origin/<base>``.
 
     ``actions/checkout`` fetches only the triggering ref, so the remote-tracking
-    ``origin/main`` a plain ``git diff origin/main HEAD`` needs never exists.
+    ``origin/<base>`` a plain ``git diff origin/<base> HEAD`` needs never exists.
     """
     remote = tmp_path / "remote.git"
     subprocess.run(
-        ["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True
+        ["git", "init", "-q", "--bare", "-b", base, str(remote)], check=True
     )
 
     seed = tmp_path / "seed"
-    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", base, str(seed)], check=True)
     _git(seed, "config", "user.name", "t")
     _git(seed, "config", "user.email", "t@example.com")
     _git(seed, "remote", "add", "origin", remote.as_uri())
@@ -67,18 +70,27 @@ def shallow_checkout(tmp_path: Path) -> Path:
     (seed / "file.txt").write_text("base line\n")
     _git(seed, "add", "-A")
     _git(seed, "commit", "-q", "-m", "base")
-    _git(seed, "push", "-q", "origin", "main")
+    _git(seed, "push", "-q", "origin", base)
 
     (seed / "file.txt").write_text("base line\nahead line\n")
     _git(seed, "commit", "-q", "-am", "ahead")
     _git(seed, "push", "-q", "origin", "HEAD:refs/heads/feature/issue-1-x")
 
     checkout = tmp_path / "checkout"
-    subprocess.run(["git", "init", "-q", "-b", "main", str(checkout)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", base, str(checkout)], check=True)
     _git(checkout, "remote", "add", "origin", remote.as_uri())
     _git(checkout, "fetch", "-q", "--depth=1", "origin", "feature/issue-1-x")
     _git(checkout, "checkout", "-q", "--detach", "FETCH_HEAD")
     return checkout
+
+
+@pytest.fixture()
+def shallow_checkout(tmp_path: Path) -> Path:
+    return _shallow_checkout(tmp_path)
+
+
+def _shipped_argv() -> list[str]:
+    return _declared_argv("dev-review-loop", directory="defaults/workflows")
 
 
 class TestGitDiffStep:
@@ -86,11 +98,48 @@ class TestGitDiffStep:
         assert _declared_step().checkout == "session"
 
     def test_the_step_opts_out_of_the_merge_before_tests(self):
-        """Issue #1344: a merge would pull `main` into the change under review."""
-        for name in ("dev-review-loop", "red-test-review-loop"):
-            step = _declared_step(name)
+        """Issue #1344: a merge would pull the base branch into the change under review."""
+        for name in ("dev-review-loop", "default"):
+            step = _declared_step(name, directory="defaults/workflows")
 
             assert step.env == {"NEBUKO_MERGE_MAIN": "0"}
+
+    def test_the_shipped_diff_is_taken_against_the_configured_base_branch(self):
+        for name in ("dev-review-loop", "default"):
+            script = _declared_step(name, directory="defaults/workflows")
+
+            assert 'origin/"${NEBUKO_BASE_BRANCH:-main}"' not in " ".join(script.args)
+            assert "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD" in " ".join(script.args)
+            assert "origin/main" not in " ".join(script.args)
+
+    def test_a_repo_whose_default_branch_is_not_main_gets_its_own_diff(
+        self, tmp_path: Path
+    ):
+        checkout = _shallow_checkout(tmp_path, base="trunk")
+        env = {"NEBUKO_BASE_BRANCH": "trunk"}
+        assert resolve_evidence_checkout(
+            checkout, env, mode="session", branch="feature/issue-1-x"
+        ).ok
+
+        result = subprocess.run(
+            _shipped_argv(), cwd=checkout, capture_output=True, text=True,
+            env={**os.environ, **env},
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "+ahead line" in result.stdout
+
+    def test_a_hostile_base_branch_is_passed_as_one_inert_ref(self, tmp_path: Path):
+        checkout = _shallow_checkout(tmp_path)
+        marker = checkout / "PWNED"
+        env = {**os.environ, "NEBUKO_BASE_BRANCH": "main; touch PWNED"}
+
+        result = subprocess.run(
+            _shipped_argv(), cwd=checkout, capture_output=True, text=True, env=env
+        )
+
+        assert result.returncode != 0
+        assert not marker.exists()
 
     def test_the_repo_manifest_declares_the_merge_default(self):
         manifest = yaml.safe_load(

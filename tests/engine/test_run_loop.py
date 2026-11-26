@@ -5215,6 +5215,8 @@ class TestTwoStepWorkflowPrompt:
 
     def test_the_review_prompt_is_exactly_the_previous_output_and_the_issue(self, tmp_path):
         engine = self._engine_after_plan_and_implement(tmp_path)
+        # The first review has not run yet: the thread ends at implement.
+        engine._context_state["entries"] = self._entries()[:-2]
         resolved = self._resolved(tmp_path, "review")
         engine._run_resolved["resolved"] = resolved
 
@@ -5224,8 +5226,10 @@ class TestTwoStepWorkflowPrompt:
 
         assert "ROLE PROMPT" in prompt
         assert "STEP REVIEW PROMPT" in prompt
+        # The shipped review declares its inputs (issue #1475); the implement
+        # output is still the only one that reaches the prompt.
         selection = engine._context_selection()
-        assert selection.mode == InjectionMode.IMPLICIT_PREVIOUS
+        assert selection.mode == InjectionMode.DECLARED
         assert [entry.body for entry in selection.entries] == ["IMPLEMENT OUTPUT BODY"]
         assert "IMPLEMENT OUTPUT BODY" in prompt
         assert prompt.count("IMPLEMENT OUTPUT BODY") == 1
@@ -5265,7 +5269,7 @@ class TestTwoStepWorkflowPrompt:
         prompt = engine.build_prompt(resolved, [], step_scope=None)
 
         selection = engine._context_selection()
-        assert selection.mode == InjectionMode.IMPLICIT_PREVIOUS
+        assert selection.mode == InjectionMode.DECLARED
         assert [entry.kind for entry in selection.entries] == [
             ContextKind.AGENT_OUTPUT
         ]

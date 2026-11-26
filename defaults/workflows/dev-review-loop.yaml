@@ -2,18 +2,67 @@
 # Reusable sub-workflow: execute a single plan step with review; loops on rejection.
 # Intended to be referenced per-step from a dynamically generated tmp_impl/workflow.yaml
 # (branch-mounted plan orchestration, issue #462).
+#
+# The engine runs the diff and the repo's tests (`git_diff`, `run_tests`) so
+# review gets evidence the dev agent did not write. The base branch and the test
+# command come from `.nebuko/nebuko.yaml` (`base_branch`, `test_command`).
 
 name: dev-review-loop
-description: "Execute a single plan step with review; loops on rejection"
+description: "Execute a single plan step, then review it with an engine-run diff and test results; loops on rejection"
 
 steps:
   - name: implement
     agent: dev
-    next: review
+    next: git_diff
+
+  # The stat comes first: output over the size cap loses its middle.
+  # `NEBUKO_MERGE_MAIN=0` opts this step out of the merge-before-tests default
+  # (issue #1344): a merge would pull the base branch into the change under review.
+  - name: git_diff
+    script:
+      command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
+      args:
+        - "-c"
+        - >-
+          git --no-pager diff --stat "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD" &&
+          git --no-pager diff "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD"
+    # Default edges: a failed command is evidence for review, not a stop.
+    conditions:
+      - on_result: default
+        next: run_tests
+
+  # Runs `test_command` from the base branch's `.nebuko/nebuko.yaml`. Without one
+  # it reports that and exits 0, so review sees the absence instead of a failure.
+  - name: run_tests
+    script:
+      command: "sh"
+      args:
+        - "-c"
+        - >-
+          case "$(printf '%s' "${NEBUKO_TEST_COMMAND:-}" | tr -d '[:space:]')" in
+          "") echo "no test_command configured in .nebuko/nebuko.yaml"; exit 0 ;;
+          esac;
+          eval "$NEBUKO_TEST_COMMAND"
+      timeout_minutes: 20
+    conditions:
+      - on_result: default
+        next: review
 
   - name: review
     agent: review
+    inputs: [implement, git_diff, run_tests]
     prompt: |
+      `git_diff` and `run_tests` were run by the engine: trust them over any
+      claim in `implement`, and check that their `head` matches. A failed
+      `run_tests` is a finding. Call a failure pre-existing only with proof: say
+      how you know, by a run of that test on the base branch and its result.
+      If `run_tests` reports that no test_command is configured, there is no
+      test evidence: say so, and do not claim the tests passed.
+      Do not run the whole test suite yourself when `run_tests` exists.
+      Long output is truncated in the middle, so read the branch for what's cut.
+
       Engine facts first: if the previous step's context carries an
       `engine_failure` entry, a missing diff or missing commits are an ENGINE
       failure (the run crashed after publishing; the branch was never pushed),

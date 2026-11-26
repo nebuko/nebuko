@@ -1159,11 +1159,11 @@ class TestDefaultWorkflowWithRealFile:
         assert result.kind is RouteKind.ROUTE
         assert (result.task, result.step) == ("dev", "implement")
 
-    def test_implement_resolves_to_review(self):
-        """dispatch.advance from implement step → review agent."""
+    def test_implement_resolves_to_the_evidence_steps(self):
+        """dispatch.advance from implement goes to git_diff (issue #1475)."""
         resolve = _import_resolver()
         result = resolve("default", "implement", str(_real_workflows_dir()))
-        assert (result.task, result.step) == ("review", "review")
+        assert (result.task, result.step) == ("", "git_diff")
 
     def test_review_is_terminal_returns_none(self):
         """Review is the terminal step — returns None."""

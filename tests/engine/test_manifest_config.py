@@ -238,3 +238,75 @@ class TestDefaultWorkflowReader:
         monkeypatch.chdir(tmp_path)
 
         assert _default_workflow_name() == "default"
+
+
+class TestTestCommand:
+    def test_command_and_timeout_are_exported(self):
+        manifest = NebukoManifest.model_validate(
+            {"test_command": "uv run pytest -q", "test_timeout_minutes": 30}
+        )
+
+        assert manifest.env_defaults() == {
+            "NEBUKO_TEST_COMMAND": "uv run pytest -q",
+            "NEBUKO_TEST_TIMEOUT_MINUTES": "30",
+        }
+
+    def test_the_command_is_stripped(self):
+        manifest = NebukoManifest.model_validate({"test_command": "  make test \n"})
+
+        assert manifest.env_defaults()["NEBUKO_TEST_COMMAND"] == "make test"
+
+    @pytest.mark.parametrize("value", ["", "   ", "\n"])
+    def test_a_blank_command_counts_as_absent(self, value):
+        manifest = NebukoManifest.model_validate({"test_command": value})
+
+        assert "NEBUKO_TEST_COMMAND" not in manifest.env_defaults()
+        assert "NEBUKO_TEST_COMMAND" not in manifest.overlay_env({"NEBUKO_TEST_COMMAND": " "})
+
+    def test_an_absent_command_leaves_no_variable(self):
+        assert "NEBUKO_TEST_COMMAND" not in NebukoManifest().overlay_env({})
+
+    def test_an_explicit_env_value_beats_the_manifest(self):
+        manifest = NebukoManifest.model_validate({"test_command": "make test"})
+
+        merged = manifest.overlay_env({"NEBUKO_TEST_COMMAND": "pytest -x"})
+
+        assert merged["NEBUKO_TEST_COMMAND"] == "pytest -x"
+
+    def test_a_timeout_below_one_minute_is_rejected(self):
+        with pytest.raises(ValidationError):
+            NebukoManifest.model_validate({"test_timeout_minutes": 0})
+
+
+class TestBaseBranchValidation:
+    @pytest.mark.parametrize("name", ["main", "trunk", "release/1.x", "feature-2_b.c"])
+    def test_a_git_branch_name_is_accepted(self, name):
+        manifest = NebukoManifest.model_validate({"base_branch": name})
+
+        assert manifest.env_defaults()["NEBUKO_BASE_BRANCH"] == name
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "main; touch PWNED",
+            "main$(touch PWNED)",
+            "main`id`",
+            "a b",
+            "a|b",
+            "../etc",
+            "a..b",
+            "-rf",
+            "/main",
+            "main/",
+            "main.lock",
+            "x" * 201,
+        ],
+    )
+    def test_a_hostile_or_malformed_name_is_rejected_with_a_clear_message(self, name):
+        with pytest.raises(ValidationError, match="not a valid git branch name"):
+            NebukoManifest.model_validate({"base_branch": name})
+
+    def test_a_blank_base_branch_is_absent(self):
+        manifest = NebukoManifest.model_validate({"base_branch": "  "})
+
+        assert "NEBUKO_BASE_BRANCH" not in manifest.env_defaults()
