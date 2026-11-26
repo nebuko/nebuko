@@ -453,6 +453,11 @@ def _build_result(
     # Lane stickiness notice (issue #1479): a takeover, move-back or switch
     # the run's first comment reports to the thread.
     result["LANE_NOTICE"] = config.get("config_lane_notice", "")
+    # The personal lane's missing-checkout line (issue #1479): the run would
+    # otherwise use the shipped config without saying so.
+    result["CHECKOUT_NOTICE"] = config.get("checkout_notice", "")
+    # Lane facts for the credential guard and the state writer (issue #1479).
+    result.update(config.get("config_lane_env", {}))
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
     result = _attach_position(result, config, workflows_dir, local_workflows_dir)

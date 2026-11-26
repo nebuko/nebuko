@@ -131,6 +131,19 @@ class TestRunNoticesReachTheThread:
 
         assert "agent config 'fast' from the personal layer (file fast.yaml)" in posted
 
+    def test_missing_checkout_is_named_in_the_first_comment(self, tmp_path, monkeypatch):
+        from nebuko.engine import run_loop
+
+        monkeypatch.setattr(run_loop, "_is_bot_trigger", lambda trigger: False)
+        adapter = _RecordingAdapter()
+        engine = self._engine(tmp_path, adapter)
+        posted = engine._post_run_notices(
+            {"CHECKOUT_NOTICE": "the personal repo checkout (.nebuko-personal) was not found"},
+            object(),
+        )
+
+        assert "- the personal repo checkout (.nebuko-personal) was not found" in posted
+
     def test_config_line_is_not_posted_for_a_bot_continuation(self, tmp_path, monkeypatch):
         from nebuko.engine import run_loop
 

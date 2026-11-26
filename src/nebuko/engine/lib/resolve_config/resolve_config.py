@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
@@ -55,7 +55,12 @@ from .features.resolve_route.resolve_route import (
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
 )
-from nebuko.engine.harness.credentials import check_personal_secrets, decide_lane
+from nebuko.engine.harness.credentials import (
+    SHARED_LANE,
+    USER_REPO_LANE,
+    check_personal_secrets,
+    decide_lane,
+)
 from nebuko.engine.lib.config import WorkflowPosition, is_self_function_call
 from nebuko.engine.lib.workflow_state import Appreciation, IncompleteReason, TurnOutcome
 
@@ -198,6 +203,47 @@ def _apply_dispatch_fields(
 
 _LANE_CHANGE_ACTIONS = frozenset({"takeover", "move_to_project", "switch_to_personal"})
 
+#: Intents that run something. Lane stickiness guards only these: plain prose on
+#: a personal thread is never refused (issue #1479).
+_RUNNING_INTENTS = frozenset({"command", "agent_trigger"})
+
+
+def _personal_run_actor(env: Mapping[str, str]) -> tuple[Optional[str], Optional[str]]:
+    """The dispatching actor of the personal repo's run, or a refusal (issue #1479).
+
+    ``client_payload.actor`` is taken as the actor only when it equals the owner
+    GitHub reports for this run (``GITHUB_REPOSITORY_OWNER``, set by the runner,
+    never by the caller workflow). Returns ``(actor, None)`` or ``(None, refusal)``.
+    """
+    from nebuko.engine.lib.workflow_state.workflow_state import dispatch_actor_from_event
+
+    owner = (env.get("GITHUB_REPOSITORY_OWNER") or "").strip()
+    actor = dispatch_actor_from_event(env)
+    if actor and owner and actor.lower() == owner.lower():
+        return actor, None
+    who = actor or "an unknown actor"
+    return None, (
+        f"this personal run was dispatched by {who}, who is not the owner of this "
+        f"personal repo ({owner or 'owner unknown'}). Only the owner runs on their own "
+        "credential, so the run is refused."
+    )
+
+
+def _lane_env(action: str, actor: str) -> dict:
+    """Lane facts for the credential guard and the state writer (issue #1479).
+
+    Returned as result keys, so they reach the run's environment with the other
+    resolved values. Read by ``lane_binding_from_env`` and the continuation guard.
+    """
+    if action in ("takeover", "switch_to_personal"):
+        env = {"WORKFLOW_LANE": USER_REPO_LANE, "CLAUDE_CREDENTIAL_OWNER": actor}
+    elif action == "move_to_project":
+        env = {"WORKFLOW_LANE": SHARED_LANE, "CLAUDE_CREDENTIAL_OWNER": ""}
+    else:
+        return {}
+    env["NEBUKO_LANE_ACTION"] = action
+    return env
+
 
 def _is_path_like(name: str) -> bool:
     """True when a config value names a path rather than a bare file name."""
@@ -249,6 +295,15 @@ def _agent_config_selection(
         personal_root if personal_lane and personal_root.is_dir() else None,
         checkout_root() / "defaults" / "agents",
     )
+    checkout_notice = ""
+    if personal_lane and not personal_root.is_dir():
+        # Without the checkout the personal manifest and overrides cannot be read,
+        # so whether they would have changed the config is unknowable: say so.
+        checkout_notice = (
+            f"the personal repo checkout ({PERSONAL_CHECKOUT_DIR}) was not found: its "
+            "manifest and agent configs were not read, so this run uses the shipped "
+            "defaults"
+        )
     previous_name = prev_state.agent_config if prev_state is not None else None
     carry_previous = lane_action not in _LANE_CHANGE_ACTIONS
     name, source = select_config_name(
@@ -291,6 +346,7 @@ def _agent_config_selection(
             "agent_config_path": resolved_path,
             "agent_config_raw": name,
             "agent_config_layer": "project",
+            "checkout_notice": checkout_notice,
         }
 
     try:
@@ -323,6 +379,7 @@ def _agent_config_selection(
         "agent_config_path": str(resolved.path),
         "agent_config_raw": name,
         "agent_config_layer": resolved.layer,
+        "checkout_notice": checkout_notice,
     }
 
 
@@ -455,27 +512,42 @@ def resolve_config(
     )
     if command_intent.kind == "personal_dispatch":
         return {"SKIP_AGENT": "true", "REASON": "personal dispatch: handled by the personal lane"}
-    # Stickiness applies to a human comment on a project-side thread. Dispatch
-    # and loop continuations are not comments, and the personal repo's own run
-    # is authenticated by its repository, so neither is checked here.
+    # Lane stickiness (issue #1479) guards a comment that would run something
+    # (a nebuko command or an agent trigger). The personal repo's own run is a
+    # repository_dispatch: its actor is checked against the owner GitHub reports.
     lane_action = "allow"
     lane_notice = ""
+    lane_env: dict = {}
+    personal_actor = None
+    if personal_lane and not is_bot:
+        personal_actor, refusal = _personal_run_actor(os.environ)
+        if refusal is not None:
+            return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": refusal}
     human_thread_comment = (
         not is_bot
         and not personal_lane
         and (os.environ.get("GITHUB_EVENT_NAME") or "").strip() == "issue_comment"
     )
-    if prev_state is not None and human_thread_comment:
-        lane_decision = decide_lane(
-            prev_state.lane,
-            prev_state.credential_owner,
-            wf_cmd.lane_flag if wf_cmd is not None else None,
-            build_author_identity_from_env(trigger_body).login,
-        )
-        lane_action = lane_decision.action
-        lane_notice = lane_decision.notice or ""
-        if lane_decision.action == "refuse":
-            return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": lane_decision.message}
+    if prev_state is not None and command_intent.kind in _RUNNING_INTENTS:
+        if personal_lane and not is_bot:
+            lane_decision = decide_lane(
+                prev_state.lane, prev_state.credential_owner, "personal", personal_actor or ""
+            )
+        elif human_thread_comment:
+            lane_decision = decide_lane(
+                prev_state.lane,
+                prev_state.credential_owner,
+                wf_cmd.lane_flag if wf_cmd is not None else None,
+                build_author_identity_from_env(trigger_body).login,
+            )
+        else:
+            lane_decision = None
+        if lane_decision is not None:
+            lane_action = lane_decision.action
+            lane_notice = lane_decision.notice or ""
+            if lane_decision.action == "refuse":
+                return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": lane_decision.message}
+            lane_env = _lane_env(lane_action, personal_actor or build_author_identity_from_env(trigger_body).login)
     if (
         command_intent.kind == "command"
         and command_intent.command == "clean"
@@ -732,6 +804,8 @@ def resolve_config(
 
     if lane_notice:
         config["config_lane_notice"] = lane_notice
+    if lane_env:
+        config["config_lane_env"] = lane_env
 
     # A malformed or unknown human slash command yields no valid task; keep its
     # usage hint on the config so _build_result can turn the terminal skip into

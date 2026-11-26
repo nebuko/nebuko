@@ -636,6 +636,7 @@ def _trigger_facts_from_env() -> "ContinuationContext":
         previous_lane=previous_lane,
         previous_credential_owner=previous_owner,
         untrusted_only=untrusted_only,
+        lane_action=(os.environ.get("NEBUKO_LANE_ACTION") or "").strip(),
     )
 
 

@@ -391,9 +391,13 @@ another payer (option B is not used silently).
   broker dispatches it to the personal repo, where the flag is consumed.
 - The personal repo is recognised by `GITHUB_REPOSITORY` ending in
   `/nebuko-personal`, a value GitHub sets for the run.
-- Lane D checks the personal repo out read-only at `.nebuko-personal` (default
-  branch, `persist-credentials: false`). The personal lane resolves its agent
-  config in that checkout, then the shipped `defaults/agents`. It never reads
+- Lane D needs the reusable workflow to check the personal repo out read-only at
+  `.nebuko-personal` (default branch, `persist-credentials: false`) before the
+  engine step. That step is not applied in this change (issue 1483 tracks the
+  workflow patch). Until a human applies it, a personal run has no checkout: it
+  reads only the shipped `defaults/agents`, and its first comment says the
+  checkout is missing. The personal lane resolves its agent config in that
+  checkout, then the shipped `defaults/agents`. It never reads
   the project's `.nebuko/agents`, and it checks the config's `api_token_env`
   secrets against the personal environment only.
 - Config name order: `--config`, the previous state (dropped on a takeover or
@@ -405,10 +409,13 @@ another payer (option B is not used silently).
   This ranks the previous state above the manifests, which departs from the issue
   text's order (`--config`, personal manifest, project manifest, default). It is
   kept as a documented deviation and needs the author's sign-off.
-- Caller trade-off: the project caller's `if:` skips any human `/nebuko` comment
-  containing `--personal` on any line, while `parse_trigger` reads the first line
-  only. A flagless run that mentions `--personal` later in its body is therefore
-  not started by the project caller. Pinned by `test_caller_personal_guard.py`.
+- Caller trade-off: the project caller's `if:` skips only the exact one-flag
+  shapes `/nebuko run workflow|approve gate|reject gate|resume --personal` (one
+  line, no other flag). A GitHub expression cannot count flags, read a value or
+  inspect a later line, so every other comment starts a runner and the engine's
+  `parse_trigger` (first line only) skips or answers it. Pinned by
+  `test_caller_personal_guard.py`, which runs the condition over the shared
+  samples and asserts that no project run row is skipped.
 - **Gate decisions via dispatch are not in this change.** A dispatched
   `approve gate --personal` is authored by the bot and is not a gate decision
   today. Enabling it needs its own review. Trust anchor for that follow-up: the

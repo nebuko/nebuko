@@ -38,6 +38,10 @@ def test_project_lane_missing_previous_falls_back_to_manifest(workspace, capsys)
 
 
 def test_personal_lane_missing_previous_falls_back_to_shipped_default(workspace, monkeypatch, capsys):
+    # The personal lane checks the config's secret against the personal environment,
+    # so set it explicitly: the outcome must not depend on the host or CI secrets.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
     personal = workspace / ".nebuko-personal" / ".nebuko"
     personal.mkdir(parents=True)
     (personal / "nebuko.yaml").write_text("agent_config: agent-config-openrouter.yaml\n")

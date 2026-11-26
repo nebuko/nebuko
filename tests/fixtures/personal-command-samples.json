@@ -1,5 +1,5 @@
 {
-  "_provenance": "Shared --personal classification samples (issue #1479). Mirror of the broker table (nebuko/token-broker PR 60): re-sync whenever that table changes. The rule is first-line-only, matching CommandSource.from_body: the first line of the comment, stripped, is parsed as a /nebuko command, and a terminal --feedback value swallows the rest of that line. class is 'personal dispatch' (the project side skips it) or 'project run'. condition is the caller workflow verdict: the engine skip is the only authority for now, so personal dispatch rows are start-noop (the runner starts and the engine skips) and project run rows are start-run.",
+  "_provenance": "Shared --personal classification samples (issue #1479). Mirror of the broker table (nebuko/token-broker PR 60): re-sync whenever that table changes. The rule is first-line-only, matching CommandSource.from_body: the first line of the comment, stripped, is parsed as a /nebuko command, and a terminal --feedback value swallows the rest of that line. class is 'personal dispatch' (the project side skips it) or 'project run'. condition is the caller workflow verdict: start-run means the caller starts a run; start-noop means the caller may start a runner that the engine skips, or skip it outright for the exact one-flag shapes. A project run row must never be skipped by the caller (tests/engine/init/test_caller_personal_guard.py).",
   "samples": [
     {"name": "run with lane flag on the first line", "body": "/nebuko run workflow --name default --personal", "class": "personal dispatch", "condition": "start-noop"},
     {"name": "approve gate on personal lane", "body": "/nebuko approve gate --personal", "class": "personal dispatch", "condition": "start-noop"},
@@ -21,6 +21,9 @@
     {"name": "quoted command", "body": "> /nebuko approve gate --personal", "class": "project run", "condition": "start-run"},
     {"name": "flag on a non-command line", "body": "approve --personal", "class": "project run", "condition": "start-run"},
     {"name": "flag after the feedback text", "body": "/nebuko reject gate --feedback no --personal", "class": "project run", "condition": "start-run"},
-    {"name": "gate command without the flag, personal command on a later line", "body": "/nebuko approve gate\n/nebuko approve gate --personal", "class": "project run", "condition": "start-run"}
+    {"name": "gate command without the flag, personal command on a later line", "body": "/nebuko approve gate\n/nebuko approve gate --personal", "class": "project run", "condition": "start-run"},
+    {"name": "both lane flags on one run", "body": "/nebuko run workflow --name default --personal --project", "class": "project run", "condition": "start-run"},
+    {"name": "personal flag with an unknown flag", "body": "/nebuko approve gate --personal --bogus", "class": "project run", "condition": "start-run"},
+    {"name": "personal flag repeated", "body": "/nebuko resume --personal --personal", "class": "project run", "condition": "start-run"}
   ]
 }

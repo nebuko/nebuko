@@ -374,8 +374,8 @@ A caller-provided `GH_PAT` is used directly and skips the OIDC token broker.
 - Add `--personal` to a `/nebuko run|resume|approve gate|reject gate` comment to
   run it on your own credential and agent config (`nebuko-personal` repo).
   `--project` moves a personal run back to the project lane. Both together is
-  refused. A flagless comment on a personal thread is refused; name the lane
-  you want with the flag.
+  refused. A flagless command or agent mention on a personal thread is refused;
+  name the lane you want with the flag. Plain prose on that thread gets no reply.
 - Personal runs take their agent config only from `nebuko-personal`
   (`.nebuko/agents`) or the shipped defaults. The project's `.nebuko/agents` is
   not used, so a project's dedicated dev prompt does not apply to personal runs.
@@ -383,6 +383,10 @@ A caller-provided `GH_PAT` is used directly and skips the OIDC token broker.
   are ignored with a warning.
 - A config that needs a secret the personal repo does not provide stops the run
   with the missing secret's name.
-- The project's caller workflow is unchanged: it starts a runner for a `--personal`
-  comment, and the engine skips that comment without a reply.
+- The project's caller workflow skips only the exact one-flag `--personal`
+  shapes; any other comment with the flag starts a runner, and the engine skips
+  it without a reply (or answers a malformed command with its usage hint).
+- The personal repo checkout (`.nebuko-personal`) is not yet done by the reusable
+  workflow (issue 1483). Without it, a personal run reads only the shipped
+  `defaults/agents`, and its first comment says the checkout is missing.
 

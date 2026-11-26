@@ -195,6 +195,9 @@ class ContinuationContext:
         untrusted_only: True when the thread has only state comments from
             untrusted authors (no trusted state). The lane is then assumed, not
             read, and the refusal says so rather than naming a lane violation.
+        lane_action: The lane decision the engine made for this comment
+            (:class:`LaneDecision` action), empty when none. A decided takeover
+            or move-back is authentic, so the binding check accepts it.
     """
 
     trigger_login: str
@@ -207,6 +210,11 @@ class ContinuationContext:
     previous_lane: str | None = None
     previous_credential_owner: str | None = None
     untrusted_only: bool = False
+    lane_action: str = ""
+
+
+#: Lane decisions the engine takes from an authenticated human comment (issue #1479).
+DECIDED_LANE_ACTIONS: frozenset[str] = frozenset({"takeover", "move_to_project", "switch_to_personal"})
 
 
 @dataclass(frozen=True)
@@ -344,6 +352,8 @@ def authorize_lane_binding(ctx: ContinuationContext) -> ContinuationDecision:
     model is the same violation.
     """
     if ctx.previous_lane != USER_REPO_LANE:
+        return ContinuationDecision(True)
+    if ctx.lane_action in DECIDED_LANE_ACTIONS:
         return ContinuationDecision(True)
     owner = (ctx.previous_credential_owner or "").strip()
     if ctx.lane == USER_REPO_LANE and owner and ctx.credential_owner == owner:

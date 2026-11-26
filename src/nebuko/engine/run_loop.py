@@ -2383,6 +2383,7 @@ class Engine:
         lines = [str(self._get(resolved, "LANE_NOTICE") or "").strip()]
         if not _is_bot_trigger(trigger):
             lines.append(str(self._get(resolved, "AGENT_CONFIG_NOTICE") or "").strip())
+            lines.append(str(self._get(resolved, "CHECKOUT_NOTICE") or "").strip())
         lines = [line for line in lines if line]
         if not lines:
             return None
