@@ -236,7 +236,7 @@ class TestPersonalCheckoutAndSecrets:
         (project_agents / "project-only.yaml").write_text("name: project-only\n")
         _personal_run(monkeypatch, workspace, owner="alice", actor="alice")
         out = rc._agent_config_selection(
-            "", None, requested_config="project-only.yaml", personal_lane=True
+            "", None, None, requested_config="project-only.yaml", lane_action="allow", personal_lane=True
         )
         assert "project-only" not in str(out.get("agent_config_path", ""))
         assert "config_command_error" in out or out.get("agent_config_layer") != "project"

@@ -678,8 +678,8 @@ class TestAgentConfigSelection:
         assert "agent-config-anthropic.yaml" in result["REASON"]
         assert "AGENT_CONFIG_PATH" not in result
 
-    def test_hand_off_without_flag_ignores_persisted_config(self, tmp_path, monkeypatch):
-        """Config name order is --config, manifests, default: a persisted name is not reused."""
+    def test_hand_off_keeps_the_selected_config(self, tmp_path, monkeypatch):
+        """A later comment (new job, no flag) re-applies the persisted choice."""
         prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
         state = {
             "version": 7,
@@ -708,12 +708,15 @@ class TestAgentConfigSelection:
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=False)
 
-        assert result.get("AGENT_CONFIG") != "agent-config-anthropic.yaml"
+        assert result["AGENT_CONFIG_PATH"] == str(
+            tmp_path / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        )
+        assert result["AGENT_CONFIG"] == "agent-config-anthropic.yaml"
 
-    def test_bot_hand_off_without_flag_ignores_persisted_config(
+    def test_bot_hand_off_comment_keeps_the_selected_config(
         self, tmp_path, monkeypatch
     ):
-        """A bot hand-off without a flag does not reuse the persisted config name."""
+        """A bot hand-off (no command, no flag) still applies the persisted choice."""
         prompt_base, workflows_dir = self._setup(tmp_path, monkeypatch)
         state = {
             "version": 7,
@@ -743,7 +746,10 @@ class TestAgentConfigSelection:
 
         result = resolve_config(body, prompt_base, workflows_dir, is_bot=True)
 
-        assert result.get("AGENT_CONFIG") != "agent-config-anthropic.yaml"
+        assert result["AGENT_CONFIG_PATH"] == str(
+            tmp_path / ".nebuko" / "agents" / "agent-config-anthropic.yaml"
+        )
+        assert result["AGENT_CONFIG"] == "agent-config-anthropic.yaml"
 
 
 class TestResolveNextAgentFromWorkflow(unittest.TestCase):

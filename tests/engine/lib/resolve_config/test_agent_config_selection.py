@@ -1,8 +1,9 @@
-"""Agent-config name order for a run (#1479): --config, personal manifest, project manifest, default."""
+"""Agent-config name fallback for a persisted name that no longer resolves (#1479)."""
 
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,42 +16,37 @@ def workspace(tmp_path, monkeypatch):
     (ws / ".nebuko").mkdir(parents=True)
     (ws / ".nebuko" / "nebuko.yaml").write_text("agent_config: agent-config-mistral.yaml\n")
     monkeypatch.setenv("GITHUB_WORKSPACE", str(ws))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
     return ws
 
 
-def _select(personal_lane, flag=None):
-    return rc._agent_config_selection("", None, requested_config=flag, personal_lane=personal_lane)
+def _select(prev_name, personal_lane, flag=None):
+    return rc._agent_config_selection(
+        "",
+        None,
+        SimpleNamespace(agent_config=prev_name),
+        requested_config=flag,
+        lane_action="resume",
+        personal_lane=personal_lane,
+    )
 
 
-def test_project_lane_uses_project_manifest(workspace):
-    out = _select(personal_lane=False)
+def test_project_lane_missing_previous_falls_back_to_manifest(workspace, capsys):
+    out = _select("gone.yaml", personal_lane=False)
     assert "config_command_error" not in out
     assert out["agent_config_raw"] == "agent-config-mistral.yaml"
+    assert "persisted agent config 'gone.yaml' not found" in capsys.readouterr().err
 
 
-def test_flag_beats_project_manifest(workspace):
-    out = _select(personal_lane=False, flag="agent-config-openrouter.yaml")
-    assert out["agent_config_raw"] == "agent-config-openrouter.yaml"
-
-
-def test_personal_manifest_beats_project_manifest(workspace):
+def test_personal_lane_missing_previous_falls_back_to_shipped_default(workspace, monkeypatch, capsys):
+    # The personal lane checks the config's secret against the personal environment,
+    # so set it explicitly: the outcome must not depend on the host or CI secrets.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
     personal = workspace / ".nebuko-personal" / ".nebuko"
     personal.mkdir(parents=True)
     (personal / "nebuko.yaml").write_text("agent_config: agent-config-openrouter.yaml\n")
-    out = _select(personal_lane=True)
+    out = _select("gone.yaml", personal_lane=True)
+    assert "config_command_error" not in out
     assert out["agent_config_raw"] == "agent-config-openrouter.yaml"
     assert out["agent_config_layer"] == "shipped"
-
-
-def test_personal_lane_never_reads_project_agent_dir(workspace):
-    project_agents = workspace / ".nebuko" / "agents"
-    project_agents.mkdir(parents=True)
-    (project_agents / "project-only.yaml").write_text("{}\n")
-    (workspace / ".nebuko" / "nebuko.yaml").write_text("agent_config: project-only.yaml\n")
-    personal = workspace / ".nebuko-personal" / ".nebuko"
-    personal.mkdir(parents=True)
-    (personal / "nebuko.yaml").write_text("{}\n")
-    out = _select(personal_lane=True)
-    assert out.get("agent_config_layer") != "project"
+    assert "persisted agent config 'gone.yaml' not found" in capsys.readouterr().err
