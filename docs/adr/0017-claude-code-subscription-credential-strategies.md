@@ -406,9 +406,6 @@ another payer (option B is not used silently).
   the manifests on purpose: a resumed run keeps the config it started with, so an
   edited manifest does not change a run mid-flight. A previous name that no longer
   resolves warns and falls back to the manifests and default, in both lanes.
-  This ranks the previous state above the manifests, which departs from the issue
-  text's order (`--config`, personal manifest, project manifest, default). It is
-  kept as a documented deviation and needs the author's sign-off.
 - Caller trade-off: the project caller's `if:` skips only the exact one-flag
   shapes `/nebuko run workflow|approve gate|reject gate|resume --personal` (one
   line, no other flag). A GitHub expression cannot count flags, read a value or
