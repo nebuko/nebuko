@@ -287,7 +287,8 @@ class _NoticeContext:
 # the lane-binding guard until token-broker#53 routes human comments to dispatches).
 _CONTINUE_TODAY = (
     "To continue, dispatch the next step with `step=<next step>` "
-    "(if a gate is armed, run `/nebuko approve gate` on the org issue first). "
+    "(if a gate is armed, first dispatch `/nebuko approve gate` to the personal repo; "
+    "ADR-0017, issue #1482). "
     "`/nebuko resume` is the route once human comments are routed to dispatches."
 )
 

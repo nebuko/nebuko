@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Optional
+from typing import Any, Callable, Literal, Mapping, Optional, Tuple
 
 from nebuko.engine.lib.config import (
     WorkflowDefinition,
@@ -59,6 +59,16 @@ from ..parse_trigger.parse_trigger import (
 from ...sub_domains.author_identity.author_identity import (
     AuthorIdentity,
     build_author_identity,
+)
+from ...sub_domains.dispatch_actor.dispatch_actor import (
+    REASON_LOOKUP_REFUSED,
+    REASON_LOOKUP_TIMED_OUT,
+    REASON_LOOKUP_UNAVAILABLE,
+    REASON_NO_PROJECT_REPO,
+    REASON_NO_PROJECT_TOKEN,
+    REASON_NO_WRITE,
+    REASON_NOT_OWNER,
+    verify_dispatch_actor,
 )
 from ...sub_domains.workflow_command.workflow_command import (
     WorkflowCommand,
@@ -379,6 +389,41 @@ def build_author_identity_from_env(trigger_body: str) -> AuthorIdentity:
     )
 
 
+#: Notice per refused dispatch actor (issue #1482). Names the actor and a coarse
+#: reason only: no token, no raw GitHub output.
+_DISPATCH_GATE_REFUSALS: dict[str, str] = {
+    REASON_NOT_OWNER: (
+        "gate: dispatch actor '{actor}' is not the owner of this personal repo, "
+        "so it cannot decide the gate"
+    ),
+    REASON_NO_WRITE: (
+        "gate: dispatch actor '{actor}' has no write access to the project repo "
+        "'{repo}', so the gate is not decided"
+    ),
+    REASON_LOOKUP_REFUSED: (
+        "gate: GitHub refused the permission lookup for dispatch actor '{actor}' "
+        "on '{repo}' (403 or 404), so the gate is not decided. This is a lookup "
+        "refusal, not a missing write permission"
+    ),
+    REASON_LOOKUP_TIMED_OUT: (
+        "gate: the permission lookup for dispatch actor '{actor}' on '{repo}' timed "
+        "out, so the gate is not decided"
+    ),
+    REASON_LOOKUP_UNAVAILABLE: (
+        "gate: the permission lookup for dispatch actor '{actor}' on '{repo}' could "
+        "not reach GitHub, so the gate is not decided"
+    ),
+    REASON_NO_PROJECT_TOKEN: (
+        "gate: no project-repo token was supplied to check dispatch actor '{actor}', "
+        "so the gate is not decided"
+    ),
+    REASON_NO_PROJECT_REPO: (
+        "gate: the project repo is unknown, so dispatch actor '{actor}' cannot be "
+        "checked and the gate is not decided"
+    ),
+}
+
+
 def _trigger_comment_id() -> Optional[int]:
     """Deciding comment id from the CI env, or None when unavailable."""
     raw = os.environ.get(_TRIGGER_COMMENT_ID_ENV, "").strip()
@@ -388,6 +433,39 @@ def _trigger_comment_id() -> Optional[int]:
         return int(raw)
     except ValueError:
         return None
+
+
+def gate_author_from_env(trigger_body: str) -> Tuple[AuthorIdentity, str]:
+    """The gate author, plus a refusal notice when a dispatch cannot decide (issue #1482).
+
+    A dispatched gate command has no comment author. When the engine verifies
+    the dispatch actor (owner of the personal repo, with write on the project
+    repo) the author is that actor, and the decision records it. Otherwise the
+    author stays the unverified CI identity, and the returned notice (empty
+    for a non-personal dispatch and for every comment) says why it is refused.
+    """
+    if (os.environ.get("GITHUB_EVENT_NAME") or "").strip() != "repository_dispatch":
+        return build_author_identity_from_env(trigger_body), ""
+    check = verify_dispatch_actor(os.environ)
+    if check.verified:
+        author = build_author_identity(
+            login="",
+            user_type="",
+            association="",
+            trigger_body=trigger_body,
+            dispatch_actor=check.actor,
+            dispatch_actor_verified=True,
+            dispatch_association=check.association,
+        )
+        return author, ""
+    template = _DISPATCH_GATE_REFUSALS.get(check.reason)
+    if template is None:
+        # Not a personal-repo owner dispatch: the gate stays refused as before.
+        return build_author_identity_from_env(trigger_body), ""
+    repo = os.environ.get("REPO_NAME") or ""
+    return build_author_identity_from_env(trigger_body), template.format(
+        actor=check.actor or "unknown", repo=repo or "unknown"
+    )
 
 
 def _gate_pending(prev_state: Optional["WorkflowState"]) -> bool:
@@ -624,6 +702,7 @@ def _resolve_gate_decision_path(
     author: AuthorIdentity,
     workflows_dir: str,
     local_workflows_dir: Optional[str] = None,
+    dispatch_refusal: str = "",
 ) -> dict:
     """Resolve a ``/nebuko approve gate`` / ``/nebuko reject gate`` command.
 
@@ -641,7 +720,7 @@ def _resolve_gate_decision_path(
     Returns a routed config carrying ``config_gate_decision`` (serialized) so
     the consuming run persists it, or a ``SKIP_AGENT`` dict.
     """
-    rejection = _gate_hold_rejection_reason(prev_state, author)
+    rejection = _gate_hold_rejection_reason(prev_state, author, dispatch_refusal)
     if rejection:
         # A gate command that cannot act is inert, not a failure (issue #1012):
         # the benign kind makes the guards phase exit 0 and post the reason
@@ -671,6 +750,7 @@ def _resolve_gate_decision_path(
 def _gate_hold_rejection_reason(
     prev_state: Optional["WorkflowState"],
     author: AuthorIdentity,
+    dispatch_refusal: str = "",
 ) -> Optional[str]:
     """Why this author/command may not decide the gate, or None when it may.
 
@@ -685,6 +765,8 @@ def _gate_hold_rejection_reason(
     if not _gate_pending(prev_state):
         return "gate: workflow is not held at a human_gate step"
     if not author.may_decide_gate():
+        if dispatch_refusal:
+            return dispatch_refusal
         return (
             f"gate: author '{author.login or 'unknown'}' is not authorized "
             "to decide a gate"

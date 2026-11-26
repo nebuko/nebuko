@@ -413,11 +413,51 @@ another payer (option B is not used silently).
   `parse_trigger` (first line only) skips or answers it. Pinned by
   `test_caller_personal_guard.py`, which runs the condition over the shared
   samples and asserts that no project run row is skipped.
-- **Gate decisions via dispatch are not in this change.** A dispatched
-  `approve gate --personal` is authored by the bot and is not a gate decision
-  today. Enabling it needs its own review. Trust anchor for that follow-up: the
-  engine compares `client_payload.actor` with `github.repository_owner` (both set
-  by GitHub, not by the caller's workflow), then looks up that actor's permission
-  on the project repo with the project-repo token, and evaluates `may_decide_gate`
-  on that identity. An env flag set by the caller's template is not an anchor.
+- Gate decisions via dispatch: see "Gate decisions via dispatch (issue #1482)".
 
+
+### Gate decisions via dispatch (issue #1482)
+
+A dispatched `/nebuko approve gate` or `reject gate` to the personal repo decides
+the gate as the repository owner, when the engine verifies that owner. The
+anchor is computed in the engine from values GitHub sets:
+
+- **Trusted:** `GITHUB_EVENT_NAME` (`repository_dispatch`), `GITHUB_REPOSITORY`
+  (ends with `/nebuko-personal`), `GITHUB_REPOSITORY_OWNER`, and `REPO_NAME` (the
+  dispatched `org_repo`). The actor must equal the owner. Then the engine runs a
+  permission lookup on the project repo: `gh api repos/<project>/collaborators/<actor>/permission`.
+  Write, maintain or admin is needed. The decision is recorded with the actor as
+  `decided_by`.
+- **Not trusted:** the caller workflow's files and owner guard, its flags, its env,
+  and the credential. The caller guard is the user's own file, so it cannot be an
+  anchor. The lane check and the gate check share one function
+  (`verify_dispatch_actor` calls `personal_dispatch_actor`), so the owner rule is
+  implemented once.
+- **Lookup token:** `GH_TOKEN` in the engine step. The reusable workflow sets it
+  from the caller's `GH_PAT` (the payload `gh_token`) when present, otherwise from
+  the broker. The token only reads the permission; it is never an identity.
+  Without a token the gate is refused.
+- **Project repo from the payload.** `REPO_NAME` comes from the dispatched
+  `org_repo`, but the gate is decided on that repository's issue. A forged
+  `org_repo` only selects a repository where the actor already has authority.
+  `GITHUB_REPOSITORY` is never used, because the owner has admin on their own
+  personal repo.
+- **Outcomes.** Anything except write, maintain or admin fails closed, with a
+  `gate_noop` notice that names a coarse reason and no token:
+  - `no-write-access`: GitHub answered with `read`, `triage` or `none`. A
+    non-collaborator is expected to get `none` with HTTP 200; this is not yet
+    measured.
+  - `lookup-refused-by-github`: HTTP 403 or 404. This is not evidence of missing
+    write access. The notice says so.
+  - `lookup-timed-out` (30 s), `lookup-unavailable` (no network or no `gh`),
+    `no-project-token`, `no-project-repo`: the lookup did not run or did not answer.
+  - Not the owner, or not a personal-repo dispatch: refused as before; the
+    project repo's dispatch path is unchanged.
+- **Measurement not yet done.** Whether a token minted by the broker can read
+  `collaborators/{user}/permission` on the project repo is not verified. A human
+  must test once with a token minted by the staging App, dispatch `approve gate`
+  at a held gate, and record the result here. If the lookup returns HTTP 403, the
+  broker must add the repository permission GitHub names for this endpoint
+  (follow-up to token-broker#53); that permission is not yet identified. Until the
+  test passes, the gate stays undecidable from the personal lane (fail closed).
+  Result: _pending human test_.

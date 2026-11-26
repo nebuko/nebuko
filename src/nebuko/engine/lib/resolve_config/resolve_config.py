@@ -14,6 +14,7 @@ from typing import Mapping, Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
+from .sub_domains.dispatch_actor.dispatch_actor import personal_dispatch_actor
 from .sub_domains.workflow_command.workflow_command import (
     WorkflowCommand,
     classify_comment,
@@ -41,6 +42,7 @@ from .features.resolve_route.agent_config_resolver import (
 )
 from .features.resolve_route.resolve_route import (
     build_author_identity_from_env,
+    gate_author_from_env,
     _armed_gate,
     _agent_config_param,
     _available_agent_configs,
@@ -215,11 +217,9 @@ def _personal_run_actor(env: Mapping[str, str]) -> tuple[Optional[str], Optional
     GitHub reports for this run (``GITHUB_REPOSITORY_OWNER``, set by the runner,
     never by the caller workflow). Returns ``(actor, None)`` or ``(None, refusal)``.
     """
-    from nebuko.engine.lib.workflow_state.workflow_state import dispatch_actor_from_event
-
     owner = (env.get("GITHUB_REPOSITORY_OWNER") or "").strip()
-    actor = dispatch_actor_from_event(env)
-    if actor and owner and actor.lower() == owner.lower():
+    actor, reason = personal_dispatch_actor(env)
+    if not reason:
         return actor, None
     who = actor or "an unknown actor"
     return None, (
@@ -598,12 +598,15 @@ def resolve_config(
         # only here, never by /nebuko resume. Handled inline — never
         # dispatched to an agent. Identity is sourced from the CI event env
         # (author login/type/association), never from body markers.
+        # A verified personal-repo dispatch decides as its actor (issue #1482).
+        gate_author, dispatch_refusal = gate_author_from_env(trigger_body)
         config = _resolve_gate_decision_path(
             prev_state,
             wf_cmd,
-            build_author_identity_from_env(trigger_body),
+            gate_author,
             workflows_dir,
             local_workflows_dir=local_workflows_dir,
+            dispatch_refusal=dispatch_refusal,
         )
     elif (
         wf_cmd is not None

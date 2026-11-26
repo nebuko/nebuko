@@ -136,3 +136,31 @@ class TestBuildAuthorIdentity:
         )
         assert author.is_bot is False
         assert author.may_decide_gate() is False
+
+
+class TestVerifiedDispatchActor:
+    """A personal-repo dispatch decides as its verified actor (issue #1482)."""
+
+    def test_verified_actor_becomes_the_author(self):
+        author = build_author_identity(
+            "", "", "", GATE_CMD,
+            dispatch_actor="alice", dispatch_actor_verified=True, dispatch_association="COLLABORATOR",
+        )
+        assert author.login == "alice"
+        assert author.is_bot is False
+        assert author.may_decide_gate() is True
+
+    def test_unverified_dispatch_actor_is_ignored(self):
+        author = build_author_identity(
+            "", "", "", GATE_CMD,
+            dispatch_actor="alice", dispatch_actor_verified=False, dispatch_association="COLLABORATOR",
+        )
+        assert author.login == ""
+        assert author.may_decide_gate() is False
+
+    def test_verified_actor_with_machine_token_in_body_still_refused(self):
+        author = build_author_identity(
+            "", "", "", GATE_CMD + "\n<!-- bot-trigger: dev -->",
+            dispatch_actor="alice", dispatch_actor_verified=True, dispatch_association="COLLABORATOR",
+        )
+        assert author.may_decide_gate() is False
