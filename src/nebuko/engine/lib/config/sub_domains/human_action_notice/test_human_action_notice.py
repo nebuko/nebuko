@@ -129,11 +129,28 @@ class TestRender:
         assert "@" not in body
         assert "workflow **default** is waiting for your approval" in body
 
-    def test_approval_body_names_the_step_and_the_resume_command(self):
+    def test_approval_body_names_the_step_and_the_gate_commands(self):
         body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), step="plan", gate_pending=True).render()
         assert "waiting for your approval" in body
         assert "step `plan`" in body
-        assert "/nebuko resume" in body
+        assert "/nebuko approve gate" in body
+        assert "/nebuko reject gate" in body
+        assert "/nebuko resume" not in body
+
+    def test_render_without_identity_has_no_empty_markers(self):
+        """#1296: a direct mention resolves with no identity, so the body must
+        not render empty ``****``/``` `` ``` markers."""
+        body = _classify(
+            _outcome(Appreciation.APPROVED, note="human_gate:plan"),
+            step="",
+            workflow="",
+            gate_pending=True,
+        ).render()
+        assert "****" not in body
+        assert "``" not in body
+        assert "@olivier-norture" in body
+        assert "/nebuko approve gate" in body
+        assert "/nebuko reject gate" in body
 
     def test_input_body_asks_for_feedback(self):
         body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_INPUT, note="await something"), step="context").render()

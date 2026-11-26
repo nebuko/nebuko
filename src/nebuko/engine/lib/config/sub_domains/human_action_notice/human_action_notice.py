@@ -40,8 +40,8 @@ KINDS = frozenset({AWAITING_APPROVAL, AWAITING_INPUT, WORKFLOW_COMPLETE})
 _LINES = {
     AWAITING_APPROVAL: (
         "{ping}workflow **{workflow}** is waiting for your approval at step "
-        "`{step}`. Review the output above, then run `/nebuko resume` to "
-        "continue."
+        "`{step}`. Review the output above, then run `/nebuko approve gate` or "
+        "`/nebuko reject gate` to continue."
     ),
     AWAITING_INPUT: (
         "{ping}workflow **{workflow}** is paused at step `{step}` and needs "
@@ -51,6 +51,22 @@ _LINES = {
         "{ping}workflow **{workflow}** has finished at step `{step}`. "
         "Please review the result."
     ),
+}
+
+# Used when the workflow or step is unknown (a direct human mention resolves
+# with empty identity): the ping is still owed, but empty ``**``/`` ` `` markers
+# must never render (issue #1296).
+_LINES_NO_IDENTITY = {
+    AWAITING_APPROVAL: (
+        "{ping}the workflow is waiting for your approval at its current step. "
+        "Review the output above, then run `/nebuko approve gate` or "
+        "`/nebuko reject gate` to continue."
+    ),
+    AWAITING_INPUT: (
+        "{ping}the workflow is paused and needs your input. Run "
+        '`/nebuko resume --feedback "<your feedback>"` to continue.'
+    ),
+    WORKFLOW_COMPLETE: "{ping}the workflow has finished. Please review the result.",
 }
 
 
@@ -157,11 +173,12 @@ class HumanActionNotice(BaseModel):
         responsibility inversion issue #795 removes. Only ``target`` may be a
         live ping.
         """
+        templates = _LINES if self.workflow and self.step else _LINES_NO_IDENTITY
         body = "\n".join(
             [
                 _BOT_MARKER,
                 _HUMAN_ACTION_MARKER,
-                _LINES[self.kind].format(
+                templates[self.kind].format(
                     ping=_ping(self.target),
                     workflow=self.workflow,
                     step=self.step,

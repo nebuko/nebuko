@@ -580,6 +580,29 @@ def _backfill_workflow_identity(
     return env
 
 
+def _workflow_identity(
+    resolved: Any, state: WorkflowState | None
+) -> tuple[str, str]:
+    """The notice's ``(workflow, step)``, resolved-first with a state fallback.
+
+    A direct ``@@agent`` mention resolves with empty identity (issue #1296)
+    even though the trigger's state still carries the active workflow and step,
+    so the notice must fall back to them to name what stopped. Same precedence
+    as :func:`_backfill_workflow_identity`.
+    """
+    workflow = str(
+        resolved.get("WORKFLOW_NAME") if isinstance(resolved, Mapping) else ""
+    ) or ""
+    step = str(
+        resolved.get("WORKFLOW_STEP") if isinstance(resolved, Mapping) else ""
+    ) or ""
+    if not workflow:
+        workflow = str(getattr(state, "workflow", "") or "")
+    if not step:
+        step = str(getattr(state, "step", "") or "")
+    return workflow, step
+
+
 def _ensure_child_identity(
     env: dict[str, str], trigger: Trigger | None
 ) -> dict[str, str]:
@@ -3105,13 +3128,14 @@ class Engine:
             skip_kind == "terminal" and route_key in ("approved", "rejected")
         )
 
+        workflow, step = _workflow_identity(resolved, state)
         return HumanActionNotice.classify(
             turn_outcome,
             terminal=terminal,
             agent_ran=agent_ran,
             target=self._trigger_author(state),
-            step=str(self._get(resolved, "WORKFLOW_STEP") or ""),
-            workflow=str(self._get(resolved, "WORKFLOW_NAME") or ""),
+            step=step,
+            workflow=workflow,
             unresolved=unresolved,
             gate_pending=self._gate_pending(state),
         )

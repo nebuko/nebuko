@@ -1669,6 +1669,55 @@ class TestHumanActionNotice:
         journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
         assert journal.count("<!-- bot-human-action -->") == 1
         assert "is waiting for your approval" in journal
+        assert "/nebuko approve gate" in journal
+        assert "/nebuko reject gate" in journal
+
+    def test_direct_mention_notice_uses_state_identity(self, tmp_path):
+        """#1296: a bare ``@@agent`` mention resolves with empty identity, so the
+        notice must name the workflow and step the state still carries."""
+        from nebuko.engine.lib.workflow_state.sub_domains.gate_lock.gate_lock import (
+            GateLock,
+            GateStatus,
+        )
+
+        engine = _engine(tmp_path)
+        state = WorkflowState(
+            run_id=3,
+            workflow="spec-tdd",
+            step="analyze",
+            agent="architect",
+            started_by="olivier-norture",
+            gate=GateLock(step="analyze", status=GateStatus.ARMED),
+        )
+
+        notice = engine.human_action_notice(
+            turn_outcome=_outcome("approved"),
+            agent_ran=True,
+            state=state,
+            resolved={"WORKFLOW_NAME": "", "WORKFLOW_STEP": ""},
+        )
+
+        assert notice is not None
+        assert notice.kind == "awaiting_approval"
+        assert (notice.workflow, notice.step) == ("spec-tdd", "analyze")
+        assert "workflow **spec-tdd**" in notice.render()
+        assert "step `analyze`" in notice.render()
+
+    def test_direct_mention_at_a_gate_names_the_gate_commands(self, tmp_path, monkeypatch):
+        """The notice and the engine's own gate comment must agree (#1296)."""
+        engine = _engine(tmp_path)
+        _arm_gate_lock(engine)
+        _stub_resolved(monkeypatch, {"WORKFLOW_NAME": "", "WORKFLOW_STEP": ""})
+        monkeypatch.setattr(
+            Engine, "invoke_agent", lambda self, prompt: _agent_result("proposal")
+        )
+
+        engine.run()
+
+        journal = (tmp_path / "runs" / "run-1" / "journal.md").read_text(encoding="utf-8")
+        assert "workflow **default** is waiting for your approval at step `plan`" in journal
+        assert "/nebuko approve gate" in journal
+        assert "/nebuko reject gate" in journal
 
     def test_a_guard_skip_never_posts_a_human_notice(self, tmp_path, monkeypatch):
         engine = _engine(tmp_path)
