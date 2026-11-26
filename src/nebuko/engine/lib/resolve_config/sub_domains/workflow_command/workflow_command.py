@@ -502,62 +502,32 @@ def _numeric_flags_valid(params: Dict[str, str], action: str) -> bool:
     )
 
 
-_FENCE_OPEN_RE = re.compile(r"^(`{3,}|~{3,})")
+def _lane_head(body: str) -> str:
+    """The first command line up to a terminal ``--feedback`` flag (issue #1479).
 
-_COMMAND_LINE_RE = re.compile(rf"^/{re.escape(COMMAND_GRAMMAR.primary)}(?=\s|$)")
-
-
-def _command_candidate_lines(body: str) -> List[str]:
-    """Lines of ``body`` that may carry a ``/nebuko`` command (issue #1479).
-
-    Shared classification rule for the lane flags: lines split on ``\r?\n``;
-    fenced blocks are skipped, and an unclosed fence hides the rest of the
-    body; indented code (four spaces or a tab) is skipped; up to three leading
-    spaces are ignored; ``>`` quotes never start with the command prefix.
+    The grammar is first-line-only, and the ``--feedback`` value swallows the rest
+    of that line and the continuation, so a lane flag written after it is feedback
+    text and never a lane marker.
     """
-    lines: List[str] = []
-    fence: Optional[str] = None
-    for raw in re.split(r"\r?\n", body):
-        stripped = raw.lstrip(" ")
-        if fence is not None:
-            closing = stripped.rstrip()
-            if len(closing) >= len(fence) and closing == fence[0] * len(closing):
-                fence = None
-            continue
-        if raw.startswith("\t") or len(raw) - len(stripped) >= 4:
-            continue
-        opening = _FENCE_OPEN_RE.match(stripped)
-        if opening:
-            fence = opening.group(1)
-            continue
-        lines.append(stripped)
-    return lines
+    tokens = CommandSource.from_body(body).command_line.split()
+    if "--feedback" in tokens:
+        tokens = tokens[: tokens.index("--feedback")]
+    return " ".join(tokens)
 
 
-def _line_has_flag(line: str, flag: str) -> bool:
-    """True when ``line`` is a command line carrying ``--flag`` as a standalone token."""
-    return bool(_COMMAND_LINE_RE.match(line)) and bool(
-        re.search(rf"(?<!\S)--{flag}(?!\S)", line)
-    )
+def lane_flag_of(body: str) -> Optional[Literal["personal", "project"]]:
+    """The lane flag of the first command line of ``body``, if it parses as a command."""
+    command = parse_command(_lane_head(body)).command
+    return command.lane_flag if command is not None else None
 
 
 def is_personal_dispatch(body: str) -> bool:
-    """True when a command line of ``body`` carries ``--personal`` (issue #1479).
+    """True when the first line of ``body`` is a ``/nebuko`` command carrying ``--personal``.
 
     The project side ignores such comments: the broker dispatches them to the
     user's personal repo, where the flag is consumed as the lane marker.
     """
-    return any(_line_has_flag(line, "personal") for line in _command_candidate_lines(body))
-
-
-def lane_flag_of(body: str) -> Optional[Literal["personal", "project"]]:
-    """The lane flag of the first command line of ``body`` that carries one."""
-    for line in _command_candidate_lines(body):
-        if _line_has_flag(line, "personal"):
-            return "personal"
-        if _line_has_flag(line, "project"):
-            return "project"
-    return None
+    return lane_flag_of(body) == "personal"
 
 
 # @stub-protected: signature defined by architect — do not modify
@@ -662,11 +632,7 @@ def classify_comment(body: str, *, consume_lane_flag: bool = False) -> CommentIn
         A frozen :class:`CommentIntent`.
     """
     parse = parse_command(body)
-    # ``parse_command`` strips the first line, so an indented command the shared
-    # rule skips must still be caught here: a parsed ``--personal`` command is a
-    # dispatch, never a project command.
-    personal_command = parse.command is not None and parse.command.lane_flag == "personal"
-    if not consume_lane_flag and (personal_command or is_personal_dispatch(body)):
+    if not consume_lane_flag and is_personal_dispatch(body):
         return CommentIntent(kind="personal_dispatch", command=None, raw=body)
     if (
         parse.status == "valid"

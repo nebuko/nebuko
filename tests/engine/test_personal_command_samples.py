@@ -2,7 +2,8 @@
 
 Every sample in ``tests/fixtures/personal-command-samples.json`` must classify
 the same way for the project side: a ``personal dispatch`` is skipped without
-a run, a ``project run`` is not.
+a run (condition ``start-noop``), a ``project run`` is not (``start-run``).
+The rule is first-line-only, the same grammar as ``parse_command``.
 """
 
 import json
@@ -25,9 +26,14 @@ def test_sample_classification_matches_table(sample):
     dispatch = sample["class"] == "personal dispatch"
     assert is_personal_dispatch(sample["body"]) is dispatch
     assert (classify_comment(sample["body"]).kind == "personal_dispatch") is dispatch
+    assert sample["condition"] == ("start-noop" if dispatch else "start-run")
 
 
-def test_lane_flag_of_reports_the_command_line_flag():
-    assert lane_flag_of("thanks\n/nebuko approve gate --personal") == "personal"
+def test_lane_flag_of_reads_only_the_first_line():
+    assert lane_flag_of("thanks\n/nebuko approve gate --personal") is None
     assert lane_flag_of("/nebuko approve gate --project") == "project"
     assert lane_flag_of("/nebuko approve gate") is None
+
+
+def test_lane_flag_after_feedback_is_feedback_text():
+    assert lane_flag_of("/nebuko reject gate --feedback no --personal") is None
