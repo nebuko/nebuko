@@ -39,7 +39,8 @@ def test_reusable_workflow_checks_out_the_personal_repo_read_only():
     assert checkouts, "no checkout step writes the personal repo to .nebuko-personal"
     with_ = checkouts[0]["with"]
     assert with_.get("persist-credentials") is False
-    assert "nebuko-personal" in str(with_.get("repository", ""))
+    # The guard names the personal repo: the step runs only in a personal-repo run.
+    assert "nebuko-personal" in str(checkouts[0].get("if", "")) + str(with_.get("repository", ""))
     # Default branch: no explicit ref may pin the personal checkout.
     assert not with_.get("ref")
 
