@@ -129,11 +129,40 @@ class TestRender:
         assert "@" not in body
         assert "workflow **default** is waiting for your approval" in body
 
-    def test_approval_body_names_the_step_and_the_resume_command(self):
+    def test_approval_body_names_the_step_and_the_gate_commands(self):
         body = _classify(_outcome(Appreciation.APPROVED, note="human_gate:plan"), step="plan", gate_pending=True).render()
-        assert "waiting for your approval" in body
-        assert "step `plan`" in body
+        assert "waiting for your approval at step `plan`" in body
+        assert "/nebuko approve gate" in body
+        assert "/nebuko reject gate" in body
+        assert "/nebuko resume" not in body
+
+    def test_approval_without_a_gate_keeps_the_resume_command(self):
+        body = HumanActionNotice(
+            kind="awaiting_approval", target="olivier-norture", step="plan", workflow="default"
+        ).render()
         assert "/nebuko resume" in body
+        assert "/nebuko approve gate" not in body
+
+    def test_missing_identity_never_renders_an_empty_bold_or_code_span(self):
+        for kind in ("awaiting_approval", "awaiting_input", "workflow_complete"):
+            body = HumanActionNotice(kind=kind, target="olivier-norture").render()
+            assert "****" not in body
+            assert "``" not in body
+            assert "the workflow" in body
+
+    def test_step_only_identity_names_the_step_without_a_workflow(self):
+        body = HumanActionNotice(
+            kind="awaiting_input", target="", step="context"
+        ).render()
+        assert "the workflow is paused at step `context`" in body
+        assert "**" not in body
+
+    def test_workflow_only_identity_names_the_workflow_without_a_step(self):
+        body = HumanActionNotice(
+            kind="workflow_complete", target="", workflow="default"
+        ).render()
+        assert "workflow **default** has finished." in body
+        assert "`" not in body
 
     def test_input_body_asks_for_feedback(self):
         body = _classify(_outcome(Appreciation.HOLD, hold_kind=HoldKind.AWAITING_INPUT, note="await something"), step="context").render()

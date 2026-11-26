@@ -627,7 +627,7 @@ class TestRealStepPath:
         assert real_loop.main() == 0
 
         assert len(real_loop.agent_calls) == 3
-        gate_notices = [b for b in real_loop.thread.posted if "approve gate" in b]
+        gate_notices = [b for b in real_loop.thread.posted if "<!-- bot-human-action -->" in b and "approve gate" in b]
         assert len(gate_notices) == 1
         assert all(CONTINUE_TOKEN not in body for body in real_loop.thread.posted)
 
