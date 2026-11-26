@@ -764,7 +764,7 @@ plan is rejected (insufficient context).
 
 After `implement` the engine runs two script steps, so review judges evidence
 the dev agent did not write. `git_diff` writes `git diff --stat` and the full
-diff against `origin/<base_branch>`. `run_tests` runs the manifest's
+diff against the base commit the engine resolved once per run (`NEBUKO_BASE_SHA`). `run_tests` runs the manifest's
 `test_command` (see [configuration](configuration.md)). A failing run is
 evidence for review, not a stop. With no `test_command`, `run_tests` reports
 `no test_command configured in .nebuko/nebuko.yaml` and review says there is no
@@ -772,13 +772,17 @@ test evidence. Review does not run the suite itself and calls a failure
 pre-existing only with a run of that test on the base branch.
 
 Trust model: `test_command` is read from the base branch's committed manifest,
-so a branch cannot change the command that runs. The base ref is the engine's
-`NEBUKO_BASE_BRANCH`, else `origin/HEAD`, else `main`; the working-tree manifest
-is never read for it. The tests themselves are the
+so a branch cannot change the command that runs. The base is resolved once per
+run, before the first step (`NEBUKO_BASE_BRANCH` else `origin/HEAD` else `main`);
+the working-tree manifest is never read for it, and no later step re-reads the
+refs, so an agent step in the same checkout cannot move them. The tests themselves are the
 branch's code (a `conftest.py` on the branch runs inside the engine job, next
-to the provider and GitHub secrets). `run_tests` does not set
-`NEBUKO_MERGE_MAIN=0`: it merges `origin/<base_branch>` after `git_diff` has read
-the diff, so review checks the `head` the tests ran on.
+to the provider and GitHub secrets).
+
+`run_tests` sets `NEBUKO_MERGE_MAIN=0`, like `git_diff`: both show and test the
+branch head, the tree the dev pushed. The cost is one case: a semantic conflict
+with newer base commits (no textual conflict) shows up in CI on the merge commit,
+not in `run_tests`. A branch that textually conflicts cannot be merged anyway.
 
 Shipped workflows and variants that carry an `implement` → `review` cycle:
 

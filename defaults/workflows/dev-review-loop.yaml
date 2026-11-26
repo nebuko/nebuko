@@ -26,10 +26,9 @@ steps:
       args:
         - "-c"
         - >-
-          base="${NEBUKO_BASE_BRANCH:-}"; [ -n "$base" ] || base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null);
-          base="${base#origin/}"; base="${base:-main}";
-          git --no-pager diff --stat "origin/$base...HEAD" &&
-          git --no-pager diff "origin/$base...HEAD"
+          [ -n "${NEBUKO_BASE_SHA:-}" ] || { echo "base commit of ${NEBUKO_BASE_BRANCH:-main} could not be resolved; no diff was taken" >&2; exit 1; };
+          git --no-pager diff --stat "$NEBUKO_BASE_SHA...HEAD" &&
+          git --no-pager diff "$NEBUKO_BASE_SHA...HEAD"
     # Default edges: a failed command is evidence for review, not a stop.
     conditions:
       - on_result: default

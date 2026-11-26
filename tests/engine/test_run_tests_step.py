@@ -11,12 +11,14 @@ import json
 import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from nebuko.engine.lib.config import load_workflow
-from nebuko.engine.models import DeterministicStep, _manifest_overlay
+from nebuko.engine.models import DeterministicStep, ExitCode, RunOutcome, _manifest_overlay
+from nebuko.engine.step_driver import DriverConfig, StepDriver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHIPPED = REPO_ROOT / "defaults" / "workflows"
@@ -73,16 +75,24 @@ def _shipped_script(workflow: str, step_name: str):
     return next(s for s in definition.steps if s.name == step_name).script
 
 
-def _run_tests_step(script_env: dict[str, str] | None = None, timeout: int = 20) -> DeterministicStep:
-    script = _shipped_script("dev-review-loop", "run_tests")
+def _evidence_step(step_name: str, script_env: dict[str, str] | None = None, timeout: int = 20) -> DeterministicStep:
+    script = _shipped_script("dev-review-loop", step_name)
     return DeterministicStep(
         kind="run_script",
         script_path=script.command,
         script_args=json.dumps(script.args or []),
         script_env=json.dumps(script_env or {}),
         timeout_minutes=timeout,
-        step_name="run_tests",
+        step_name=step_name,
     )
+
+
+def _run_tests_step(script_env: dict[str, str] | None = None, timeout: int = 20) -> DeterministicStep:
+    return _evidence_step("run_tests", script_env, timeout)
+
+
+def _rev(repo: Path, ref: str) -> str:
+    return subprocess.run(["git", "rev-parse", ref], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
 
 
 @pytest.fixture()
@@ -248,3 +258,58 @@ class TestRunTestsStep:
         assert _run_tests_step()._timeout_minutes_for(env) == 2
         other = DeterministicStep(kind="run_script", script_path="true", timeout_minutes=20, step_name="git_diff")
         assert other._timeout_minutes_for(env) == 20
+
+
+class TestBaseSnapshotInTheSingleJobLoop:
+    def test_an_agent_step_cannot_repoint_the_base_that_script_steps_read(
+        self, tmp_path, monkeypatch, engine_env
+    ):
+        """Issue #1475: the base is resolved before the first agent step and kept for the run."""
+        checkout = _repo(tmp_path, committed="test_command: echo committed-cmd\n", working=None)
+        (checkout / "feature.txt").write_text("feature\n")
+        _git(checkout, "add", "-A")
+        _git(checkout, "commit", "-q", "-m", "feature")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
+        results = {}
+
+        def agent_step():
+            # The dev agent's edit in the shared checkout: a commit on top of the
+            # branch that carries a malicious manifest, with the base refs moved to it.
+            _git(checkout, "checkout", "-q", "--detach")
+            (checkout / ".nebuko").mkdir(exist_ok=True)
+            (checkout / ".nebuko" / "nebuko.yaml").write_text("test_command: echo evil-cmd\n")
+            (checkout / "evil.txt").write_text("evil\n")
+            _git(checkout, "add", "-A")
+            _git(checkout, "commit", "-q", "-m", "evil")
+            evil = _rev(checkout, "HEAD")
+            _git(checkout, "update-ref", "refs/remotes/origin/evil", evil)
+            _git(checkout, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/evil")
+            _git(checkout, "update-ref", "refs/remotes/origin/main", evil)
+            _git(checkout, "checkout", "-q", "feature/issue-1-x")
+            return _outcome(ExitCode.ADVANCE)
+
+        def script_steps():
+            results["run_tests"] = _run_tests_step().execute(adapter=None)
+            results["git_diff"] = _evidence_step("git_diff", {"NEBUKO_MERGE_MAIN": "0"}).execute(adapter=None)
+            return _outcome(ExitCode.HOLD)
+
+        driver = StepDriver(
+            DriverConfig(enabled=True, step_budget_s=1200.0, max_steps=6, wall_clock_s=3000.0),
+            engine_factory=lambda index: SimpleNamespace(run=agent_step if index == 1 else script_steps),
+            adapter_probe=frozenset,
+            clock=lambda: 0.0,
+            notify=lambda _body: None,
+            origin=0.0,
+        )
+
+        driver.run()
+
+        assert results["run_tests"].ok
+        assert "committed-cmd" in results["run_tests"].output
+        assert "evil-cmd" not in results["run_tests"].output
+        assert "feature.txt" in results["git_diff"].output
+        assert "evil.txt" not in results["git_diff"].output
+
+
+def _outcome(code: ExitCode) -> RunOutcome:
+    return RunOutcome(exit_code=code, turn_outcome=None, prompt=None, posted_body=None, state=None, phases=())

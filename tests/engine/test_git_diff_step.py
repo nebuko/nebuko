@@ -89,6 +89,10 @@ def shallow_checkout(tmp_path: Path) -> Path:
     return _shallow_checkout(tmp_path)
 
 
+def _rev(repo: Path, ref: str) -> str:
+    return subprocess.run(["git", "rev-parse", ref], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+
+
 def _shipped_argv() -> list[str]:
     return _declared_argv("dev-review-loop", directory="defaults/workflows")
 
@@ -110,17 +114,18 @@ class TestGitDiffStep:
 
             joined = " ".join(script.args)
 
-            assert '"origin/$base...HEAD"' in joined
-            assert "origin/main" not in joined
+            assert '"$NEBUKO_BASE_SHA...HEAD"' in joined
+            assert "origin/" not in joined
 
     def test_a_repo_whose_default_branch_is_not_main_gets_its_own_diff(
         self, tmp_path: Path
     ):
         checkout = _shallow_checkout(tmp_path, base="trunk")
-        env = {"NEBUKO_BASE_BRANCH": "trunk"}
         assert resolve_evidence_checkout(
-            checkout, env, mode="session", branch="feature/issue-1-x"
+            checkout, {"NEBUKO_BASE_BRANCH": "trunk"}, mode="session", branch="feature/issue-1-x"
         ).ok
+        sha = _rev(checkout, "origin/trunk")
+        env = {"NEBUKO_BASE_BRANCH": "trunk", "NEBUKO_BASE_SHA": sha}
 
         result = subprocess.run(
             _shipped_argv(), cwd=checkout, capture_output=True, text=True,
@@ -130,24 +135,28 @@ class TestGitDiffStep:
         assert result.returncode == 0, result.stderr
         assert "+ahead line" in result.stdout
 
-    def test_without_a_base_branch_the_remote_default_is_used_as_the_manifest_does(
-        self, tmp_path: Path
-    ):
-        """No ``NEBUKO_BASE_BRANCH``: the diff follows ``origin/HEAD``, as the manifest ref does."""
+    def test_the_diff_follows_the_base_sha_the_engine_resolved(self, tmp_path: Path):
+        """The engine resolves the base commit; the shell diffs against it and nothing else."""
         checkout = _shallow_checkout(tmp_path, base="trunk")
-        _git(checkout, "fetch", "-q", "origin", "trunk")
-        _git(checkout, "remote", "set-head", "origin", "trunk")
-        env = {k: v for k, v in os.environ.items() if k != "NEBUKO_BASE_BRANCH"}
         assert resolve_evidence_checkout(
-            checkout, {}, mode="session", branch="feature/issue-1-x"
+            checkout, {"NEBUKO_BASE_BRANCH": "trunk"}, mode="session", branch="feature/issue-1-x"
         ).ok
+        env = {**os.environ, "NEBUKO_BASE_SHA": _rev(checkout, "origin/trunk")}
+        env.pop("NEBUKO_BASE_BRANCH", None)
 
-        result = subprocess.run(
-            _shipped_argv(), cwd=checkout, capture_output=True, text=True, env=env,
-        )
+        result = subprocess.run(_shipped_argv(), cwd=checkout, capture_output=True, text=True, env=env)
 
         assert result.returncode == 0, result.stderr
         assert "+ahead line" in result.stdout
+
+    def test_no_resolved_base_commit_is_a_failed_diff_not_a_guess(self, tmp_path: Path):
+        checkout = _shallow_checkout(tmp_path, base="trunk")
+        env = {k: v for k, v in os.environ.items() if k != "NEBUKO_BASE_SHA"}
+
+        result = subprocess.run(_shipped_argv(), cwd=checkout, capture_output=True, text=True, env=env)
+
+        assert result.returncode != 0
+        assert "could not be resolved" in result.stderr
 
     def test_a_hostile_base_branch_is_passed_as_one_inert_ref(self, tmp_path: Path):
         checkout = _shallow_checkout(tmp_path)

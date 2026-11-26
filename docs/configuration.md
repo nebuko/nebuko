@@ -9,10 +9,10 @@ engine.
 
 | Key | Env var | Default | Meaning |
 |-----|---------|---------|---------|
-| `base_branch` | `NEBUKO_BASE_BRANCH` | `main` | The default branch. `git_diff` diffs against `origin/<base_branch>`, and the evidence checkout resolves against it. Letters, digits and `._/-`, at most 200 characters, no `..`, no leading `-`; anything else fails the run with a clear error. |
+| `base_branch` | `NEBUKO_BASE_BRANCH` | `main` | The default branch. The engine resolves it once per run, with its commit `NEBUKO_BASE_SHA`; `git_diff` diffs against that commit, and the evidence checkout resolves against the branch. Letters, digits and `._/-`, at most 200 characters, no `..`, no leading `-`; anything else fails the run with a clear error. |
 | `test_command` | `NEBUKO_TEST_COMMAND` | none | Shell command that runs the repo's tests. The shipped `run_tests` step runs it with `eval` from the workspace. Blank counts as unset. |
 | `test_timeout_minutes` | `NEBUKO_TEST_TIMEOUT_MINUTES` | `20` | Minutes allowed for `run_tests`. |
-| `merge_main` | | `true` | Script steps that run tests merge `origin/main` first, so they test what CI tests. A step opts out with its own `NEBUKO_MERGE_MAIN=0`. |
+| `merge_main` | | `true` | Script steps merge `origin/<base_branch>` first, so they test what CI tests. A step opts out with its own `NEBUKO_MERGE_MAIN=0`. The shipped `git_diff` and `run_tests` opt out, so they test the branch head: a semantic conflict with newer base commits (no textual conflict) shows up in CI on the merge commit, not in `run_tests`. Other script steps, such as the red-test loop's `run_tests`, still merge. |
 | `default_workflow` | | `default` | Workflow used when none is named. |
 | `agent_config` | `AGENT_CONFIG_PATH` | | Agent config file. |
 | `circuit_breaker_threshold` | `CIRCUIT_BREAKER_THRESHOLD` | | Agent calls allowed per issue. |
@@ -25,9 +25,12 @@ built-in default. An empty input counts as unset.
 
 ## Script steps read the committed manifest
 
-A script step takes `base_branch`, `test_command` and `test_timeout_minutes`
-from the base branch's committed copy, `origin/<base_branch>:.nebuko/nebuko.yaml`,
-not from the working tree. The session checkout is the branch under review, and
+The engine resolves the base once per run, before the first step: the base name,
+its commit (`NEBUKO_BASE_SHA`) and the manifest committed at that commit. Script
+steps read these from that snapshot. In the single-job loop an agent step shares
+the checkout, so no script step reads refs after the snapshot. A script step takes
+`test_command` and `test_timeout_minutes` from the committed manifest,
+`origin/<base_branch>:.nebuko/nebuko.yaml`, not from the working tree. The session checkout is the branch under review, and
 the dev agent can edit it. Reading the working tree would let a branch change the
 command that runs on its own code.
 

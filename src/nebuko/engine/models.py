@@ -12,6 +12,8 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
 from pathlib import Path
@@ -620,39 +622,104 @@ def _script_argv(encoded: str) -> list[str]:
 TEST_STEP_NAME = "run_tests"
 
 
+@dataclass(frozen=True)
+class BaseSnapshot:
+    """The base branch as the engine resolved it once, before the run's first step (issue #1475).
+
+    Script steps take the base name, its commit and the manifest committed there
+    from this value, never from the checkout's refs or working tree. In the
+    single-job loop an agent step shares the checkout and could move
+    ``origin/HEAD`` or ``origin/<base>`` or add a local ``origin/<name>`` ref.
+    """
+
+    branch: str
+    sha: str  # "" when origin/<branch> does not resolve
+    manifest: NebukoManifest
+    note: str | None = None
+
+
+_BASE_SNAPSHOT: BaseSnapshot | None = None
+
+
+@contextmanager
+def base_snapshot_scope() -> Iterator[None]:
+    """Hold one base snapshot for the run; the single-job loop wraps all its steps in it.
+
+    Outside a scope each script step resolves its own snapshot, which is the same
+    as one per run in a fresh runner per step.
+    """
+    global _BASE_SNAPSHOT
+    previous = _BASE_SNAPSHOT
+    workspace = session_workspace()
+    _BASE_SNAPSHOT = resolve_base_snapshot(workspace) if workspace is not None else None
+    try:
+        yield
+    finally:
+        _BASE_SNAPSHOT = previous
+
+
+def resolve_base_snapshot(workspace: Path) -> BaseSnapshot:
+    """The base name, its commit and the manifest committed at that commit."""
+    branch = _trusted_base_branch(workspace)
+    sha = _git_stdout(workspace, "rev-parse", "--verify", "--quiet", f"origin/{branch}^{{commit}}")
+    manifest, note = _committed_manifest(workspace, branch, sha)
+    return BaseSnapshot(branch=branch, sha=sha, manifest=manifest, note=note)
+
+
 def _manifest_overlay(workspace: Path | None) -> dict[str, str] | None:
-    """The engine env with the committed manifest filling unset keys (issue #1475).
+    """The engine env with the base snapshot filling unset keys (issue #1475).
 
     ``None`` without a workspace, where the child keeps the ambient environment.
-    A manifest that could not be read or is invalid leaves a note in
-    ``NEBUKO_MANIFEST_NOTE`` so ``run_tests`` can say so instead of "not configured".
+    ``NEBUKO_BASE_BRANCH`` and ``NEBUKO_BASE_SHA`` are set after the overlay, so
+    no ambient or step value can repoint them. ``NEBUKO_MANIFEST_NOTE`` says why
+    no committed manifest was read, so ``run_tests`` can report it.
     """
     if workspace is None:
         return None
-    manifest, note = _committed_manifest(workspace)
-    env = manifest.overlay_env(os.environ)
-    if note:
-        env[_MANIFEST_NOTE_ENV] = note
+    snapshot = _BASE_SNAPSHOT or resolve_base_snapshot(workspace)
+    env = snapshot.manifest.overlay_env(os.environ)
+    env["NEBUKO_BASE_BRANCH"] = snapshot.branch
+    env["NEBUKO_BASE_SHA"] = snapshot.sha
+    if snapshot.note:
+        env[_MANIFEST_NOTE_ENV] = snapshot.note
     return env
 
 
-def _committed_manifest(workspace: Path) -> tuple[NebukoManifest, str | None]:
-    """The manifest committed on the base branch, never the working-tree copy.
+def _git_stdout(workspace: Path, *args: str) -> str:
+    """Stripped stdout of a read-only git query; ``""`` when it fails."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(workspace), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def _committed_manifest(
+    workspace: Path, base: str, sha: str
+) -> tuple[NebukoManifest, str | None]:
+    """The manifest committed at ``sha``, the base branch's commit, never the working-tree copy.
 
     The session checkout is the branch under review and the dev agent can edit
     it, so nothing read from it may pick the ref or change what ``run_tests``
-    runs. Returns the manifest and a note when it could not be read from
-    ``origin/<base>`` (ref not fetched, git failure) or is invalid. An absent
-    file on a readable base is a repo without a manifest: no note.
+    runs. Returns the manifest and a note when the base commit did not resolve,
+    the file could not be read from it, or it is invalid. An absent file on a
+    readable base is a repo without a manifest: no note.
     """
     import yaml
 
-    base = _trusted_base_branch(workspace)
     ref = f"origin/{base}"
     unreadable = f"committed {_MANIFEST_RELPATH} could not be read from {ref}; no test_command was checked"
+    if not sha:
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
     try:
         listed = subprocess.run(
-            ["git", "-C", str(workspace), "ls-tree", "--name-only", ref, "--", _MANIFEST_RELPATH],
+            ["git", "-C", str(workspace), "ls-tree", "--name-only", sha, "--", _MANIFEST_RELPATH],
             capture_output=True,
             text=True,
             timeout=30,
@@ -663,7 +730,7 @@ def _committed_manifest(workspace: Path) -> tuple[NebukoManifest, str | None]:
         if not listed.stdout.strip():
             return NebukoManifest(), None
         completed = subprocess.run(
-            ["git", "-C", str(workspace), "show", f"{ref}:{_MANIFEST_RELPATH}"],
+            ["git", "-C", str(workspace), "show", f"{sha}:{_MANIFEST_RELPATH}"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -697,17 +764,8 @@ def _trusted_base_branch(workspace: Path) -> str:
         return engine_base
     if engine_base:
         log.warning("NEBUKO_BASE_BRANCH %r is not a valid branch name; ignored", engine_base)
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(workspace), "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return _DEFAULT_BASE_BRANCH
-    name = head.stdout.strip()
-    if head.returncode == 0 and name.startswith("origin/") and _is_branch_name(name[len("origin/"):]):
+    name = _git_stdout(workspace, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if name.startswith("origin/") and _is_branch_name(name[len("origin/"):]):
         return name[len("origin/"):]
     return _DEFAULT_BASE_BRANCH
 
