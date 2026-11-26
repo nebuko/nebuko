@@ -3453,9 +3453,10 @@ class Engine:
             env, self._step_input_state.get("results") or []
         )
         env = _with_context_bodies(env, self._context_bodies())
+        env = _anchor_config_path(env, self.repo_root, self._caller_root())
         # The frozen personal config, so the child never re-reads the personal checkout (issue #1485).
-        env.update(personal_snapshot_child_env())
-        return _anchor_config_path(env, self.repo_root, self._caller_root())
+        env.update(personal_snapshot_child_env(env.get("AGENT_CONFIG_PATH")))
+        return env
 
     def _active_trigger(self) -> Trigger | None:
         """The trigger the resolver annotated the hand-off with, if any.

@@ -54,8 +54,9 @@ def load_config_prices(  # @stub-protected
     )
 
     path = config_path or agent_config_file()
+    # Outside the fail-open ``try``: an unfrozen personal config is an error, not a missing price.
+    frozen = frozen_agent_config_text(path)
     try:
-        frozen = frozen_agent_config_text(path)
         if frozen is not None:
             config = yaml.safe_load(frozen) or {}
         else:

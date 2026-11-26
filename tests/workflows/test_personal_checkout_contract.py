@@ -1,16 +1,14 @@
 """Contract: the reusable workflow checks the personal repo out for Lane D (issues #1479, #1483).
 
 The personal lane reads its manifest and agent overrides from ``.nebuko-personal``.
-Nothing in the workflow checks that repo out yet, so this test is an expected
-failure until a human applies the step (issue 1483 tracks the workflow patch). It
-turns into an unexpected pass once the step lands; the xfail is then removed.
+The step lives in the reusable workflow, which the engine cannot push; it was
+applied by a human (issue 1483 tracks the workflow patch).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,14 +29,6 @@ def _job_steps_running_the_engine() -> list[dict]:
     raise AssertionError("no job runs the orchestration engine")
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "issue 1485: the reusable workflow does not check out the personal repo into "
-        ".nebuko-personal yet; the step is delivered as nebuko-task-logs/workflow-patch.diff "
-        "and a human applies it, then removes this marker"
-    ),
-)
 def test_reusable_workflow_checks_out_the_personal_repo_read_only():
     checkouts = [
         step

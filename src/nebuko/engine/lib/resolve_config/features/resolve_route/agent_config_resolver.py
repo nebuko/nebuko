@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator, Literal, Mapping, Optional
 
@@ -30,7 +30,10 @@ __all__ = [
     "PERSONAL_CHECKOUT_DIR",
     "PERSONAL_REPO_SUFFIX",
     "PERSONAL_SNAPSHOT_ENV",
+    "PERSONAL_SNAPSHOT_ENV_LIMIT",
+    "PersonalConfigNotFrozen",
     "PersonalSnapshot",
+    "PersonalSnapshotTooLarge",
     "ResolvedAgentConfig",
     "current_personal_snapshot",
     "frozen_agent_config_text",
@@ -134,6 +137,13 @@ class AgentConfigResolver:
         found.append(("shipped", self.shipped_dir))
         return found
 
+    def _holds(self, layer: str, candidate: Path) -> bool:
+        """Whether a layer holds ``candidate``; the personal layer is exactly the snapshot's files."""
+        snapshot = current_personal_snapshot()
+        if layer == "personal" and snapshot is not None:
+            return snapshot.text_for(candidate) is not None
+        return candidate.is_file()
+
     def resolve(self, name: str) -> ResolvedAgentConfig:
         """Find a bare config file name; raise :class:`AgentConfigNotFound` otherwise."""
         bare = name.strip()
@@ -141,7 +151,7 @@ class AgentConfigResolver:
         for layer, root in self.layers():
             searched.append(layer)
             candidate = root / bare
-            if bare and (candidate.is_file() or frozen_agent_config_text(candidate) is not None):
+            if bare and self._holds(layer, candidate):
                 return ResolvedAgentConfig(path=candidate, layer=layer, searched=list(searched))
         hint = (
             ""
@@ -220,6 +230,29 @@ def required_secret_names_from_text(text: str) -> list[str]:
 #: disk cannot change what the child reads.
 PERSONAL_SNAPSHOT_ENV = "NEBUKO_PERSONAL_SNAPSHOT"
 
+#: Bytes the encoded child snapshot may take. Linux caps one environment string
+#: near 128 KB, and a larger value would fail the child's exec with no clear cause.
+PERSONAL_SNAPSHOT_ENV_LIMIT = 100 * 1024
+
+
+class PersonalConfigNotFrozen(ValueError):
+    """A personal agent-config path the run's snapshot does not hold.
+
+    The personal agents directory is read only through the snapshot while a
+    personal run is active, so such a file is never read from disk.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = str(path)
+        super().__init__(
+            f"personal agent config '{self.path}' is not in this run's frozen snapshot; "
+            "it was added or changed after the run started and is not read"
+        )
+
+
+class PersonalSnapshotTooLarge(ValueError):
+    """The child snapshot would exceed :data:`PERSONAL_SNAPSHOT_ENV_LIMIT`."""
+
 
 @dataclass(frozen=True)
 class PersonalSnapshot:
@@ -248,12 +281,24 @@ class PersonalSnapshot:
     manifest_ignored: tuple[str, ...] = ()
     note: Optional[str] = None
 
+    def in_agents_dir(self, path: str | Path) -> bool:
+        """True when ``path`` names a direct child of the personal agents directory."""
+        agents_dir = os.path.abspath(Path(self.root) / ".nebuko" / "agents")
+        return os.path.dirname(os.path.abspath(path)) == agents_dir
+
     def text_for(self, path: str | Path) -> Optional[str]:
         """The frozen text of ``path`` when it is a file of the personal agents dir."""
-        candidate = Path(path)
-        if candidate.parent != Path(self.root) / ".nebuko" / "agents":
+        if not self.in_agents_dir(path):
             return None
-        return self.agents.get(candidate.name)
+        return self.agents.get(Path(os.path.abspath(path)).name)
+
+    def child_view(self, config_path: Optional[str]) -> "PersonalSnapshot":
+        """The part an agent child needs: the selected config's text, the layer, name and secrets."""
+        agents: dict[str, str] = {}
+        text = self.text_for(config_path) if config_path else None
+        if text is not None:
+            agents[Path(config_path).name] = text
+        return replace(self, agents=agents, manifest_ignored=(), note=None)
 
     def to_env(self) -> str:
         return json.dumps(
@@ -363,13 +408,35 @@ def current_personal_snapshot() -> Optional[PersonalSnapshot]:
     return PersonalSnapshot.from_env(raw) if raw else None
 
 
-def personal_snapshot_child_env() -> dict[str, str]:
-    """The env entry that carries the snapshot to an agent child; empty outside a personal run."""
+def personal_snapshot_child_env(config_path: Optional[str] = None) -> dict[str, str]:
+    """The env entry that carries the snapshot to an agent child; empty outside a personal run.
+
+    Only the selected config's text travels (the full set stays in the engine),
+    so the value stays under the environment size limit.
+    """
     snapshot = current_personal_snapshot()
-    return {PERSONAL_SNAPSHOT_ENV: snapshot.to_env()} if snapshot is not None else {}
+    if snapshot is None:
+        return {}
+    encoded = snapshot.child_view(config_path).to_env()
+    size = len(encoded.encode("utf-8"))
+    if size > PERSONAL_SNAPSHOT_ENV_LIMIT:
+        raise PersonalSnapshotTooLarge(
+            f"personal agent config snapshot for the agent child is {size} bytes, over the "
+            f"{PERSONAL_SNAPSHOT_ENV_LIMIT}-byte environment limit; shorten the personal agent config"
+        )
+    return {PERSONAL_SNAPSHOT_ENV: encoded}
 
 
 def frozen_agent_config_text(path: str | Path) -> Optional[str]:
-    """The snapshot's text for ``path`` when a personal snapshot holds it, else ``None``."""
+    """The snapshot's text for ``path``, ``None`` when it is not a personal config.
+
+    Raises :class:`PersonalConfigNotFrozen` for a file under the personal agents
+    directory that the snapshot does not hold, so no reader falls back to disk.
+    """
     snapshot = current_personal_snapshot()
-    return snapshot.text_for(path) if snapshot is not None else None
+    if snapshot is None:
+        return None
+    text = snapshot.text_for(path)
+    if text is None and snapshot.in_agents_dir(path):
+        raise PersonalConfigNotFrozen(path)
+    return text
