@@ -771,6 +771,26 @@ evidence for review, not a stop. With no `test_command`, `run_tests` reports
 test evidence. Review does not run the suite itself and calls a failure
 pre-existing only with a run of that test on the base branch.
 
+Trust model: `test_command` is read from the base branch's committed manifest,
+so a branch cannot change the command that runs. The tests themselves are the
+branch's code (a `conftest.py` on the branch runs inside the engine job, next
+to the provider and GitHub secrets). `run_tests` does not set
+`NEBUKO_MERGE_MAIN=0`: it merges `origin/<base_branch>` after `git_diff` has read
+the diff, so review checks the `head` the tests ran on.
+
+Shipped workflows and variants that carry an `implement` → `review` cycle:
+
+| File | Decision |
+|------|----------|
+| `defaults/workflows/default.yaml` | Runs `git_diff` and `run_tests` (shipped). |
+| `defaults/workflows/dev-review-loop.yaml` | Runs `git_diff` and `run_tests` (shipped; reused by plan-orchestration). |
+| `.nebuko/workflows/default-with-output.yaml` | Follows the shipped default: same two steps and review inputs. |
+| `.nebuko/workflows/dev-review-loop.yaml` | Deleted: the shipped file now does the same. |
+| `.nebuko/workflows/plan-dev-review-cmd.yaml`, `red-test-review-loop.yaml` | Keep their own evidence steps; not changed here. They still name `origin/main` and do not read `base_branch`. Follow-up. |
+| `.nebuko/workflows/root-cause.yaml`, `defaults/workflows/spec-driven-impl.yaml`, `spec-tdd.yaml` | Not dev-review rounds for the default cycle; unchanged. |
+| `defaults/workflows/plan-orchestration.yaml` | Unchanged; its per-step dev rounds run the shipped `dev-review-loop` sub-workflow, so they get the evidence steps. |
+| `defaults/workflows/review-only.yaml` | Unchanged; no `dev` step, so there is no implement round to evidence. |
+
 The `plan` step is a single `human_gate:plan`: @@architect emits **one** planning
 artifact — visible `Context (root cause)`, `Decision` (design + Object Design
 Anchor), an `Approaches considered` table, and the `Object Design Contract`, with

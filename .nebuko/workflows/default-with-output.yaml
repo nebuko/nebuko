@@ -89,7 +89,7 @@ steps:
 
   - name: implement
     agent: dev
-    next: review
+    next: git_diff
     output:
       fields:
         - name: headline
@@ -101,8 +101,48 @@ steps:
           required: false
           description: Tests run and their results.
 
+  # Same engine-run evidence as defaults/workflows/default.yaml (issue #1475).
+  - name: git_diff
+    script:
+      command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
+      args:
+        - "-c"
+        - >-
+          git --no-pager diff --stat "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD" &&
+          git --no-pager diff "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD"
+    conditions:
+      - on_result: default
+        next: run_tests
+
+  - name: run_tests
+    script:
+      command: "sh"
+      args:
+        - "-c"
+        - >-
+          case "$(printf '%s' "${NEBUKO_TEST_COMMAND:-}" | tr -d '[:space:]')" in
+          "") echo "no test_command configured in .nebuko/nebuko.yaml"; exit 0 ;;
+          esac;
+          eval "$NEBUKO_TEST_COMMAND"
+      timeout_minutes: 20
+    conditions:
+      - on_result: default
+        next: review
+
   - name: review
     agent: review
+    inputs: [implement, git_diff, run_tests]
+    prompt: |
+      `git_diff` and `run_tests` were run by the engine: trust them over any
+      claim in `implement`, and check that their `head` matches. A failed
+      `run_tests` is a finding. Call a failure pre-existing only with proof: say
+      how you know, by a run of that test on the base branch and its result.
+      If `run_tests` reports that no test_command is configured, there is no
+      test evidence: say so, and do not claim the tests passed.
+      Do not run the whole test suite yourself when `run_tests` exists.
+      Long output is truncated in the middle, so read the branch for what's cut.
     conditions:
       - on_result: approved
         next: null

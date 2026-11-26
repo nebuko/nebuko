@@ -376,3 +376,44 @@ class TestMergeBaseBeforeTests:
         assert outcome.exit_code == ExitCode.ADVANCE
         assert f"branch head {branch_head}" in outcome.posted_body
         assert "merge of" not in outcome.posted_body
+
+
+class TestSingleJobHandOff:
+    """Lane D: a later step of the in-process loop has no persisted state yet.
+
+    The previous step's state is handed over in memory, so the evidence checkout
+    must still resolve the session branch from it (issue #1475).
+    """
+
+    def test_a_later_loop_step_checks_out_the_handed_over_branch(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        handed = WorkflowState.model_validate(
+            {
+                "workflow": "default",
+                "step": "implement",
+                "agent": "dev",
+                "current_context": {},
+                "git": {"branch_name": BRANCH},
+                "history": [
+                    {
+                        "step": "implement",
+                        "agent": "dev",
+                        "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                    }
+                ],
+            }
+        )
+        monkeypatch.setattr("nebuko.engine.run_loop.handed_over_state", lambda: handed)
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved("sh", ["-c", "git rev-parse HEAD"]),
+        )
+        pushed = _pushed_sha(workspace)
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert f"branch: `{BRANCH}`" in outcome.posted_body
+        assert pushed in outcome.posted_body

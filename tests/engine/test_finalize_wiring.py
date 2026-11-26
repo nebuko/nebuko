@@ -326,6 +326,8 @@ class TestDefaultWithOutputWorkflow:
             "context": False,
             "plan": True,
             "implement": True,
+            "git_diff": False,
+            "run_tests": False,
             "review": True,
         }
 
