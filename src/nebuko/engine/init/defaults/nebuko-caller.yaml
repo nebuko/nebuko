@@ -16,8 +16,10 @@ permissions:
 
 jobs:
   agent:
-    # A comment carrying --personal belongs to the broker's personal lane (ADR-0017,
-    # #1479); starting a project run for it would duplicate the run.
+    # A human /nebuko comment carrying --personal belongs to the broker's personal lane
+    # (ADR-0017, #1479); starting a project run for it would duplicate the run. Bot
+    # comments (reports, continuations) are never personal dispatches, so they always
+    # pass. The engine's parse_trigger stays authoritative (first command line only).
     if: >-
       github.event_name != 'issue_comment' ||
       (
@@ -26,7 +28,11 @@ jobs:
                    github.event.comment.author_association) ||
           github.event.comment.user.login == 'nebuko[bot]'
         ) &&
-        !contains(github.event.comment.body, '--personal')
+        (
+          github.event.comment.user.login == 'nebuko[bot]' ||
+          !startsWith(github.event.comment.body, '/nebuko') ||
+          !contains(github.event.comment.body, '--personal')
+        )
       )
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@${pin_ref}
     with:

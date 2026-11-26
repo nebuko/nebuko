@@ -1,4 +1,4 @@
-"""The project caller template must not start a run for a --personal comment (#1479)."""
+"""The project caller template must not start a run for a human --personal comment (#1479)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,21 @@ CALLER = (
 )
 
 
-def test_caller_job_condition_skips_personal_comments():
+def _condition() -> str:
     text = CALLER.read_text(encoding="utf-8")
-    assert "!contains(github.event.comment.body, '--personal')" in text
-    condition = text.split("if: >-", 1)[1].split("uses:", 1)[0]
+    return text.split("if: >-", 1)[1].split("uses:", 1)[0]
+
+
+def test_caller_job_condition_skips_personal_comments():
+    condition = _condition()
     assert "github.event_name != 'issue_comment' ||" in condition
-    assert condition.index("--personal") > condition.index("nebuko[bot]")
+    assert "!contains(github.event.comment.body, '--personal')" in condition
+    # Bot comments are exempt, so a bot body that mentions --personal still passes.
+    assert condition.index("github.event.comment.user.login == 'nebuko[bot]' ||") < condition.index(
+        "!contains(github.event.comment.body, '--personal')"
+    )
+
+
+def test_caller_guard_only_matches_command_lines():
+    # Prose that mentions --personal without a leading /nebuko does not suppress the run.
+    assert "!startsWith(github.event.comment.body, '/nebuko')" in _condition()

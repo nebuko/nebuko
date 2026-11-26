@@ -243,13 +243,38 @@ def _agent_config_selection(
         print(f"Warning: unreadable .nebuko/nebuko.yaml ({exc}); ignoring agent_config", file=sys.stderr)
         project_manifest_name = None
 
+    resolver = AgentConfigResolver.for_run(
+        "personal" if personal_lane else "project",
+        caller_root,
+        personal_root if personal_lane and personal_root.is_dir() else None,
+        checkout_root() / "defaults" / "agents",
+    )
+    previous_name = prev_state.agent_config if prev_state is not None else None
+    carry_previous = lane_action not in _LANE_CHANGE_ACTIONS
     name, source = select_config_name(
         flag=requested_config,
-        previous=prev_state.agent_config if prev_state is not None else None,
+        previous=previous_name,
         personal_manifest=personal_manifest_name,
         project_manifest=project_manifest_name,
-        carry_previous=lane_action not in _LANE_CHANGE_ACTIONS,
+        carry_previous=carry_previous,
     )
+    if source == "previous" and name and not _is_path_like(name):
+        try:
+            resolver.resolve(name)
+        except AgentConfigNotFound:
+            # A persisted name that no longer resolves falls back to the manifests
+            # and shipped default, in both lanes, instead of failing the resume.
+            print(
+                f"Warning: persisted agent config '{name}' not found; falling back to the manifest or default",
+                file=sys.stderr,
+            )
+            name, source = select_config_name(
+                flag=None,
+                previous=None,
+                personal_manifest=personal_manifest_name,
+                project_manifest=project_manifest_name,
+                carry_previous=False,
+            )
     if name is None and personal_lane:
         name = Path(os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml").name
         source = "shipped"
@@ -264,21 +289,9 @@ def _agent_config_selection(
             return {"task": "", "config_command_error": f"agent config file not found: '{name}'"}
         return {"agent_config_path": resolved_path, "agent_config_raw": name}
 
-    resolver = AgentConfigResolver.for_run(
-        "personal" if personal_lane else "project",
-        caller_root,
-        personal_root if personal_lane and personal_root.is_dir() else None,
-        checkout_root() / "defaults" / "agents",
-    )
     try:
         resolved = resolver.resolve(name)
     except AgentConfigNotFound as exc:
-        if source == "previous" and not personal_lane:
-            print(
-                f"Warning: persisted agent config '{name}' not found; using the workflow's own config",
-                file=sys.stderr,
-            )
-            return {}
         if source == "flag" and not personal_lane:
             available = _available_agent_configs(caller_root)
             listing = ", ".join(available) if available else "none found"

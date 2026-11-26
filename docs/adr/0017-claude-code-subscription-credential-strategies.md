@@ -398,7 +398,10 @@ another payer (option B is not used silently).
   secrets against the personal environment only.
 - Config name order: `--config`, the previous state (dropped on a takeover or
   lane switch), the personal manifest (personal lane only, `agent_config` only),
-  the project manifest, then the shipped default.
+  the project manifest, then the shipped default. The previous state sits before
+  the manifests on purpose: a resumed run keeps the config it started with, so an
+  edited manifest does not change a run mid-flight. A previous name that no longer
+  resolves warns and falls back to the manifests and default, in both lanes.
 - **Gate decisions via dispatch are not in this change.** A dispatched
   `approve gate --personal` is authored by the bot and is not a gate decision
   today. Enabling it needs its own review. Trust anchor for that follow-up: the
