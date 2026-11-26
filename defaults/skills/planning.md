@@ -40,7 +40,7 @@ Sections, **in this order**:
    1. **`path/to/file`** — what changes and why
    </details>
    ```
-6. **`## Coverage`** (required when the analyze step emitted a requirements ledger). One row per ledger ID — ID / Covered by (the decision or implementation step that covers it) / Verified by (the test name or check):
+6. **`## Coverage`** (required when the analyze step emitted a requirements ledger, which your step inputs carry as `requirements`). Keep its IDs: never renumber them or invent your own. The first cell holds only the ID, and a plan missing an `R` or `K` row is refused. One row per ledger ID — ID / Covered by (the decision or implementation step that covers it) / Verified by (the test name or check):
    ```
    | ID | Covered by | Verified by |
    |---|---|---|

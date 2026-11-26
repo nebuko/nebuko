@@ -68,6 +68,10 @@ steps:
 
   - name: plan
     agent: architect
+    inputs:
+      requirements:
+        ref: analyze.requirements
+        required: false
     prompt: |
       Planning turn: @@context has returned. Follow the Planning skill: emit the single planning artifact (or revise it if your context has a `## Human Gate Decision`), then end with `finalize(turn_outcome={appreciation:'approved', complexity:…})` on the same turn. Never `hold` on this gated step.
     next: implement
