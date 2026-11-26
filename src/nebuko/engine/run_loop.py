@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -38,6 +39,7 @@ from nebuko.engine.lib.git import (
     git_session,
     pr_finalize,
 )
+from nebuko.engine.lib.git.base_branch import resolve_base_branch
 from nebuko.engine.lib.redaction import scan_text
 from nebuko.engine.lib.workflow_state.sub_domains.secret_scan.secret_scan import (
     SecretFinding,
@@ -143,6 +145,8 @@ _STEP_HEADER = "## Current step prompt"
 # The engine owns the value: it is the trigger's issue number, stamped once per
 # run so the session stays stable across engine turns.
 _LLM_SESSION_ID_ENV = "LLM_SESSION_ID"
+# Bounds the git calls behind the guards-phase notices: best-effort, so a slow call must not stall the run.
+_NOTICE_GIT_TIMEOUT_S = 10
 # Outcome fields the engine measures (issue #1033): the recorded outcome the
 # engine hands back carries them, but an agent may never supply them.
 _ENGINE_MEASURED_OUTCOME_KEYS = frozenset({"status", "incomplete_reason"})
@@ -2215,7 +2219,10 @@ class Engine:
         post returns ``None`` and never masks the (successful) no-op outcome.
         """
         marker = _load_bridge_module("prepare_comment").BOT_MARKER
-        body = f"{marker}\n{self._human_ping()}no agent to run — {reason}"
+        body = (
+            f"{marker}\n{self._human_ping()}no agent to run — {reason}"
+            f"{self._branch_publish_note()}"
+        )
         notice = _neutralize_agent_triggers(body)
         try:
             self.adapter.post(notice)
@@ -2266,20 +2273,83 @@ class Engine:
     def _branch_publish_note(self) -> str:
         """Tell the thread how to open the PR when the branch has work but none (#1468).
 
-        Appended to the terminal and gate-hold notices as a safety net for an
-        ``ensure_pr`` that did not open the PR. ``""`` when there is no branch,
-        no work ahead of base, or an open PR already exists.
+        Appended to the terminal, skip and gate-hold notices as a safety net for
+        an ``ensure_pr`` that did not open the PR. These notices post in the
+        guards phase, before the branch is scaffolded, so the branch comes from
+        :meth:`_notice_branch`. ``""`` when there is no branch, no work ahead of
+        base, or an open PR already exists.
         """
-        scaffold = self._scaffold_state.get("result")
-        branch = (
-            scaffold.branch
-            if isinstance(scaffold, branch_scaffold.ScaffoldResult) and scaffold.ok
-            else ""
-        )
+        base = self._notice_base()
+        branch = self._notice_branch(base)
         if not branch:
             return ""
-        note = pr_finalize.branch_publish_note(branch)
+        head = self._notice_head(branch)
+        if not head:
+            return ""
+        note = pr_finalize.branch_publish_note(
+            branch, base=base, head=head, timeout=_NOTICE_GIT_TIMEOUT_S
+        )
         return f"\n\n{note}" if note else ""
+
+    def _notice_head(self, branch: str) -> str:
+        """The ref the note judges: the local branch, else its remote-tracking ref, else ``""``.
+
+        The checkout may not be on the branch (a guards-phase notice in a fresh
+        step), so ``HEAD`` would misjudge it; a branch with no ref here cannot
+        be judged and gets no line.
+        """
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            if self._notice_git(["rev-parse", "--verify", "--quiet", ref]):
+                return ref
+        return ""
+
+    def _notice_branch(self, base: str) -> str:
+        """The branch a notice names: scaffold result, then recorded state, then checkout (#1476).
+
+        The checkout fallback is skipped for a detached HEAD and for the base
+        branch itself, where there is no work to publish.
+        """
+        scaffold = self._scaffold_state.get("result")
+        if (
+            isinstance(scaffold, branch_scaffold.ScaffoldResult)
+            and scaffold.ok
+            and scaffold.branch
+        ):
+            return scaffold.branch
+        try:
+            previous = self._previous_state()
+        except Exception:  # noqa: BLE001 - the notice is best-effort
+            previous = None
+        recorded = str(getattr(getattr(previous, "git", None), "branch_name", "") or "")
+        if recorded:
+            return recorded
+        current = self._notice_git(["rev-parse", "--abbrev-ref", "HEAD"])
+        return "" if current in ("", "HEAD", base) else current
+
+    def _notice_base(self) -> str:
+        """The base branch the scaffold and ``ensure_pr`` resolve, from this run's env."""
+        return resolve_base_branch(
+            self.env,
+            lambda: self._notice_git(
+                ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+            )
+            or None,
+        )
+
+    def _notice_git(self, args: list[str]) -> str:
+        """Stdout of a git command in the caller checkout; ``""`` on any failure or timeout."""
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=str(self._caller_root()),
+                capture_output=True,
+                text=True,
+                timeout=_NOTICE_GIT_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return result.stdout.strip() if result.returncode == 0 else ""
 
     # @stub-protected
     def _post_terminal_notice(self, reason: str) -> str:
@@ -3145,7 +3215,7 @@ class Engine:
         """Workflow and step for the notice: resolver first, then the state.
 
         Direct agent calls leave ``resolved`` identity empty while the state
-        still knows it (issue #1465). A pending gate's step is the authoritative
+        still knows it (issue #1296). A pending gate's step is the authoritative
         pending step, so it wins over the state's current step.
         """
         workflow = str(self._get(resolved, "WORKFLOW_NAME") or "")

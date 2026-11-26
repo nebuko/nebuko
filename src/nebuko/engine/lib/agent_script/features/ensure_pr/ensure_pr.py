@@ -438,7 +438,7 @@ def _commit_message(issue_title: str = "", *, interrupted: bool = False) -> str:
     )
 
 
-def _resolve_base_ref(base: str, remote: str) -> str:
+def _resolve_base_ref(base: str, remote: str, *, timeout: int = DEFAULT_TIMEOUT) -> str:
     """Pick the ref ``base`` names in *this* checkout.
 
     The name returned by :func:`_default_base` (``"main"``) is not guaranteed
@@ -449,7 +449,7 @@ def _resolve_base_ref(base: str, remote: str) -> str:
     """
     for candidate in (f"{remote}/{base}", base, f"{remote}/HEAD"):
         try:
-            _run_git(["rev-parse", "--verify", f"{candidate}^{{commit}}"])
+            _run_git(["rev-parse", "--verify", f"{candidate}^{{commit}}"], timeout=timeout)
         except RuntimeError:
             continue
         return candidate
@@ -682,21 +682,25 @@ def _push_branch(branch: str, remote: str, *, force: bool = False) -> None:
 
 
 def _find_pr_for_branch(
-    branch: str, *, transport: Optional[GitHubTransport] = None
+    branch: str,
+    *,
+    transport: Optional[GitHubTransport] = None,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> Optional[str]:
     """Return the URL of an open PR for the branch, or None."""
     out = _run_gh(
         ["pr", "list", "--head", branch, "--json", "url", "--jq", ".[0].url"],
         transport=transport,
+        timeout=timeout,
     )
     url = out.strip().strip('"')
     return url or None
 
 
-def _is_ancestor(ancestor: str, descendant: str) -> bool:
+def _is_ancestor(ancestor: str, descendant: str, *, timeout: int = DEFAULT_TIMEOUT) -> bool:
     """``git merge-base --is-ancestor``; works on the grafted tips of a shallow CI clone."""
     try:
-        _run_git(["merge-base", "--is-ancestor", ancestor, descendant])
+        _run_git(["merge-base", "--is-ancestor", ancestor, descendant], timeout=timeout)
     except RuntimeError as exc:
         if " failed (1)" in str(exc):
             return False
@@ -714,35 +718,51 @@ def _publish_gap(
     *,
     pushed: bool,
     transport: Optional[GitHubTransport] = None,
+    head: str = "HEAD",
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> Optional[str]:
     """Decide whether ``branch`` needs a PR: None when it does, else the reason it does not.
 
     Judged from the commits and the tree, not from whether anything is left to
-    push: an agent may have pushed the branch itself. Raises ``RuntimeError``
-    when a check cannot run; that is never read as "nothing to publish".
+    push: an agent may have pushed the branch itself. ``head`` is the ref whose
+    commits are judged. Raises ``RuntimeError`` when a check cannot run; that is
+    never read as "nothing to publish".
     """
-    if _is_ancestor("HEAD", patch_base):
+    if _is_ancestor(head, patch_base, timeout=timeout):
         return _NOT_AHEAD
     # A squash-merged branch keeps its commits "ahead" by count, but its tree
     # is then the base's tree: the content is already in the base.
-    if not _run_git(["diff", "--name-only", patch_base, "HEAD"]):
+    if not _run_git(["diff", "--name-only", patch_base, head], timeout=timeout):
         return f"its content is already in {patch_base}"
-    if not pushed and not _run_git(["ls-remote", "--heads", remote, branch]):
+    if not pushed and not _run_git(
+        ["ls-remote", "--heads", remote, branch], timeout=timeout
+    ):
         return f"branch {branch!r} is not on {remote}"
     return None
 
 
-def unpublished_branch_note(branch: str, *, remote: str = "origin") -> str:
+def unpublished_branch_note(
+    branch: str,
+    *,
+    remote: str = "origin",
+    base: str = "",
+    head: str = "HEAD",
+    timeout: int = DEFAULT_TIMEOUT,
+) -> str:
     """A notice line when ``branch`` is on ``remote`` with commits ahead of base and no open PR.
 
-    Returns ``""`` when there is nothing to say. Best-effort: a failed check is
-    logged and reads as nothing to say, since it must not mask the run's notice.
+    ``base`` is the caller's resolved base branch; empty asks the process env.
+    Returns ``""`` when there is nothing to say. Best-effort: a failed or slow
+    check (one attempt, bounded by ``timeout``) is logged and reads as nothing
+    to say, since it must not mask the run's notice.
     """
     try:
-        base = _default_base()
-        patch_base = _resolve_base_ref(base, remote)
-        if _find_pr_for_branch(branch) or _publish_gap(
-            branch, patch_base, remote, pushed=False
+        base = base or _default_base()
+        patch_base = _resolve_base_ref(base, remote, timeout=timeout)
+        if _find_pr_for_branch(
+            branch, transport=GitHubTransport(max_attempts=1), timeout=timeout
+        ) or _publish_gap(
+            branch, patch_base, remote, pushed=False, head=head, timeout=timeout
         ):
             return ""
     except Exception as exc:  # noqa: BLE001 - the notice is best-effort
