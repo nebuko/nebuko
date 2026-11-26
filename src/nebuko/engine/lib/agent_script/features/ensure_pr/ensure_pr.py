@@ -41,6 +41,7 @@ from nebuko.engine.lib.agent_script.features.ensure_pr.workflow_patch import (
     build_patch,
     is_workflow_path,
     render_patch_comment,
+    render_unlanded_patch_comment,
     revert_workflow_changes,
     split_paths,
     stage_patch_artifact,
@@ -246,7 +247,9 @@ def _status_entries() -> tuple[tuple[str, str], ...]:
 
 
 def _commit_pending_changes(
-    paths: Sequence[str] | None = None, message: str = ""
+    paths: Sequence[str] | None = None,
+    message: str = "",
+    force_paths: Sequence[str] = (),
 ) -> str:
     """Stage and commit the agent's leftovers. Returns the hash, or ``""``.
 
@@ -259,13 +262,21 @@ def _commit_pending_changes(
     staged (deletions and renames included), so no second engine commit is
     needed for what this one skipped. A merge left in progress by the scaffold
     is concluded by this commit.
+
+    ``force_paths`` are added with ``-f`` and nothing else is: git refuses an
+    ignored path on a plain ``add`` even when it is already tracked, so the
+    workflow patch under the (possibly gitignored) logs directory needs the
+    flag, while agent files never get it.
     """
     if paths is None:
         _, paths = split_paths(_dirty_paths())
-    staged = list(dict.fromkeys(paths))
+    forced = list(dict.fromkeys(force_paths))
+    staged = [path for path in dict.fromkeys(paths) if path not in forced]
     if staged:
         _run_git(["add", "--"] + staged)
-    if not staged and not _merge_in_progress():
+    if forced:
+        _run_git(["add", "-f", "--"] + forced)
+    if not staged and not forced and not _merge_in_progress():
         return ""
     _run_git(
         [
@@ -884,6 +895,7 @@ def _open_pr(
     *,
     interrupted: bool = False,
     patch_path: str = "",
+    unlanded_note: str = "",
     issue_repo: str = "",
     transport: Optional[GitHubTransport] = None,
 ) -> str:
@@ -903,6 +915,8 @@ def _open_pr(
             f"`{patch_path}`. Fetch this branch and run `git apply {patch_path}`, "
             "then commit the result with a token that has the `workflow` scope.",
         ]
+    if unlanded_note:
+        body_lines += ["", unlanded_note]
     if issue_number:
         body_lines.append("")
         body_lines.append(_closing_ref(issue_number, repo, issue_repo))
@@ -977,6 +991,9 @@ class _PatchDelivery:
     comment_url: str = ""
     artifact: str = ""
     diff: str = ""
+    # ``True`` when the comment carries the diff text itself (not just a link
+    # to the run artifact, which does not outlive the runner).
+    inline: bool = False
 
 
 def _post_patch_comment(
@@ -1062,17 +1079,24 @@ def _deliver_workflow_patch(
         comment.body, pr_url="", transport=transport
     )
     artifact = stage_patch_artifact(diff)
-    return _PatchDelivery(comment_url=comment_url, artifact=artifact, diff=diff)
+    return _PatchDelivery(
+        comment_url=comment_url,
+        artifact=artifact,
+        diff=diff,
+        inline=bool(comment_url) and not comment.oversized,
+    )
 
 
 def _stage_patch_commit_file(diff: str) -> str:
-    """Write the patch into the checkout and stage it for the push commit.
+    """Write the patch into the checkout for the push commit.
 
     The patch is delivered as a comment/artifact for a human to apply, but the
     work must also survive in the repository itself (the runner is ephemeral):
     the diff file is committed under ``nebuko-task-logs/`` and pushed with the
-    branch. Returns the repo-relative path, or ``""`` when staging failed —
-    the comment/artifact delivery above already carries the content.
+    branch. The file is only written here; ``_commit_pending_changes`` adds it
+    with ``-f`` because the repository may gitignore the logs directory.
+    Returns the repo-relative path, or ``""`` when writing failed — the caller
+    then delivers the diff in a comment (see ``_post_unlanded_patch``).
     """
     relative = os.path.join(PATCH_ARTIFACT_DIR, PATCH_FILENAME)
     try:
@@ -1085,12 +1109,46 @@ def _stage_patch_commit_file(diff: str) -> str:
             os.path.join(root, relative), "w", encoding="utf-8"
         ) as handle:
             handle.write(diff if diff.endswith("\n") else diff + "\n")
-        # ``-f``: the repository may gitignore the logs directory.
-        _run_git(["add", "-f", "--", relative])
         return relative
     except (OSError, RuntimeError) as exc:
         logger.warning(f"ensure_pr: could not stage the patch file: {exc}")
         return ""
+
+
+def _post_unlanded_patch(
+    diff: str,
+    workflow_paths: Sequence[str],
+    base_name: str,
+    *,
+    transport: Optional[GitHubTransport] = None,
+) -> str:
+    """Post the patch text on the issue when it could not be committed.
+
+    Raises when GitHub refuses the comment: a workflow change that survives
+    nowhere must fail the run, not report ok.
+    """
+    body = render_unlanded_patch_comment(
+        diff=diff, workflow_paths=workflow_paths, base_name=base_name
+    )
+    url = _post_patch_comment(body, pr_url="", transport=transport)
+    if not url:
+        raise RuntimeError(
+            "workflow patch could not be committed or posted for "
+            f"{list(workflow_paths)} — refusing to discard the change"
+        )
+    return url
+
+
+def _unlanded_note(workflow_paths: Sequence[str], comment_url: str) -> str:
+    """PR-body note for a workflow change that is only in ``comment_url``."""
+    listed = ", ".join(f"`{path}`" for path in workflow_paths)
+    return (
+        "**Workflow change NOT committed — a human must apply it.** The patch "
+        "could not be committed to this branch, so "
+        f"{listed} is missing here. The patch text is in {comment_url}: save it "
+        f"as `{PATCH_FILENAME}` and run `{APPLY_COMMAND}` on a clean checkout, "
+        "then commit with a token that has the `workflow` scope."
+    )
 
 
 def _ensure_pr_impl(
@@ -1194,15 +1252,39 @@ def _ensure_pr_impl(
     commit_paths = list(split.plain_paths)
     # The base's own workflow changes conclude the merge with everything else.
     commit_paths.extend(split.base_workflow_paths)
-    if patch_commit_path:
-        commit_paths.append(patch_commit_path)
     commit_hash = ""
-    if _has_uncommitted_changes() or _merge_in_progress():
-        commit_hash = _commit_pending_changes(
-            commit_paths, _commit_message(issue_title, interrupted=interrupted)
-        )
+    # An ignored patch file is not in ``git status``, so it asks for a commit too.
+    unlanded_url = ""
+    if patch_commit_path or _has_uncommitted_changes() or _merge_in_progress():
+        commit_message = _commit_message(issue_title, interrupted=interrupted)
+        try:
+            commit_hash = _commit_pending_changes(
+                commit_paths,
+                commit_message,
+                force_paths=(patch_commit_path,) if patch_commit_path else (),
+            )
+        except RuntimeError as exc:
+            if not patch_commit_path:
+                raise
+            # The dev's work must survive a refused patch: commit the rest now
+            # and carry the patch text in a comment instead (see below).
+            logger.warning(f"ensure_pr: could not commit the workflow patch: {exc}")
+            _unstage_workflow_paths([patch_commit_path])
+            patch_commit_path = ""
+            commit_hash = _commit_pending_changes(commit_paths, commit_message)
         if commit_hash:
             logger.info(f"ensure_pr: committed pending changes at {commit_hash[:12]}")
+    if split.workflow_paths and not patch_commit_path:
+        # The patch is not on the branch, so a human needs its text. The delivery
+        # comment already carries it when it fits; otherwise post it here. Raises
+        # when the text cannot reach the issue either.
+        unlanded_url = (
+            delivery.comment_url
+            if delivery.inline
+            else _post_unlanded_patch(
+                delivery.diff, split.workflow_paths, base, transport=transport
+            )
+        )
 
     # Committed-only plain work is published by pushing the existing commit
     # and opening the PR (issue #1180); a committed workflow patch is
@@ -1270,6 +1352,11 @@ def _ensure_pr_impl(
             issue_number,
             interrupted=interrupted,
             patch_path=patch_commit_path,
+            unlanded_note=(
+                _unlanded_note(split.workflow_paths, unlanded_url)
+                if unlanded_url
+                else ""
+            ),
             issue_repo=issue_repo,
             transport=transport,
         )
@@ -1344,6 +1431,11 @@ def _ensure_pr_impl(
         message = "nothing to publish: no plain delta and no PR opened"
         if gap and gap != _NOT_AHEAD:
             message += f" ({gap})"
+    if unlanded_url:
+        message += (
+            " — WARNING: the workflow change was NOT committed; a human must apply "
+            f"the patch from {unlanded_url} for {list(split.workflow_paths)}"
+        )
     return EnsurePrResult(
         commit_hash=commit_hash,
         pushed=pushed,
