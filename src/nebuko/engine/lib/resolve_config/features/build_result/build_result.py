@@ -445,6 +445,14 @@ def _build_result(
     if config.get("agent_config_path"):
         result["AGENT_CONFIG_PATH"] = config["agent_config_path"]
         result["AGENT_CONFIG"] = config.get("agent_config_raw", "")
+        result["AGENT_CONFIG_NOTICE"] = _agent_config_notice(
+            result["AGENT_CONFIG"],
+            config.get("agent_config_layer", ""),
+            config["agent_config_path"],
+        )
+    # Lane stickiness notice (issue #1479): a takeover, move-back or switch
+    # the run's first comment reports to the thread.
+    result["LANE_NOTICE"] = config.get("config_lane_notice", "")
     result["WORKFLOW_POSITION"] = wf_result.get("WORKFLOW_POSITION", "")
     result["WORKFLOW_POSITION_PATH"] = wf_result.get("WORKFLOW_POSITION_PATH", "")
     result = _attach_position(result, config, workflows_dir, local_workflows_dir)
@@ -455,6 +463,12 @@ def _build_result(
         local_workflows_dir,
         config.get("config_scaffold_branch") or None,
     )
+
+
+def _agent_config_notice(name: str, layer: str, path: str) -> str:
+    """The run's first-comment line naming the agent config and its layer (issue #1479)."""
+    where = f"the {layer} layer" if layer else "the resolved location"
+    return f"agent config '{name}' from {where} (file {os.path.basename(path)})"
 
 
 def _attach_step_inputs(

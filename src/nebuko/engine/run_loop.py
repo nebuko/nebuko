@@ -1342,6 +1342,7 @@ class Engine:
             # Stash the materializations so the agent child records them on the
             # advancing step's HistoryEntry (issue #872).
             self._step_input_state["results"] = list(input_results)
+            self._post_run_notices(resolved, trigger)
 
             self._enter(phases, "prompt")
             failure_reason: str | None = None
@@ -2369,6 +2370,31 @@ class Engine:
             self.adapter.post(notice)
         except Exception as exc:  # noqa: BLE001 - the notice is best-effort
             log.warning("[phase:guards] terminal notice failed: %s", exc)
+        return notice
+
+    def _post_run_notices(self, resolved: Any, trigger: Trigger) -> str | None:
+        """Post the run's lane and agent-config lines as one first comment (issue #1479).
+
+        A lane change (takeover, move-back, switch) always reaches the thread;
+        the config line names the layer and file that provided the agent config
+        and is posted for human-started runs only, so loop continuations stay
+        quiet. Marker-led and trigger-safe; best-effort.
+        """
+        lines = [str(self._get(resolved, "LANE_NOTICE") or "").strip()]
+        if not _is_bot_trigger(trigger):
+            lines.append(str(self._get(resolved, "AGENT_CONFIG_NOTICE") or "").strip())
+        lines = [line for line in lines if line]
+        if not lines:
+            return None
+        marker = _load_bridge_module("prepare_comment").BOT_MARKER
+        notice = _neutralize_agent_triggers(
+            f"{marker}\n" + "\n".join(f"- {line}" for line in lines)
+        )
+        try:
+            self.adapter.post(notice)
+        except Exception as exc:  # noqa: BLE001 - the notice is best-effort
+            log.warning("[phase:prompt] run notice failed: %s", exc)
+            return None
         return notice
 
     # @stub-protected

@@ -83,3 +83,64 @@ def test_project_side_skips_a_personal_command_without_a_reply(tmp_path, monkeyp
     )
     assert result["SKIP_AGENT"] == "true"
     assert result.get("COMMAND_ERROR") != "true"
+
+
+class _RecordingAdapter:
+    def __init__(self):
+        self.bodies = []
+
+    def post(self, body):
+        self.bodies.append(body)
+        return body
+
+
+class TestRunNoticesReachTheThread:
+    """The lane and config notices are posted, not just carried (issue #1479)."""
+
+    def _engine(self, tmp_path, adapter):
+        from nebuko.engine.run_loop import Engine
+
+        return Engine(adapter=adapter, repo_root=tmp_path, env={})
+
+    def test_takeover_notice_is_posted_as_the_first_comment(self, tmp_path, monkeypatch):
+        from nebuko.engine import run_loop
+
+        monkeypatch.setattr(run_loop, "_is_bot_trigger", lambda trigger: False)
+        adapter = _RecordingAdapter()
+        engine = self._engine(tmp_path, adapter)
+        decision = decide_lane(USER_REPO_LANE, "alice", "personal", "bob")
+        posted = engine._post_run_notices({"LANE_NOTICE": decision.notice}, object())
+
+        assert adapter.bodies == [posted]
+        assert "- credential owner changed from alice to bob" in posted
+        assert _clean(posted.replace("<!-- bot-workflow-terminal -->", ""))
+
+    def test_config_line_names_layer_and_file_for_a_human_run(self, tmp_path, monkeypatch):
+        from nebuko.engine import run_loop
+        from nebuko.engine.lib.resolve_config.features.build_result.build_result import (
+            _agent_config_notice,
+        )
+
+        monkeypatch.setattr(run_loop, "_is_bot_trigger", lambda trigger: False)
+        adapter = _RecordingAdapter()
+        engine = self._engine(tmp_path, adapter)
+        notice = _agent_config_notice(
+            "fast", "personal", "/checkout/personal/.nebuko/agents/fast.yaml"
+        )
+        posted = engine._post_run_notices({"AGENT_CONFIG_NOTICE": notice}, object())
+
+        assert "agent config 'fast' from the personal layer (file fast.yaml)" in posted
+
+    def test_config_line_is_not_posted_for_a_bot_continuation(self, tmp_path, monkeypatch):
+        from nebuko.engine import run_loop
+
+        monkeypatch.setattr(run_loop, "_is_bot_trigger", lambda trigger: True)
+        adapter = _RecordingAdapter()
+        engine = self._engine(tmp_path, adapter)
+        posted = engine._post_run_notices(
+            {"AGENT_CONFIG_NOTICE": "agent config 'x' from the project layer (file x.yaml)"},
+            object(),
+        )
+
+        assert posted is None
+        assert adapter.bodies == []

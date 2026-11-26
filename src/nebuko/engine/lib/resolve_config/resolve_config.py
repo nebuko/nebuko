@@ -287,7 +287,11 @@ def _agent_config_selection(
         resolved_path = _resolve_agent_config_value(name, caller_root)
         if resolved_path is None:
             return {"task": "", "config_command_error": f"agent config file not found: '{name}'"}
-        return {"agent_config_path": resolved_path, "agent_config_raw": name}
+        return {
+            "agent_config_path": resolved_path,
+            "agent_config_raw": name,
+            "agent_config_layer": "project",
+        }
 
     try:
         resolved = resolver.resolve(name)
@@ -455,6 +459,7 @@ def resolve_config(
     # and loop continuations are not comments, and the personal repo's own run
     # is authenticated by its repository, so neither is checked here.
     lane_action = "allow"
+    lane_notice = ""
     human_thread_comment = (
         not is_bot
         and not personal_lane
@@ -468,6 +473,7 @@ def resolve_config(
             build_author_identity_from_env(trigger_body).login,
         )
         lane_action = lane_decision.action
+        lane_notice = lane_decision.notice or ""
         if lane_decision.action == "refuse":
             return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": lane_decision.message}
     if (
@@ -723,6 +729,9 @@ def resolve_config(
     except Exception as exc:  # noqa: BLE001 - governance must not break routing
         if os.environ.get("DEBUG") or debug:
             print(f"DEBUG complexity governor: {exc}", file=sys.stderr)
+
+    if lane_notice:
+        config["config_lane_notice"] = lane_notice
 
     # A malformed or unknown human slash command yields no valid task; keep its
     # usage hint on the config so _build_result can turn the terminal skip into
