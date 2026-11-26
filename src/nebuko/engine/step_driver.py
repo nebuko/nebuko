@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
-from nebuko.engine.models import ExitCode, RunOutcome, SkipKind
+from nebuko.engine.models import ExitCode, RunOutcome, SkipKind, base_snapshot_scope
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.run_loop import Engine
@@ -171,17 +171,22 @@ class StepDriver:
         self.step_timings: list[dict[str, float]] = []
 
     def run(self) -> RunOutcome:
-        """Run the workflow; returns the outcome of the last step run."""
-        if not self._cfg.enabled:
-            # Outside the loop the step runs exactly as before: same env, same token.
-            return self._run_step(1, looping=False)
-        self._env_snapshot = dict(os.environ)
-        try:
-            return self._run_loop()
-        finally:
-            # The driver's own exports must not outlive it (in-process callers).
-            os.environ.clear()
-            os.environ.update(self._env_snapshot)
+        """Run the workflow; returns the outcome of the last step run.
+
+        The base branch is resolved inside one snapshot scope before the first
+        step, so no agent step of the run can move the refs script steps read (issue #1475).
+        """
+        with base_snapshot_scope():
+            if not self._cfg.enabled:
+                # Outside the loop the step runs exactly as before: same env, same token.
+                return self._run_step(1, looping=False)
+            self._env_snapshot = dict(os.environ)
+            try:
+                return self._run_loop()
+            finally:
+                # The driver's own exports must not outlive it (in-process callers).
+                os.environ.clear()
+                os.environ.update(self._env_snapshot)
 
     def _run_loop(self) -> RunOutcome:
         started = self._origin

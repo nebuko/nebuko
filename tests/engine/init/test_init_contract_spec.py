@@ -65,6 +65,11 @@ class FakeClient(GitHubInitClient):
         self.committed: dict[str, str] | None = None
         self.put_calls: list[tuple[str, object]] = []
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {path: False for path in paths}
 
@@ -127,7 +132,7 @@ def test_given_planning_when_rendering_then_agent_config_lands_at_the_single_hom
         existing_files={},
         existing_secrets=frozenset(),
     )
-    assert set(plan.rendered) == {AGENT_CONFIG_PATH, ".github/workflows/nebuko.yaml"}
+    assert set(plan.rendered) == {AGENT_CONFIG_PATH, ".github/workflows/nebuko.yaml", ".nebuko/nebuko.yaml"}
     assert AGENT_CONFIG_PATH == ".nebuko/agents/agent-config.yaml"
 
 

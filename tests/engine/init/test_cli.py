@@ -74,6 +74,11 @@ class GhInitClient:
         self.raise_on_list = False
         self.pr_calls: list[dict] = []
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {path: self.existing_files.get(path, False) for path in paths}
 

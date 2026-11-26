@@ -9,14 +9,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum, IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.lib.workflow_state.sub_domains.turn_outcome.turn_outcome import TurnOutcome
@@ -86,12 +89,42 @@ class NebukoManifest(BaseModel):
     history_comment_count: int | None = None
     pin_comment: bool | None = None
     base_branch: str | None = None
+    #: Shell command that runs the repo's tests (``run_tests``); absent = none.
+    test_command: str | None = None
+    #: Minutes allowed for ``run_tests``; the workflow's static timeout otherwise.
+    test_timeout_minutes: int | None = Field(None, ge=1)
+
+    @field_validator("base_branch")
+    @classmethod
+    def _check_base_branch(cls, value: str | None) -> str | None:
+        """Reject a value that is not a plain git branch name (it reaches ``sh -c``)."""
+        if value is None or not value.strip():
+            return None
+        name = value.strip()
+        if not _is_branch_name(name):
+            raise ValueError(
+                f"base_branch {name!r} is not a valid git branch name: use letters, "
+                "digits and '._/-' (at most 200 characters), no '..', no leading '-'"
+            )
+        return name
+
+    @field_validator("test_command")
+    @classmethod
+    def _blank_test_command_is_absent(cls, value: str | None) -> str | None:
+        """A blank command counts as not configured, so nothing is exported."""
+        if value is None or not value.strip():
+            return None
+        return value.strip()
 
     def env_defaults(self) -> dict[str, str]:
         """The env vars this manifest sets, as the workflow would export them."""
         values: dict[str, str] = {}
-        if self.base_branch and self.base_branch.strip():
-            values["NEBUKO_BASE_BRANCH"] = self.base_branch.strip()
+        if self.base_branch:
+            values["NEBUKO_BASE_BRANCH"] = self.base_branch
+        if self.test_command:
+            values["NEBUKO_TEST_COMMAND"] = self.test_command
+        if self.test_timeout_minutes is not None:
+            values["NEBUKO_TEST_TIMEOUT_MINUTES"] = str(self.test_timeout_minutes)
         if self.agent_config is not None:
             values["AGENT_CONFIG_PATH"] = self.agent_config
         if self.circuit_breaker_threshold is not None:
@@ -133,8 +166,30 @@ _MANAGED_ENV_KEYS = (
     "AGENT_CONFIG_PATH",
     "CIRCUIT_BREAKER_THRESHOLD",
     "HISTORY_COMMENT_COUNT",
+    "NEBUKO_BASE_BRANCH",
+    "NEBUKO_TEST_COMMAND",
+    "NEBUKO_TEST_TIMEOUT_MINUTES",
     "PIN_COMMENT",
 )
+
+_MANIFEST_RELPATH = ".nebuko/nebuko.yaml"
+_MANIFEST_NOTE_ENV = "NEBUKO_MANIFEST_NOTE"
+_DEFAULT_BASE_BRANCH = "main"
+_BRANCH_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
+
+
+def _is_branch_name(name: str) -> bool:
+    """A conservative subset of ``git check-ref-format --branch`` rules.
+
+    Only characters that are inert in a shell and in a ref are allowed, so the
+    name can never change the meaning of a command it is interpolated into.
+    """
+    return (
+        _BRANCH_NAME_RE.fullmatch(name) is not None
+        and ".." not in name
+        and "//" not in name
+        and not name.endswith(("/", ".", ".lock"))
+    )
 
 
 def _render_bool(value: bool) -> str:
@@ -457,6 +512,14 @@ class DeterministicStep:
             affected=self.circuit_breaker_value,
         )
 
+    def _timeout_minutes_for(self, manifest_env: Mapping[str, str] | None) -> int | None:
+        """The step's timeout; the ``run_tests`` step takes the manifest's override."""
+        if self.step_name == TEST_STEP_NAME and manifest_env:
+            raw = (manifest_env.get("NEBUKO_TEST_TIMEOUT_MINUTES") or "").strip()
+            if raw.isdigit() and int(raw) >= 1:
+                return int(raw)
+        return self.timeout_minutes
+
     def _execute_script(
         self, workspace: Path | None = None, checkout: Any = None
     ) -> StepResult:
@@ -474,9 +537,11 @@ class DeterministicStep:
         captured merged (stderr folded into stdout) so the posted report shows
         the interleaved stream a terminal would.
         """
-        timeout = self.timeout_minutes * 60 if self.timeout_minutes else None
+        base_env = _manifest_overlay(workspace)
+        minutes = self._timeout_minutes_for(base_env)
+        timeout = minutes * 60 if minutes else None
         cwd, env = _script_process_context(
-            workspace, self.script_working_dir, self.script_env
+            workspace, self.script_working_dir, self.script_env, base_env
         )
         branch = str(getattr(checkout, "branch", "") or "")
         head_sha = str(getattr(checkout, "head_sha", "") or "")
@@ -496,7 +561,7 @@ class DeterministicStep:
             return StepResult(
                 step_kind=self.kind,
                 ok=False,
-                detail=f"script timed out after {self.timeout_minutes}m",
+                detail=f"script timed out after {minutes}m",
                 affected=0,
                 output=_as_text(exc.stdout),
                 duration_seconds=time.monotonic() - started,
@@ -553,20 +618,177 @@ def _script_argv(encoded: str) -> list[str]:
     return [str(arg) for arg in decoded]
 
 
+#: The workflow step whose ``timeout_minutes`` the manifest's test override replaces.
+TEST_STEP_NAME = "run_tests"
+
+
+@dataclass(frozen=True)
+class BaseSnapshot:
+    """The base branch as the engine resolved it once, before the run's first step (issue #1475).
+
+    Script steps take the base name, its commit and the manifest committed there
+    from this value, never from the checkout's refs or working tree. In the
+    single-job loop an agent step shares the checkout and could move
+    ``origin/HEAD`` or ``origin/<base>`` or add a local ``origin/<name>`` ref.
+    """
+
+    branch: str
+    sha: str  # "" when origin/<branch> does not resolve
+    manifest: NebukoManifest
+    note: str | None = None
+
+
+_BASE_SNAPSHOT: BaseSnapshot | None = None
+
+
+@contextmanager
+def base_snapshot_scope() -> Iterator[None]:
+    """Hold one base snapshot for the run; the single-job loop wraps all its steps in it.
+
+    Outside a scope each script step resolves its own snapshot, which is the same
+    as one per run in a fresh runner per step.
+    """
+    global _BASE_SNAPSHOT
+    previous = _BASE_SNAPSHOT
+    workspace = session_workspace()
+    _BASE_SNAPSHOT = resolve_base_snapshot(workspace) if workspace is not None else None
+    try:
+        yield
+    finally:
+        _BASE_SNAPSHOT = previous
+
+
+def resolve_base_snapshot(workspace: Path) -> BaseSnapshot:
+    """The base name, its commit and the manifest committed at that commit."""
+    branch = _trusted_base_branch(workspace)
+    sha = _git_stdout(workspace, "rev-parse", "--verify", "--quiet", f"origin/{branch}^{{commit}}")
+    manifest, note = _committed_manifest(workspace, branch, sha)
+    return BaseSnapshot(branch=branch, sha=sha, manifest=manifest, note=note)
+
+
+def _manifest_overlay(workspace: Path | None) -> dict[str, str] | None:
+    """The engine env with the base snapshot filling unset keys (issue #1475).
+
+    ``None`` without a workspace, where the child keeps the ambient environment.
+    ``NEBUKO_BASE_BRANCH`` and ``NEBUKO_BASE_SHA`` are set after the overlay, so
+    no ambient or step value can repoint them. ``NEBUKO_MANIFEST_NOTE`` says why
+    no committed manifest was read, so ``run_tests`` can report it.
+    """
+    if workspace is None:
+        return None
+    snapshot = _BASE_SNAPSHOT or resolve_base_snapshot(workspace)
+    env = snapshot.manifest.overlay_env(os.environ)
+    env["NEBUKO_BASE_BRANCH"] = snapshot.branch
+    env["NEBUKO_BASE_SHA"] = snapshot.sha
+    if snapshot.note:
+        env[_MANIFEST_NOTE_ENV] = snapshot.note
+    return env
+
+
+def _git_stdout(workspace: Path, *args: str) -> str:
+    """Stripped stdout of a read-only git query; ``""`` when it fails."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(workspace), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def _committed_manifest(
+    workspace: Path, base: str, sha: str
+) -> tuple[NebukoManifest, str | None]:
+    """The manifest committed at ``sha``, the base branch's commit, never the working-tree copy.
+
+    The session checkout is the branch under review and the dev agent can edit
+    it, so nothing read from it may pick the ref or change what ``run_tests``
+    runs. Returns the manifest and a note when the base commit did not resolve,
+    the file could not be read from it, or it is invalid. An absent file on a
+    readable base is a repo without a manifest: no note.
+    """
+    import yaml
+
+    ref = f"origin/{base}"
+    unreadable = f"committed {_MANIFEST_RELPATH} could not be read from {ref}; no test_command was checked"
+    if not sha:
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(workspace), "ls-tree", "--name-only", sha, "--", _MANIFEST_RELPATH],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if listed.returncode != 0:
+            log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+            return NebukoManifest(), unreadable
+        if not listed.stdout.strip():
+            return NebukoManifest(), None
+        completed = subprocess.run(
+            ["git", "-C", str(workspace), "show", f"{sha}:{_MANIFEST_RELPATH}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
+    if completed.returncode != 0:
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
+    try:
+        raw = yaml.safe_load(completed.stdout) or {}
+        if not isinstance(raw, dict):
+            raise ValueError("manifest must be a mapping")
+        return NebukoManifest.model_validate(raw), None
+    except (ValueError, yaml.YAMLError) as exc:
+        log.warning("committed %s on %s is invalid: %s", _MANIFEST_RELPATH, ref, exc)
+        invalid = f"committed {_MANIFEST_RELPATH} on {ref} is invalid; no test_command was checked"
+        return NebukoManifest(), invalid
+
+
+def _trusted_base_branch(workspace: Path) -> str:
+    """The base branch that locates the committed manifest; never the working tree.
+
+    The engine's own ``NEBUKO_BASE_BRANCH`` first, then the remote's default
+    branch (``origin/HEAD``), then ``main``. The working-tree manifest is not
+    read: a branch that names another base could otherwise pick its own ref.
+    """
+    engine_base = (os.environ.get("NEBUKO_BASE_BRANCH") or "").strip()
+    if engine_base and _is_branch_name(engine_base):
+        return engine_base
+    if engine_base:
+        log.warning("NEBUKO_BASE_BRANCH %r is not a valid branch name; ignored", engine_base)
+    name = _git_stdout(workspace, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if name.startswith("origin/") and _is_branch_name(name[len("origin/"):]):
+        return name[len("origin/"):]
+    return _DEFAULT_BASE_BRANCH
+
+
 def _script_process_context(
-    workspace: Path | None, working_dir: str, encoded_env: str
+    workspace: Path | None,
+    working_dir: str,
+    encoded_env: str,
+    base_env: Mapping[str, str] | None = None,
 ) -> tuple[str | None, dict[str, str] | None]:
     """The ``(cwd, env)`` for a script child (issue #974).
 
     The step's ``working_dir`` is anchored at the session ``workspace`` and the
-    environment is the engine's own overlaid by the step's ``env`` (explicit
-    keys win). Without a workspace — a host with no session directory — both
+    environment is ``base_env`` (the engine's own, overlaid by the manifest;
+    ``os.environ`` when not given) with the step's ``env`` on top, so explicit
+    keys win. Without a workspace — a host with no session directory — both
     stay ``None``, so the child inherits the ambient process state as before.
     """
     if workspace is None:
         return None, None
     cwd = Path(workspace) / working_dir if working_dir else Path(workspace)
-    env = {**os.environ, **_script_env(encoded_env)}
+    engine_env = os.environ if base_env is None else base_env
+    env = {**engine_env, **_script_env(encoded_env)}
     return str(cwd), env
 
 

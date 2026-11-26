@@ -57,6 +57,9 @@ class InitAnswers:
     force: bool = False
     # Names already present at the target scope: never asked for, never rewritten.
     skipped: frozenset[str] = frozenset()
+    # Written to .nebuko/nebuko.yaml; a blank test_command leaves that key unset.
+    test_command: str = ""
+    base_branch: str = "main"
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ from nebuko.engine.init.app_installation import AppInstallationResolver
 from nebuko.engine.init.core import (
     AGENT_CONFIG_PATH,
     BRANCH,
+    MANIFEST_PATH,
     GitHubInitClient,
     InitOutcome,
     InitPlan,
@@ -126,14 +127,22 @@ def run_init(
         force=answers.force,
     )
     paths = [AGENT_CONFIG_PATH, WORKFLOW_PATH]
-    plan: InitPlan = plan_init(
-        request=request,
-        manifest=manifest,
-        caller_template=_caller_template(),
-        agent_config=agent_config,
-        existing_files=host.get_existing_files(target, paths),
-        existing_secrets=existing_secrets,
-    )
+    try:
+        plan: InitPlan = plan_init(
+            request=request,
+            manifest=manifest,
+            caller_template=_caller_template(),
+            agent_config=agent_config,
+            existing_files=host.get_existing_files(target, paths),
+            existing_secrets=existing_secrets,
+            existing_manifest=host.read_file(target, MANIFEST_PATH),
+            base_branch=answers.base_branch,
+            test_command=answers.test_command,
+        )
+    except ValueError as error:
+        # Refused before any write: the manifest keeps what it has.
+        print(f"Aborted: {error}", file=sys.stderr)
+        return SetupOutcome(EXIT_ERRORS)
     if plan.conflicts and not request.force:
         if not prompter.confirm(
             f"{', '.join(plan.conflicts)} already exist(s) in {answers.target.slug}; overwrite?",

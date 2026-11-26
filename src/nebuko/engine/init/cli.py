@@ -47,6 +47,7 @@ from nebuko.engine.init.setup import (
     run_init,
 )
 DEFAULT_RUNS_ON = "ubuntu-latest"
+DEFAULT_BASE_BRANCH = "main"
 SECRET_SCOPE_REPOSITORY = "repository"
 SECRET_SCOPE_ORGANIZATION = "organization"
 SECRET_EXISTS_MESSAGE = "{name} already setup in {scope} [ skipping, use --force to update value ]"
@@ -213,6 +214,8 @@ def _run(args: argparse.Namespace) -> int:
         target=target,
         provider=provider,
         runs_on=_resolve_runs_on(args, prompter),
+        test_command=_resolve_test_command(args, prompter),
+        base_branch=_resolve_base_branch(args, prompter),
         pin_ref=args.pin_ref or (context.refs.latest() if context.refs else ""),
         force=args.force,
     )
@@ -282,6 +285,22 @@ def _resolve_provider(args: argparse.Namespace, prompter: InitPrompter):
     return provider_by_name(prompter.ask_choice("LLM provider", names, default=DEFAULT_PROVIDER_NAME))
 
 
+def _resolve_test_command(args: argparse.Namespace, prompter: InitPrompter) -> str:
+    if args.test_command is not None:
+        return args.test_command.strip()
+    if args.non_interactive:
+        return ""
+    return prompter.ask_text("Test command (blank for none)").strip()
+
+
+def _resolve_base_branch(args: argparse.Namespace, prompter: InitPrompter) -> str:
+    if args.base_branch:
+        return args.base_branch.strip()
+    if args.non_interactive:
+        return DEFAULT_BASE_BRANCH
+    return prompter.ask_text("Default branch", DEFAULT_BASE_BRANCH).strip()
+
+
 def _resolve_runs_on(args: argparse.Namespace, prompter: InitPrompter) -> str:
     if args.runs_on:
         return args.runs_on
@@ -309,6 +328,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--runs-on",
         dest="runs_on",
         help=f"runner labels for the workflow jobs (default: {DEFAULT_RUNS_ON})",
+    )
+    parser.add_argument(
+        "--test-command",
+        dest="test_command",
+        help="shell command that runs the repo's tests, written to .nebuko/nebuko.yaml (default: none)",
+    )
+    parser.add_argument(
+        "--base-branch",
+        dest="base_branch",
+        help=f"default branch written to .nebuko/nebuko.yaml (default: {DEFAULT_BASE_BRANCH})",
     )
     parser.add_argument(
         "--pin-ref",

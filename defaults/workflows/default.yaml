@@ -1,8 +1,8 @@
 # Default workflow: the standard dev chain
-# architect → context → architect (plan) → dev → review
+# architect → context → architect (plan) → dev → git_diff → run_tests → review
 
 name: default
-description: "Standard development workflow: analyze → context → plan → implement → review"
+description: "Standard development workflow: analyze → context → plan → implement → git_diff → run_tests → review"
 
 steps:
   - name: analyze
@@ -93,11 +93,57 @@ steps:
 
   - name: implement
     agent: dev
-    next: review
-  
+    next: git_diff
+
+  # The engine runs the diff and the repo's tests so review gets evidence the dev
+  # agent did not write. `base_branch` and `test_command` come from
+  # `.nebuko/nebuko.yaml`; see dev-review-loop.yaml for the same steps.
+  - name: git_diff
+    script:
+      command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
+      args:
+        - "-c"
+        - >-
+          [ -n "${NEBUKO_BASE_SHA:-}" ] || { echo "base commit of ${NEBUKO_BASE_BRANCH:-main} could not be resolved; no diff was taken" >&2; exit 1; };
+          git --no-pager diff --stat "$NEBUKO_BASE_SHA...HEAD" &&
+          git --no-pager diff "$NEBUKO_BASE_SHA...HEAD"
+    conditions:
+      - on_result: default
+        next: run_tests
+
+  - name: run_tests
+    script:
+      command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
+      args:
+        - "-c"
+        - >-
+          case "$(printf '%s' "${NEBUKO_TEST_COMMAND:-}" | tr -d '[:space:]')" in
+          "") if [ -n "${NEBUKO_MANIFEST_NOTE:-}" ]; then echo "$NEBUKO_MANIFEST_NOTE"; else echo "no test_command configured in .nebuko/nebuko.yaml"; fi; exit 0 ;;
+          esac;
+          eval "$NEBUKO_TEST_COMMAND"
+      timeout_minutes: 20
+    conditions:
+      - on_result: default
+        next: review
+
   - name: review
     agent: review
+    inputs: [implement, git_diff, run_tests]
     prompt: |
+      `git_diff` and `run_tests` were run by the engine: trust them over any
+      claim in `implement`, and check that their `head` matches. A failed
+      `run_tests` is a finding. Call a failure pre-existing only with proof: say
+      how you know, by a run of that test on the base branch and its result.
+      If `run_tests` shows no test run ("no test_command configured" or
+      "no test_command was checked"), there is no test evidence: say so, and
+      do not claim the tests passed.
+      Do not run the whole test suite yourself when `run_tests` exists.
+      Long output is truncated in the middle, so read the branch for what's cut.
+
       Engine facts first: if the previous step's context carries an
       `engine_failure` entry, a missing diff or missing commits are an ENGINE
       failure (the run crashed after publishing; the branch was never pushed),

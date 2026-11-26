@@ -40,6 +40,11 @@ class FakeHost:
     def existing_secrets(self, target):
         return frozenset()
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {}
 
@@ -52,6 +57,11 @@ class FakeClient:
         self.branch: str | None = None
         self.secrets: dict[str, object] = {}
         self.pr_title: str | None = None
+
+    def read_file(self, target, path):
+
+        return None
+
 
     def get_existing_files(self, target, paths):
         return {}
@@ -148,6 +158,7 @@ def test_given_the_app_is_installed_when_init_runs_then_the_files_go_to_the_init
     assert set(client.committed) == {
         AGENT_CONFIG_PATH,
         ".github/workflows/nebuko.yaml",
+        ".nebuko/nebuko.yaml",
     }
 
 

@@ -741,7 +741,7 @@ because its comment is the free-form data payload downstream steps consume.
 
 | Workflow | File | One-line description |
 |----------|------|---------------------|
-| `default` | [`default.yaml`](../defaults/workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → review |
+| `default` | [`default.yaml`](../defaults/workflows/default.yaml) | Standard dev chain: analyze → context → plan → implement → git_diff → run_tests → review |
 | `think` | [`think.yaml`](../defaults/workflows/think.yaml) | Thinking only — analyze + context + plan, no implementation |
 | `review-only` | [`review-only.yaml`](../defaults/workflows/review-only.yaml) | Standalone single-shot code review |
 | `dev-review-loop` | [`dev-review-loop.yaml`](../defaults/workflows/dev-review-loop.yaml) | Reusable sub-workflow: one plan step with review, loops on rejection |
@@ -753,7 +753,7 @@ because its comment is the free-form data payload downstream steps consume.
 ### default
 
 ```
-analyze (architect) → context (context) → plan (architect) ──approved──► implement (dev) → review (review) ◆
+analyze (architect) → context (context) → plan (architect) ──approved──► implement (dev) → git_diff → run_tests → review (review) ◆
                                                     │rejected
                                                     └────────► context (loop)
 ```
@@ -761,6 +761,41 @@ analyze (architect) → context (context) → plan (architect) ──approved─
 Trigger: `@@architect`. The standard development cycle used when a human hands a
 problem to the system. The `plan` step can loop back to `context` when the
 plan is rejected (insufficient context).
+
+After `implement` the engine runs two script steps, so review judges evidence
+the dev agent did not write. `git_diff` writes `git diff --stat` and the full
+diff against the base commit the engine resolved once per run (`NEBUKO_BASE_SHA`). `run_tests` runs the manifest's
+`test_command` (see [configuration](configuration.md)). A failing run is
+evidence for review, not a stop. With no `test_command`, `run_tests` reports
+`no test_command configured in .nebuko/nebuko.yaml` and review says there is no
+test evidence. Review does not run the suite itself and calls a failure
+pre-existing only with a run of that test on the base branch.
+
+Trust model: `test_command` is read from the base branch's committed manifest,
+so a branch cannot change the command that runs. The base is resolved once per
+run, before the first step (`NEBUKO_BASE_BRANCH` else `origin/HEAD` else `main`);
+the working-tree manifest is never read for it, and no later step re-reads the
+refs, so an agent step in the same checkout cannot move them. The tests themselves are the
+branch's code (a `conftest.py` on the branch runs inside the engine job, next
+to the provider and GitHub secrets).
+
+`run_tests` sets `NEBUKO_MERGE_MAIN=0`, like `git_diff`: both show and test the
+branch head, the tree the dev pushed. The cost is one case: a semantic conflict
+with newer base commits (no textual conflict) shows up in CI on the merge commit,
+not in `run_tests`. A branch that textually conflicts cannot be merged anyway.
+
+Shipped workflows and variants that carry an `implement` → `review` cycle:
+
+| File | Decision |
+|------|----------|
+| `defaults/workflows/default.yaml` | Runs `git_diff` and `run_tests` (shipped). |
+| `defaults/workflows/dev-review-loop.yaml` | Runs `git_diff` and `run_tests` (shipped; reused by plan-orchestration). |
+| `.nebuko/workflows/default-with-output.yaml` | Follows the shipped default: same two steps and review inputs. |
+| `.nebuko/workflows/dev-review-loop.yaml` | Deleted: the shipped file now does the same. |
+| `.nebuko/workflows/plan-dev-review-cmd.yaml`, `red-test-review-loop.yaml` | Keep their own evidence steps; not changed here. They still name `origin/main` and do not read `base_branch`. Follow-up. |
+| `.nebuko/workflows/root-cause.yaml`, `defaults/workflows/spec-driven-impl.yaml`, `spec-tdd.yaml` | Not dev-review rounds for the default cycle; unchanged. |
+| `defaults/workflows/plan-orchestration.yaml` | Unchanged; its per-step dev rounds run the shipped `dev-review-loop` sub-workflow, so they get the evidence steps. |
+| `defaults/workflows/review-only.yaml` | Unchanged; no `dev` step, so there is no implement round to evidence. |
 
 The `plan` step is a single `human_gate:plan`: @@architect emits **one** planning
 artifact — visible `Context (root cause)`, `Decision` (design + Object Design
@@ -798,12 +833,13 @@ step in the same workflow — used for ad-hoc review requests and nightly review
 ### dev-review-loop
 
 ```
-implement (dev) → review (review) ──approved──► ◆
-                              └─rejected─► implement (loop)
+implement (dev) → git_diff → run_tests → review (review) ──approved──► ◆
+                                                  └─rejected─► implement (loop)
 ```
 
 Trigger: `@@dev`. A **reusable sub-workflow**: it executes a *single* plan
-step with review and loops until the reviewer approves. It is not typically
+step, then review on the engine-run diff and test results (the same evidence
+steps as `default`, see above), and loops until the reviewer approves. It is not typically
 started directly — it is referenced per-step from a dynamically generated
 `tmp_impl/workflow.yaml` (see `plan-orchestration`).
 

@@ -138,11 +138,11 @@ class TestLoadWorkflow:
 
         assert wf.name == "default"
         assert wf.entry_agent == "architect"
-        assert len(wf.steps) == 5
+        assert len(wf.steps) == 7
         assert wf.steps[0].name == "analyze"
         assert wf.steps[0].agent == "architect"
         assert wf.steps[0].next == "context"
-        assert wf.steps[-1].name == "review"
+        assert [s.name for s in wf.steps[-3:]] == ["git_diff", "run_tests", "review"]
         assert wf.steps[-1].agent == "review"
         assert wf.steps[-1].next is None
 

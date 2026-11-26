@@ -121,6 +121,11 @@ class FakeClient(GitHubInitClient):
         self.access_calls: list[tuple[str, ...]] = []
         self.committed: dict[str, str] | None = None
 
+    def read_file(self, target, path):
+
+        return None
+
+
     def get_existing_files(self, target, paths):
         return {}
 
@@ -183,6 +188,7 @@ def test_plan_init_renders_workflow_and_agent_config():
     assert set(plan.rendered) == {
         AGENT_CONFIG_PATH,
         WORKFLOW_PATH,
+        ".nebuko/nebuko.yaml",
     }
     assert plan.rendered[AGENT_CONFIG_PATH] == "agent-config-body"
     assert plan.rendered[WORKFLOW_PATH] == "workflow-body"

@@ -8,10 +8,12 @@ as an argument and never prompts or prints.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from nebuko.engine.init.ports import SetupError
+from nebuko.engine.models import NebukoManifest
 
 if TYPE_CHECKING:
     from nebuko.engine.init.manifest import Manifest
@@ -111,6 +113,10 @@ class GitHubInitClient(Protocol):  # I/O only — no planning/execution methods 
         # @stub-protected: raises on failure
         ...
 
+    def read_file(self, target: SecretTarget, path: str) -> str | None:
+        # @stub-protected: the default branch's text; None only when the file is absent
+        ...
+
     def upsert_branch_and_commit(self, target: SecretTarget, branch: str, files: dict[str, str]) -> None:
         # @stub-protected: force-updates nebuko/init
         ...
@@ -144,6 +150,17 @@ class GitHubInitClient(Protocol):  # I/O only — no planning/execution methods 
 AGENT_CONFIG_PATH = ".nebuko/agents/agent-config.yaml"  # single home (D7); setup.py imports it
 BRANCH = "nebuko/init"
 WORKFLOW_PATH = ".github/workflows/nebuko.yaml"
+MANIFEST_PATH = ".nebuko/nebuko.yaml"
+
+
+class ManifestMergeError(ValueError):
+    """``MANIFEST_PATH`` cannot be edited in place; ``snippet`` is the manual edit."""
+
+    def __init__(self, reason: str, snippet: str) -> None:
+        super().__init__(
+            f"{reason}\nAdd these keys to {MANIFEST_PATH} by hand:\n{snippet}"
+        )
+        self.snippet = snippet
 
 
 def plan_init(
@@ -154,6 +171,9 @@ def plan_init(
     existing_files: dict[str, bool],
     existing_secrets: frozenset[str],
     secret_access: dict[str, SecretAccess] | None = None,
+    existing_manifest: str | None = None,
+    base_branch: str = "main",
+    test_command: str = "",
 ) -> InitPlan:
     # @stub-protected: module-level, pure — secret_access is None at repo scope
     # (N31). Org-scope action mapping per Decision §1 (N32); org != repo owner
@@ -170,6 +190,7 @@ def plan_init(
         WORKFLOW_PATH: _render_workflow(
             caller_template, request, manifest, manifest.providers[request.provider].secret_names
         ),
+        MANIFEST_PATH: merge_manifest_settings(existing_manifest, base_branch, test_command),
     }
     secret_actions: dict[str, str] = {}
     secret_names = tuple(manifest.providers[request.provider].secret_names)
@@ -194,6 +215,74 @@ def plan_init(
         conflicts=conflicts,
         request_access=dict(secret_access) if secret_access else {},
     )
+
+
+def merge_manifest_settings(existing: str | None, base_branch: str, test_command: str) -> str:
+    """``existing`` with ``base_branch`` and ``test_command`` set, nothing else changed.
+
+    Only the line of each managed key is rewritten, or a new line is appended
+    at the end, so comments, other keys and their order survive. A blank
+    ``test_command`` leaves that key alone. The result is parsed again and must
+    equal the old mapping with just these keys changed; otherwise the edit is
+    refused with the lines to add by hand. Invalid values raise ``ValueError``.
+    """
+    import yaml
+
+    settings = {"base_branch": base_branch.strip()}
+    if test_command.strip():
+        settings["test_command"] = test_command.strip()
+    NebukoManifest.model_validate(settings)  # the engine's own rules for these keys
+    snippet = "\n".join(_render_setting(key, value).rstrip("\n") for key, value in settings.items())
+    text = existing or ""
+    try:
+        before = yaml.safe_load(text) or {}
+    except yaml.YAMLError as error:
+        raise ManifestMergeError(f"{MANIFEST_PATH} is not valid YAML ({error})", snippet) from error
+    if not isinstance(before, dict):
+        raise ManifestMergeError(f"{MANIFEST_PATH} is not a YAML mapping", snippet)
+    result = text
+    for key, value in settings.items():
+        if before.get(key) == value:
+            continue
+        result = _set_top_level_line(result, key, value)
+        if result is None:
+            raise ManifestMergeError(f"{key} is set in a form this edit cannot rewrite", snippet)
+    try:
+        after = yaml.safe_load(result) or {}
+    except yaml.YAMLError as error:
+        raise ManifestMergeError(
+            f"the edited {MANIFEST_PATH} is not valid YAML ({error})", snippet
+        ) from error
+    if after != {**before, **settings}:
+        raise ManifestMergeError(f"{MANIFEST_PATH} could not be edited in place", snippet)
+    return result
+
+
+def _render_setting(key: str, value: str) -> str:
+    import yaml
+
+    return yaml.safe_dump(
+        {key: value}, default_flow_style=False, sort_keys=False, width=1 << 30, allow_unicode=True
+    )
+
+
+def _set_top_level_line(text: str, key: str, value: str) -> str | None:
+    """Replace the single top-level ``key:`` line, or append one; None when unsafe."""
+    lines = text.splitlines(keepends=True)
+    pattern = re.compile(rf"{re.escape(key)}[ \t]*:")
+    matches = [index for index, line in enumerate(lines) if pattern.match(line)]
+    if len(matches) > 1:
+        return None
+    if not matches:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text + _render_setting(key, value)
+    old = lines[matches[0]]
+    # A trailing comment would be lost with the line, so a manual edit is needed.
+    if " #" in old:
+        return None
+    lines[matches[0]] = _render_setting(key, value)
+    return "".join(lines)
 
 
 def _secret_action(
