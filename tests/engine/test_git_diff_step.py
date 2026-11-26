@@ -108,9 +108,10 @@ class TestGitDiffStep:
         for name in ("dev-review-loop", "default"):
             script = _declared_step(name, directory="defaults/workflows")
 
-            assert 'origin/"${NEBUKO_BASE_BRANCH:-main}"' not in " ".join(script.args)
-            assert "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD" in " ".join(script.args)
-            assert "origin/main" not in " ".join(script.args)
+            joined = " ".join(script.args)
+
+            assert '"origin/$base...HEAD"' in joined
+            assert "origin/main" not in joined
 
     def test_a_repo_whose_default_branch_is_not_main_gets_its_own_diff(
         self, tmp_path: Path
@@ -124,6 +125,25 @@ class TestGitDiffStep:
         result = subprocess.run(
             _shipped_argv(), cwd=checkout, capture_output=True, text=True,
             env={**os.environ, **env},
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "+ahead line" in result.stdout
+
+    def test_without_a_base_branch_the_remote_default_is_used_as_the_manifest_does(
+        self, tmp_path: Path
+    ):
+        """No ``NEBUKO_BASE_BRANCH``: the diff follows ``origin/HEAD``, as the manifest ref does."""
+        checkout = _shallow_checkout(tmp_path, base="trunk")
+        _git(checkout, "fetch", "-q", "origin", "trunk")
+        _git(checkout, "remote", "set-head", "origin", "trunk")
+        env = {k: v for k, v in os.environ.items() if k != "NEBUKO_BASE_BRANCH"}
+        assert resolve_evidence_checkout(
+            checkout, {}, mode="session", branch="feature/issue-1-x"
+        ).ok
+
+        result = subprocess.run(
+            _shipped_argv(), cwd=checkout, capture_output=True, text=True, env=env,
         )
 
         assert result.returncode == 0, result.stderr

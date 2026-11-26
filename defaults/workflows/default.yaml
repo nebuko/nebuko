@@ -106,8 +106,10 @@ steps:
       args:
         - "-c"
         - >-
-          git --no-pager diff --stat "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD" &&
-          git --no-pager diff "origin/${NEBUKO_BASE_BRANCH:-main}...HEAD"
+          base="${NEBUKO_BASE_BRANCH:-}"; [ -n "$base" ] || base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null);
+          base="${base#origin/}"; base="${base:-main}";
+          git --no-pager diff --stat "origin/$base...HEAD" &&
+          git --no-pager diff "origin/$base...HEAD"
     conditions:
       - on_result: default
         next: run_tests
@@ -115,6 +117,8 @@ steps:
   - name: run_tests
     script:
       command: "sh"
+      env:
+        NEBUKO_MERGE_MAIN: "0"
       args:
         - "-c"
         - >-

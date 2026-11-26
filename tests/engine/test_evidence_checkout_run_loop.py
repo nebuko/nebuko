@@ -459,7 +459,7 @@ class TestSingleJobHandOff:
             monkeypatch,
             _script_resolved(
                 "sh",
-                ["-c", 'echo "RAN:${NEBUKO_TEST_COMMAND}"'],
+                ["-c", 'echo "RAN:${NEBUKO_TEST_COMMAND}"; pwd'],
                 SCRIPT_ENV=json.dumps({"NEBUKO_MERGE_MAIN": "0"}),
             ),
         )
@@ -468,4 +468,5 @@ class TestSingleJobHandOff:
 
         assert outcome.exit_code == ExitCode.ADVANCE
         assert "RAN:echo committed-cmd" in outcome.posted_body
+        assert str(workspace.resolve()) in outcome.posted_body
         assert "edited-cmd" not in outcome.posted_body

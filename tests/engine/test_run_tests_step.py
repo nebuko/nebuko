@@ -103,6 +103,8 @@ class TestShippedWorkflowsReachReviewThroughEvidence:
         assert steps["run_tests"]["conditions"] == [{"on_result": "default", "next": "review"}]
         assert steps["review"]["inputs"] == ["implement", "git_diff", "run_tests"]
         assert steps["git_diff"]["script"]["env"] == {"NEBUKO_MERGE_MAIN": "0"}
+        # Tests the same tree git_diff shows, so the review's head check holds.
+        assert steps["run_tests"]["script"]["env"] == {"NEBUKO_MERGE_MAIN": "0"}
 
     def test_the_review_prompt_trusts_the_evidence_and_refuses_pre_existing_claims(self):
         for workflow in ("default", "dev-review-loop"):
