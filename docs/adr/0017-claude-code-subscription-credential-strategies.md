@@ -402,6 +402,13 @@ another payer (option B is not used silently).
   the manifests on purpose: a resumed run keeps the config it started with, so an
   edited manifest does not change a run mid-flight. A previous name that no longer
   resolves warns and falls back to the manifests and default, in both lanes.
+  This ranks the previous state above the manifests, which departs from the issue
+  text's order (`--config`, personal manifest, project manifest, default). It is
+  kept as a documented deviation and needs the author's sign-off.
+- Caller trade-off: the project caller's `if:` skips any human `/nebuko` comment
+  containing `--personal` on any line, while `parse_trigger` reads the first line
+  only. A flagless run that mentions `--personal` later in its body is therefore
+  not started by the project caller. Pinned by `test_caller_personal_guard.py`.
 - **Gate decisions via dispatch are not in this change.** A dispatched
   `approve gate --personal` is authored by the bot and is not a gate decision
   today. Enabling it needs its own review. Trust anchor for that follow-up: the

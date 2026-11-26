@@ -25,6 +25,15 @@ def test_caller_job_condition_skips_personal_comments():
     )
 
 
-def test_caller_guard_only_matches_command_lines():
+def test_caller_guard_only_matches_nebuko_comments():
     # Prose that mentions --personal without a leading /nebuko does not suppress the run.
     assert "!startsWith(github.event.comment.body, '/nebuko')" in _condition()
+
+
+def test_caller_guard_is_broader_than_first_line_rule_by_design():
+    # Pinned trade-off (ADR-0017): the expression matches --personal on any line of a
+    # /nebuko comment. The engine's parse_trigger reads the first line only, so this
+    # test documents that the caller may skip a flagless run the engine would accept.
+    condition = _condition()
+    assert "contains(github.event.comment.body, '--personal')" in condition
+    assert "first line" in CALLER.read_text(encoding="utf-8")

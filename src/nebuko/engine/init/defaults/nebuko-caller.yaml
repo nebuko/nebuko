@@ -20,6 +20,10 @@ jobs:
     # (ADR-0017, #1479); starting a project run for it would duplicate the run. Bot
     # comments (reports, continuations) are never personal dispatches, so they always
     # pass. The engine's parse_trigger stays authoritative (first command line only).
+    # Trade-off: GitHub expressions cannot inspect the first line, so a flagless
+    # /nebuko comment that mentions --personal on a later line is skipped here even
+    # though the engine would run it. Such a comment needs its own line break or
+    # rewording (ADR-0017).
     if: >-
       github.event_name != 'issue_comment' ||
       (
