@@ -1942,7 +1942,7 @@ class TestStepSkipKindIsOnlyForAStop:
 
 
 class TestHumanActionNoticeIdentity:
-    """Issue #1465: a direct agent call leaves the resolver's identity empty.
+    """Issue #1296: a direct agent call leaves the resolver's identity empty.
 
     The notice must then fall back to the workflow state, and a pending gate's
     step is the authoritative step to name.
@@ -5845,29 +5845,196 @@ class TestPrFinalizerEngineEntry:
         assert create[create.index("--head") + 1] == self.BRANCH
 
 
+def _git(root, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def _pushed_checkout(tmp_path, *, branch="feature/issue-590-x", ahead=True, checkout="branch"):
+    """A checkout whose origin has ``main`` and ``branch``; ``branch`` is ahead of main when ``ahead``.
+
+    ``checkout`` leaves HEAD on the branch (``"branch"``), on the base (``"base"``) or detached.
+    """
+    root = tmp_path / "repo"
+    origin = tmp_path / "origin.git"
+    root.mkdir()
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True, capture_output=True)
+    _git(root, "init", "-b", "main")
+    _git(root, "config", "user.email", "agent@nebuko.local")
+    _git(root, "config", "user.name", "Nebuko Agent")
+    _git(root, "remote", "add", "origin", str(origin))
+    (root / "a.txt").write_text("base\n", encoding="utf-8")
+    _git(root, "add", "a.txt")
+    _git(root, "commit", "-m", "base")
+    _git(root, "push", "origin", "main")
+    _git(root, "checkout", "-b", branch)
+    if ahead:
+        (root / "b.txt").write_text("work\n", encoding="utf-8")
+        _git(root, "add", "b.txt")
+        _git(root, "commit", "-m", "work")
+    _git(root, "push", "origin", branch)
+    if checkout == "base":
+        _git(root, "checkout", "main")
+    elif checkout == "detached":
+        _git(root, "checkout", "--detach")
+    return root
+
+
+def _notice_engine(tmp_path, root) -> Engine:
+    adapter = LocalAdapter(tmp_path / "runs" / "run-1", trigger=_trigger())
+    env = {
+        "CIRCUIT_BREAKER_THRESHOLD": "3",
+        "GITHUB_REPOSITORY": "olivier-norture/git-flow-ai",
+        "GITHUB_WORKSPACE": str(root),
+        "NEBUKO_BASE_BRANCH": "main",
+    }
+    return Engine(adapter=adapter, repo_root=root, env=env)
+
+
+_OPEN_PR_CMD = "gh pr create --head"
+
+
 class TestUnpublishedBranchNotice:
-    """The terminal and gate-hold notices name the PR the branch still needs (#1468)."""
+    """The guards-phase notices name the PR a pushed, ahead branch still needs (#1468, #1476)."""
 
-    def test_terminal_notice_carries_the_open_command_when_no_pr_exists(
-        self, tmp_path, monkeypatch
+    @pytest.fixture
+    def gh_pr(self, monkeypatch):
+        """Pin the open-PR lookup: ``""`` means no PR; the state is otherwise real git."""
+        from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr
+
+        answer = {"url": ""}
+        monkeypatch.setattr(ensure_pr, "_run_gh", lambda args, **kwargs: answer["url"])
+        return answer
+
+    def _gate_hold_run(self, tmp_path, monkeypatch, root, *, recorded_branch=""):
+        """Drive a fresh Engine through the guards phase to an armed-gate hold."""
+        from nebuko.engine.lib.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitInfo
+
+        engine = _notice_engine(tmp_path, root)
+        if recorded_branch:
+            git = GitInfo(branch_name=recorded_branch, base_branch="main")
+            engine.adapter.save_state(
+                WorkflowState(run_id=1, workflow="default", step="implement", agent="dev", git=git)
+            )
+        _stub_resolved(
+            monkeypatch,
+            {
+                "SKIP_AGENT": "true",
+                "SKIP_KIND": "human_gate_hold",
+                "REASON": "human_gate:plan held — use /nebuko approve gate",
+            },
+        )
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
+        monkeypatch.setenv("GFA_REPO_ROOT", str(root))
+        return engine.run()
+
+    def test_a_guards_phase_gate_hold_names_the_pr_command_from_state(
+        self, tmp_path, monkeypatch, gh_pr
     ):
-        from nebuko.engine.lib.git import branch_scaffold
+        """Real phase order: no prompt phase runs, so only the recorded state names the branch."""
+        root = _pushed_checkout(tmp_path, checkout="base")
+        branch = "feature/issue-590-x"
 
-        root = tmp_path / "repo"
-        root.mkdir()
-        engine = _engine_at_root(tmp_path, root)
-        engine._scaffold_state["result"] = branch_scaffold.ScaffoldResult(
-            ok=True, branch="feature/issue-590-x"
+        outcome = self._gate_hold_run(tmp_path, monkeypatch, root, recorded_branch=branch)
+
+        assert outcome.posted_body is not None
+        assert f"{_OPEN_PR_CMD} {branch} --base main" in outcome.posted_body
+
+    def test_a_guards_phase_terminal_skip_names_the_pr_command(
+        self, tmp_path, monkeypatch, gh_pr
+    ):
+        from nebuko.engine.lib.workflow_state import WorkflowState
+        from nebuko.engine.lib.workflow_state.sub_domains.git_info.git_info import GitInfo
+
+        root = _pushed_checkout(tmp_path, checkout="base")
+        branch = "feature/issue-590-x"
+        monkeypatch.setenv("GFA_REPO_ROOT", str(root))
+        engine = _notice_engine(tmp_path, root)
+        git = GitInfo(branch_name=branch, base_branch="main")
+        engine.adapter.save_state(
+            WorkflowState(run_id=1, workflow="default", step="implement", agent="dev", git=git)
         )
-        monkeypatch.setattr(
-            pr_finalize,
-            "branch_publish_note",
-            lambda branch: f"Open it for `{branch}`.",
+        _stub_resolved(
+            monkeypatch,
+            {"SKIP_AGENT": "true", "SKIP_KIND": "no_next_agent", "REASON": "workflow complete"},
         )
-        posted: list[str] = []
-        monkeypatch.setattr(engine.adapter, "post", posted.append)
+        monkeypatch.setattr(Engine, "invoke_agent", lambda self, prompt: pytest.fail("agent ran"))
 
-        engine._post_terminal_notice("the workflow ended")
+        outcome = engine.run()
 
-        assert "the workflow ended" in posted[0]
-        assert "Open it for `feature/issue-590-x`." in posted[0]
+        assert outcome.posted_body is not None
+        assert "workflow complete" in outcome.posted_body
+        assert f"{_OPEN_PR_CMD} {branch} --base main" in outcome.posted_body
+        assert "result" not in engine._scaffold_state
+
+    def test_no_line_when_a_pr_is_already_open(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, checkout="base")
+        gh_pr["url"] = "https://github.com/olivier-norture/git-flow-ai/pull/9"
+
+        outcome = self._gate_hold_run(
+            tmp_path, monkeypatch, root, recorded_branch="feature/issue-590-x"
+        )
+
+        assert _OPEN_PR_CMD not in outcome.posted_body
+
+    def test_no_line_when_the_branch_is_not_ahead_of_base(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, ahead=False, checkout="base")
+
+        outcome = self._gate_hold_run(
+            tmp_path, monkeypatch, root, recorded_branch="feature/issue-590-x"
+        )
+
+        assert _OPEN_PR_CMD not in outcome.posted_body
+
+    def test_no_line_when_there_is_no_branch(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, checkout="detached")
+
+        outcome = self._gate_hold_run(tmp_path, monkeypatch, root)
+
+        assert outcome.posted_body is not None
+        assert _OPEN_PR_CMD not in outcome.posted_body
+
+    def test_checkout_branch_is_the_fallback_when_state_has_none(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, checkout="branch")
+
+        outcome = self._gate_hold_run(tmp_path, monkeypatch, root)
+
+        assert f"{_OPEN_PR_CMD} feature/issue-590-x --base main" in outcome.posted_body
+
+    def test_a_checkout_on_the_base_branch_names_no_branch(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, checkout="base")
+
+        outcome = self._gate_hold_run(tmp_path, monkeypatch, root)
+
+        assert _OPEN_PR_CMD not in outcome.posted_body
+
+    def test_a_detached_checkout_names_no_branch(self, tmp_path, monkeypatch, gh_pr):
+        root = _pushed_checkout(tmp_path, checkout="detached")
+
+        outcome = self._gate_hold_run(tmp_path, monkeypatch, root)
+
+        assert _OPEN_PR_CMD not in outcome.posted_body
+
+    def test_a_timed_out_git_call_reads_as_no_line_and_never_raises(
+        self, tmp_path, monkeypatch, gh_pr
+    ):
+        root = _pushed_checkout(tmp_path, checkout="branch")
+        engine = _notice_engine(tmp_path, root)
+
+        def slow(args, **kwargs):
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 0))
+
+        monkeypatch.setattr(subprocess, "run", slow)
+
+        assert engine._branch_publish_note() == ""
+
+    def test_the_base_comes_from_the_run_env_not_os_environ(self, tmp_path, monkeypatch, gh_pr):
+        """A ``base_branch`` from nebuko.yaml lives in the run env only: a checkout on it is the base."""
+        root = _pushed_checkout(tmp_path, branch="trunk", checkout="branch")
+        monkeypatch.delenv("NEBUKO_BASE_BRANCH", raising=False)
+        engine = _notice_engine(tmp_path, root)
+        engine.env["NEBUKO_BASE_BRANCH"] = "trunk"
+
+        assert engine._notice_base() == "trunk"
+        assert engine._branch_publish_note() == ""
+

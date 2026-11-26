@@ -27,11 +27,13 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
-def branch_publish_note(branch: str) -> str:
+def branch_publish_note(
+    branch: str, *, base: str = "", head: str = "HEAD", timeout: int = 120
+) -> str:
     """Notice line for a branch with commits ahead of base and no open PR, else ``""``."""
     from nebuko.engine.lib.agent_script.features.ensure_pr import ensure_pr
 
-    return ensure_pr.unpublished_branch_note(branch)
+    return ensure_pr.unpublished_branch_note(branch, base=base, head=head, timeout=timeout)
 
 
 @dataclass(frozen=True)
