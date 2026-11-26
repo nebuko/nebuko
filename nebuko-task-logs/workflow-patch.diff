@@ -1,0 +1,29 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index d7699c7..0588bad 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -445,6 +445,24 @@ jobs:
+                 echo "/.nebuko-engine/" >> .git/info/exclude
+                 echo "NEBUKO_ROOT=$GITHUB_WORKSPACE/.nebuko-engine" >> "$GITHUB_ENV"
+ 
++            # Lane D (issue #1485): a personal run reads the user's agent configs and
++            # manifest from .nebuko-personal. It comes after the project checkout, which
++            # cleans the workspace root, and before the engine step. No token override:
++            # the caller job grants contents: write, so github.token reads its own repo.
++            # The engine parses this checkout as data and never executes it.
++            - name: Checkout personal repo config (read-only)
++              if: endsWith(github.repository, '/nebuko-personal')
++              uses: actions/checkout@v5
++              with:
++                repository: ${{ github.repository }}
++                path: .nebuko-personal
++                sparse-checkout: .nebuko
++                persist-credentials: false
++
++            - name: Keep personal checkout out of the caller's commits
++              if: endsWith(github.repository, '/nebuko-personal')
++              run: echo "/.nebuko-personal/" >> .git/info/exclude
++
+             - name: Set up Python
+               id: setup-python
+               uses: actions/setup-python@v6
