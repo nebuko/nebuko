@@ -9,7 +9,8 @@ Package-by-feature DDD layout:
 import argparse
 import os
 import sys
-from typing import Optional
+from pathlib import Path
+from typing import Mapping, Optional
 
 from .features.build_result.build_result import _build_result
 from .features.fetch_state.fetch_state import _fetch_workflow_state_from_history
@@ -30,6 +31,14 @@ from .features.parse_trigger.parse_trigger import (
     is_answer_continuation,
     _parse_trigger_body,
 )
+from .features.resolve_route.agent_config_resolver import (
+    PERSONAL_CHECKOUT_DIR,
+    AgentConfigNotFound,
+    AgentConfigResolver,
+    personal_run_from_env,
+    required_secret_envs,
+    select_config_name,
+)
 from .features.resolve_route.resolve_route import (
     build_author_identity_from_env,
     _armed_gate,
@@ -45,6 +54,12 @@ from .features.resolve_route.resolve_route import (
     _resolve_human_path,
     _resolve_bot_fallback_path,
     _resolve_workflow_next_step,
+)
+from nebuko.engine.harness.credentials import (
+    SHARED_LANE,
+    USER_REPO_LANE,
+    check_personal_secrets,
+    decide_lane,
 )
 from nebuko.engine.lib.config import WorkflowPosition, is_self_function_call
 from nebuko.engine.lib.workflow_state import Appreciation, IncompleteReason, TurnOutcome
@@ -186,6 +201,188 @@ def _apply_dispatch_fields(
     return WorkflowCommand(action=wf_cmd.action, resource=wf_cmd.resource, params=params), None
 
 
+_LANE_CHANGE_ACTIONS = frozenset({"takeover", "move_to_project", "switch_to_personal"})
+
+#: Intents that run something. Lane stickiness guards only these: plain prose on
+#: a personal thread is never refused (issue #1479).
+_RUNNING_INTENTS = frozenset({"command", "agent_trigger"})
+
+
+def _personal_run_actor(env: Mapping[str, str]) -> tuple[Optional[str], Optional[str]]:
+    """The dispatching actor of the personal repo's run, or a refusal (issue #1479).
+
+    ``client_payload.actor`` is taken as the actor only when it equals the owner
+    GitHub reports for this run (``GITHUB_REPOSITORY_OWNER``, set by the runner,
+    never by the caller workflow). Returns ``(actor, None)`` or ``(None, refusal)``.
+    """
+    from nebuko.engine.lib.workflow_state.workflow_state import dispatch_actor_from_event
+
+    owner = (env.get("GITHUB_REPOSITORY_OWNER") or "").strip()
+    actor = dispatch_actor_from_event(env)
+    if actor and owner and actor.lower() == owner.lower():
+        return actor, None
+    who = actor or "an unknown actor"
+    return None, (
+        f"this personal run was dispatched by {who}, who is not the owner of this "
+        f"personal repo ({owner or 'owner unknown'}). Only the owner runs on their own "
+        "credential, so the run is refused."
+    )
+
+
+def _lane_env(action: str, actor: str) -> dict:
+    """Lane facts for the credential guard and the state writer (issue #1479).
+
+    Returned as result keys, so they reach the run's environment with the other
+    resolved values. Read by ``lane_binding_from_env`` and the continuation guard.
+    """
+    if action in ("takeover", "switch_to_personal"):
+        env = {"WORKFLOW_LANE": USER_REPO_LANE, "CLAUDE_CREDENTIAL_OWNER": actor}
+    elif action == "move_to_project":
+        env = {"WORKFLOW_LANE": SHARED_LANE, "CLAUDE_CREDENTIAL_OWNER": ""}
+    else:
+        return {}
+    env["NEBUKO_LANE_ACTION"] = action
+    return env
+
+
+def _is_path_like(name: str) -> bool:
+    """True when a config value names a path rather than a bare file name."""
+    return os.path.isabs(name) or "/" in name or os.sep in name
+
+
+def _agent_config_selection(
+    trigger_body: str,
+    wf_cmd: Optional[WorkflowCommand],
+    prev_state,
+    *,
+    requested_config: Optional[str],
+    lane_action: str,
+    personal_lane: bool,
+) -> dict:
+    """Agent-config keys for this run (issues #1389, #1479).
+
+    Name order: ``--config``, the previous state's name (dropped on a takeover
+    or lane switch), the personal manifest (personal lane only), the project
+    manifest, then the shipped default. The personal lane resolves names only
+    in the personal checkout and the shipped defaults, never in the project's
+    ``.nebuko/agents``, and checks the config's secrets against the personal
+    environment. Returns ``{}`` to keep the workflow's own AGENT_CONFIG_PATH.
+    """
+    from nebuko.engine.lib.default_paths import checkout_root
+    from nebuko.engine.models import PersonalManifest
+    from nebuko.engine.paths import ConfigPathAnchor, load_manifest
+
+    caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
+    personal_root = caller_root / PERSONAL_CHECKOUT_DIR
+    personal_manifest_name = None
+    if personal_lane:
+        manifest, ignored = PersonalManifest.load(personal_root / ".nebuko" / "nebuko.yaml")
+        for key in ignored:
+            print(
+                f"Warning: ignoring '{key}' in the personal manifest; only agent_config is read there",
+                file=sys.stderr,
+            )
+        personal_manifest_name = manifest.agent_config
+    try:
+        project_manifest_name = load_manifest(caller_root / ".nebuko" / "nebuko.yaml").agent_config
+    except Exception as exc:  # noqa: BLE001 - a bad manifest must not crash routing
+        print(f"Warning: unreadable .nebuko/nebuko.yaml ({exc}); ignoring agent_config", file=sys.stderr)
+        project_manifest_name = None
+
+    resolver = AgentConfigResolver.for_run(
+        "personal" if personal_lane else "project",
+        caller_root,
+        personal_root if personal_lane and personal_root.is_dir() else None,
+        checkout_root() / "defaults" / "agents",
+    )
+    checkout_notice = ""
+    if personal_lane and not personal_root.is_dir():
+        # Without the checkout the personal manifest and overrides cannot be read,
+        # so whether they would have changed the config is unknowable: say so.
+        checkout_notice = (
+            f"the personal repo checkout ({PERSONAL_CHECKOUT_DIR}) was not found: its "
+            "manifest and agent configs were not read, so this run uses the shipped "
+            "defaults"
+        )
+    previous_name = prev_state.agent_config if prev_state is not None else None
+    carry_previous = lane_action not in _LANE_CHANGE_ACTIONS
+    name, source = select_config_name(
+        flag=requested_config,
+        previous=previous_name,
+        personal_manifest=personal_manifest_name,
+        project_manifest=project_manifest_name,
+        carry_previous=carry_previous,
+    )
+    if source == "previous" and name and not _is_path_like(name):
+        try:
+            resolver.resolve(name)
+        except AgentConfigNotFound:
+            # A persisted name that no longer resolves falls back to the manifests
+            # and shipped default, in both lanes, instead of failing the resume.
+            print(
+                f"Warning: persisted agent config '{name}' not found; falling back to the manifest or default",
+                file=sys.stderr,
+            )
+            name, source = select_config_name(
+                flag=None,
+                previous=None,
+                personal_manifest=personal_manifest_name,
+                project_manifest=project_manifest_name,
+                carry_previous=False,
+            )
+    if name is None and personal_lane:
+        name = Path(os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml").name
+        source = "shipped"
+    if name is None:
+        return {}
+
+    if _is_path_like(name):
+        if personal_lane:
+            return {"task": "", "config_command_error": f"agent config '{name}' must be a file name in the personal lane"}
+        resolved_path = _resolve_agent_config_value(name, caller_root)
+        if resolved_path is None:
+            return {"task": "", "config_command_error": f"agent config file not found: '{name}'"}
+        return {
+            "agent_config_path": resolved_path,
+            "agent_config_raw": name,
+            "agent_config_layer": "project",
+            "checkout_notice": checkout_notice,
+        }
+
+    try:
+        resolved = resolver.resolve(name)
+    except AgentConfigNotFound as exc:
+        if source == "flag" and not personal_lane:
+            available = _available_agent_configs(caller_root)
+            listing = ", ".join(available) if available else "none found"
+            usage = (
+                "/nebuko run workflow --name <workflow> "
+                "[--step <step[.step...]>] [--config <agent-config>]"
+            )
+            return {
+                "task": "",
+                "config_command_error": (
+                    f"unknown agent config '{name}'; available: {listing} — usage: {usage}"
+                ),
+            }
+        return {"task": "", "config_command_error": str(exc)}
+
+    if personal_lane:
+        try:
+            required = required_secret_envs(resolved.path)
+        except Exception as exc:  # noqa: BLE001 - reported to the thread, not a crash
+            return {"task": "", "config_command_error": f"agent config '{name}' is unreadable: {exc}"}
+        message = check_personal_secrets(name, required, os.environ)
+        if message is not None:
+            return {"task": "", "config_command_error": message}
+    return {
+        "agent_config_path": str(resolved.path),
+        "agent_config_raw": name,
+        "agent_config_layer": resolved.layer,
+        "checkout_notice": checkout_notice,
+    }
+
+
 def resolve_config(
     trigger_body: str,
     prompt_base: str,
@@ -306,7 +503,51 @@ def resolve_config(
     # ``--from`` is forwarded just as for `delete`, so `--issue <n>` targets
     # that issue and `--from <id>` scopes the deletion (issue #867) rather than
     # silently falling back to the invoking issue / whole thread.
-    command_intent = classify_comment(trigger_body)
+    # Lane D (issue #1479): a --personal command is the broker's to dispatch.
+    # The project side skips it with no comment and no label change; the
+    # personal repo's own run (and bot bodies) consume the flag instead.
+    personal_lane = personal_run_from_env(os.environ)
+    command_intent = classify_comment(
+        trigger_body, consume_lane_flag=personal_lane or bool(is_bot)
+    )
+    if command_intent.kind == "personal_dispatch":
+        return {"SKIP_AGENT": "true", "REASON": "personal dispatch: handled by the personal lane"}
+    # Lane stickiness (issue #1479) guards a comment that would run something
+    # (a nebuko command or an agent trigger). The personal repo's own run is a
+    # repository_dispatch: its actor is checked against the owner GitHub reports.
+    lane_action = "allow"
+    lane_notice = ""
+    lane_env: dict = {}
+    personal_actor = None
+    if personal_lane and not is_bot:
+        personal_actor, refusal = _personal_run_actor(os.environ)
+        if refusal is not None:
+            return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": refusal}
+    human_thread_comment = (
+        not is_bot
+        and not personal_lane
+        and (os.environ.get("GITHUB_EVENT_NAME") or "").strip() == "issue_comment"
+    )
+    if prev_state is not None and command_intent.kind in _RUNNING_INTENTS:
+        if personal_lane and not is_bot:
+            lane_decision = decide_lane(
+                prev_state.lane, prev_state.credential_owner, "personal", personal_actor or ""
+            )
+        elif human_thread_comment:
+            lane_decision = decide_lane(
+                prev_state.lane,
+                prev_state.credential_owner,
+                wf_cmd.lane_flag if wf_cmd is not None else None,
+                build_author_identity_from_env(trigger_body).login,
+            )
+        else:
+            lane_decision = None
+        if lane_decision is not None:
+            lane_action = lane_decision.action
+            lane_notice = lane_decision.notice or ""
+            if lane_decision.action == "refuse":
+                return {"SKIP_AGENT": "true", "COMMAND_ERROR": "true", "REASON": lane_decision.message}
+            lane_env = _lane_env(lane_action, personal_actor or build_author_identity_from_env(trigger_body).login)
     if (
         command_intent.kind == "command"
         and command_intent.command == "clean"
@@ -516,35 +757,16 @@ def resolve_config(
         if wf_cmd is not None and wf_cmd.action == "run" and not is_bot
         else None
     )
-    selected_config = requested_config or (
-        prev_state.agent_config if prev_state is not None else None
+    config.update(
+        _agent_config_selection(
+            trigger_body,
+            wf_cmd,
+            prev_state,
+            requested_config=requested_config,
+            lane_action=lane_action,
+            personal_lane=personal_lane,
+        )
     )
-    if selected_config:
-        from nebuko.engine.paths import ConfigPathAnchor
-
-        caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
-        resolved_config = _resolve_agent_config_value(selected_config, caller_root)
-        if resolved_config is not None:
-            config["agent_config_path"] = resolved_config
-            config["agent_config_raw"] = selected_config
-        elif requested_config:
-            available = _available_agent_configs(caller_root)
-            listing = ", ".join(available) if available else "none found"
-            usage = (
-                "/nebuko run workflow --name <workflow> "
-                "[--step <step[.step...]>] [--config <agent-config>]"
-            )
-            config["task"] = ""
-            config["config_command_error"] = (
-                f"unknown agent config '{selected_config}'; "
-                f"available: {listing} — usage: {usage}"
-            )
-        else:
-            print(
-                f"Warning: persisted agent config '{selected_config}' not "
-                "found; using the workflow's own config",
-                file=sys.stderr,
-            )
 
     # Branch-mounted child fetch-on-miss (issue #604): carry the state's
     # scaffold_branch into result-building so sub-workflow entry resolution
@@ -579,6 +801,11 @@ def resolve_config(
     except Exception as exc:  # noqa: BLE001 - governance must not break routing
         if os.environ.get("DEBUG") or debug:
             print(f"DEBUG complexity governor: {exc}", file=sys.stderr)
+
+    if lane_notice:
+        config["config_lane_notice"] = lane_notice
+    if lane_env:
+        config["config_lane_env"] = lane_env
 
     # A malformed or unknown human slash command yields no valid task; keep its
     # usage hint on the config so _build_result can turn the terminal skip into

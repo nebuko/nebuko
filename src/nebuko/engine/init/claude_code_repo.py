@@ -1,6 +1,6 @@
 """``nebuko init claude-code-repo`` — the per-user Lane D credential repo (ADR-0017).
 
-Creates a private ``<login>/nebuko-claude-code`` repository, stores the
+Creates a private ``<login>/nebuko-personal`` repository, stores the
 client's own ``CLAUDE_CODE_OAUTH_TOKEN`` as its secret, writes a thin workflow
 pinned to the reusable workflow's commit SHA, and prints the GitHub App
 installation link. The token is never stored, logged or passed in argv: it
@@ -21,7 +21,7 @@ from nebuko.engine.init.setup import EXIT_ERRORS, EXIT_OK, EXIT_USAGE
 
 REUSABLE_WORKFLOW_REPO = "nebuko/nebuko"
 REUSABLE_WORKFLOW_PATH = ".github/workflows/nebuko-workflow.yaml"
-USER_REPO_NAME = "nebuko-claude-code"
+USER_REPO_NAME = "nebuko-personal"
 USER_WORKFLOW_PATH = ".github/workflows/nebuko-run.yaml"
 TOKEN_SECRET = "CLAUDE_CODE_OAUTH_TOKEN"
 APP_INSTALL_URL = "https://github.com/apps/nebuko/installations/new"
@@ -69,6 +69,7 @@ jobs:
       org_repo: ${{{{ github.event.client_payload.org_repo }}}}
       issue_number: ${{{{ github.event.client_payload.issue_number }}}}
       agent_config_path: agent-config-anthropic.yaml
+      personal_repo: ${{{{ github.repository }}}}
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{{{ secrets.{TOKEN_SECRET} }}}}
       GH_PAT: ${{{{ github.event.client_payload.gh_token }}}}
@@ -141,7 +142,7 @@ def run_claude_code_repo(
             raise SetupError(f"could not resolve {REUSABLE_WORKFLOW_REPO}@{pin_ref}")
         workflow = render_workflow(sha)
         _gh(runner, ["repo", "create", slug, "--private", "--add-readme",
-                     "--description", "Nebuko Claude Code credential repo"])
+                     "--description", "Nebuko personal credential repo"])
         _gh(runner, ["secret", "set", TOKEN_SECRET, "--repo", slug], stdin=token)
         del token
         content = base64.b64encode(workflow.encode()).decode()

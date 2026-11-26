@@ -123,14 +123,14 @@ the `runner_strategy` workflow input and the computed `runs-on` are not on
 main yet. `docs/claude-code.md` documents only the hosted path until then.
 
 **Lane D — per-user credential repo + App bridge (decided, not implemented).**
-Each user keeps a private `<login>/nebuko-claude-code` repo holding their own
+Each user keeps a private `<login>/nebuko-personal` repo holding their own
 `CLAUDE_CODE_OAUTH_TOKEN` secret, plus a thin workflow pinned to the reusable
 workflow's SHA. The GitHub App (webhook endpoint on the token broker, which
 already holds the App key) bridges org-repo events:
 
 ```
 issue_comment(created) → CALLER_AUTH checks → actor = comment.user.login
-  → target = "{actor}/nebuko-claude-code"        # deterministic, no mapping table
+  → target = "{actor}/nebuko-personal"        # deterministic, no mapping table
   → mint 1h installation tokens (user repo, org repo)
   → POST /repos/{target}/dispatches  (event_type: nebuko-run,
        client_payload: { actor, org_repo, issue_number, prompt_body, gh_token })
@@ -336,7 +336,7 @@ Lane D bridge (token-broker#53) needs the same rule; that is tracked there.
 
 ### Lane binding (user-repo continuations)
 
-A workflow started in a user's own `<login>/nebuko-claude-code` repo (Lane D)
+A workflow started in a user's own `<login>/nebuko-personal` repo (Lane D)
 records `lane: user-repo` and `credential_owner: <login>` in WORKFLOW_STATE
 (login only, never a secret). The fields come from the `WORKFLOW_LANE` and
 `CLAUDE_CREDENTIAL_OWNER` env vars on the first step and are carried forward by
@@ -347,12 +347,12 @@ previous state has `lane: user-repo` unless this run is in the same lane
 (`WORKFLOW_LANE=user-repo`) for the same `credential_owner`. This applies to
 every backend: a continuation that would move the payer or the model silently
 (for example the org's shared claude-code token, or an API-key profile) is
-refused with a message to resume in `<login>/nebuko-claude-code`. Human-triggered
+refused with a message to resume in `<login>/nebuko-personal`. Human-triggered
 runs are not continuations and are not bound by this rule.
 
 Routing continuations to the user repo is option A of the design issue. The
 bridge (token-broker#53) owns it. It must accept `nebuko[bot]` continuations
-whose `started_by` owns a `<login>/nebuko-claude-code` repo and dispatch there,
+whose `started_by` owns a `<login>/nebuko-personal` repo and dispatch there,
 with `client_payload` carrying `step`, `agent_config` and `lane`. Until it lands,
 Lane D continuations are refused at the first hand-off (option C), never run on
 another payer (option B is not used silently).
@@ -382,3 +382,42 @@ another payer (option B is not used silently).
   This does not protect a user repo pinned to an older reusable workflow, which drops
   the lane on re-encode. That residual risk is documented here; pin bumps are not
   automated by this change.
+
+### Lane flags and personal-lane config (issue #1479)
+
+- Grammar: `--personal` and `--project` are valueless flags on `run`, `resume`,
+  `approve gate` and `reject gate`; both together is refused. The project side
+  skips a comment carrying `--personal` with no reply and no label change; the
+  broker dispatches it to the personal repo, where the flag is consumed.
+- The personal repo is recognised by `GITHUB_REPOSITORY` ending in
+  `/nebuko-personal`, a value GitHub sets for the run.
+- Lane D needs the reusable workflow to check the personal repo out read-only at
+  `.nebuko-personal` (default branch, `persist-credentials: false`) before the
+  engine step. That step is not applied in this change (issue 1483 tracks the
+  workflow patch). Until a human applies it, a personal run has no checkout: it
+  reads only the shipped `defaults/agents`, and its first comment says the
+  checkout is missing. The personal lane resolves its agent config in that
+  checkout, then the shipped `defaults/agents`. It never reads
+  the project's `.nebuko/agents`, and it checks the config's `api_token_env`
+  secrets against the personal environment only.
+- Config name order: `--config`, the previous state (dropped on a takeover or
+  lane switch), the personal manifest (personal lane only, `agent_config` only),
+  the project manifest, then the shipped default. The previous state sits before
+  the manifests on purpose: a resumed run keeps the config it started with, so an
+  edited manifest does not change a run mid-flight. A previous name that no longer
+  resolves warns and falls back to the manifests and default, in both lanes.
+- Caller trade-off: the project caller's `if:` skips only the exact one-flag
+  shapes `/nebuko run workflow|approve gate|reject gate|resume --personal` (one
+  line, no other flag). A GitHub expression cannot count flags, read a value or
+  inspect a later line, so every other comment starts a runner and the engine's
+  `parse_trigger` (first line only) skips or answers it. Pinned by
+  `test_caller_personal_guard.py`, which runs the condition over the shared
+  samples and asserts that no project run row is skipped.
+- **Gate decisions via dispatch are not in this change.** A dispatched
+  `approve gate --personal` is authored by the bot and is not a gate decision
+  today. Enabling it needs its own review. Trust anchor for that follow-up: the
+  engine compares `client_payload.actor` with `github.repository_owner` (both set
+  by GitHub, not by the caller's workflow), then looks up that actor's permission
+  on the project repo with the project-repo token, and evaluates `may_decide_gate`
+  on that identity. An env flag set by the caller's template is not an anchor.
+

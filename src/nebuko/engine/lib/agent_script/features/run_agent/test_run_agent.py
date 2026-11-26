@@ -862,7 +862,7 @@ class TestClaudeCredentialGate(unittest.TestCase):
         finally:
             ra._caller_association = original
         self.assertIn("user-repo lane", str(refused.exception))
-        self.assertIn("alice/nebuko-claude-code", str(refused.exception))
+        self.assertIn("alice/nebuko-personal", str(refused.exception))
 
     def test_a_tier_swap_is_checked_too(self):
         from nebuko.engine.harness.credentials import ClaudeCredentialError

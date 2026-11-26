@@ -201,6 +201,37 @@ def _is_true(value: str | None) -> bool:
 
 
 # @stub-protected
+
+class PersonalManifest(BaseModel):
+    """The personal repo's ``.nebuko/nebuko.yaml`` (issue #1479).
+
+    Only ``agent_config`` is read. Every other key belongs to the project
+    manifest (workflows, gates, guards, tests) and is ignored, with a warning
+    naming it, so a copied project manifest cannot change the project's
+    behaviour from the personal repo.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    agent_config: str | None = None
+
+    @classmethod
+    def load(cls, path: Path) -> tuple["PersonalManifest", list[str]]:
+        """Parse ``path``; return the manifest and the sorted names of ignored keys.
+
+        An absent file yields an empty manifest and no ignored keys.
+        """
+        if not path.is_file():
+            return cls(), []
+        import yaml
+
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path} must contain a YAML mapping")
+        ignored = sorted(str(key) for key in raw if key != "agent_config")
+        return cls.model_validate({"agent_config": raw.get("agent_config")}), ignored
+
+
 @dataclass(frozen=True)
 class Trigger:
     """Normalized platform event that starts one engine run."""

@@ -99,7 +99,7 @@ def test_user_repo_continuation_on_org_shared_token_is_refused():
     decision = authorize_lane_binding(_user_repo_ctx())
     assert not decision.allowed
     assert decision.failed_rule == "lane-binding"
-    assert "alice/nebuko-claude-code" in decision.refusal_message()
+    assert "alice/nebuko-personal" in decision.refusal_message()
 
 
 def test_user_repo_continuation_in_same_lane_and_owner_is_allowed():

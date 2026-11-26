@@ -16,12 +16,25 @@ permissions:
 
 jobs:
   agent:
+    # A human /nebuko comment carrying --personal belongs to the broker's personal lane
+    # (ADR-0017, #1479); starting a project run for it would duplicate the run. Only
+    # the exact one-flag shapes are skipped here, because a GitHub expression cannot
+    # count flags, read a value or inspect a later line. Every other comment starts
+    # the runner, and the engine's parse_trigger (the authority) skips or answers it.
+    # Bot comments (reports, continuations) are never personal dispatches.
     if: >-
       github.event_name != 'issue_comment' ||
       (
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                 github.event.comment.author_association) ||
-        github.event.comment.user.login == 'nebuko[bot]'
+        (
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                   github.event.comment.author_association) ||
+          github.event.comment.user.login == 'nebuko[bot]'
+        ) &&
+        (
+          github.event.comment.user.login == 'nebuko[bot]' ||
+          !contains(fromJSON('["/nebuko run workflow --personal","/nebuko approve gate --personal","/nebuko reject gate --personal","/nebuko resume --personal"]'),
+                    github.event.comment.body)
+        )
       )
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@${pin_ref}
     with:

@@ -47,13 +47,13 @@ class TestTables:
 
     def test_flags_by_action(self):
         assert FLAGS_BY_ACTION == {
-            "run": {"name", "step", "config"},
+            "run": {"name", "step", "config", "personal", "project"},
             "force-step": {"name"},
-            "resume": {"feedback"},
+            "resume": {"feedback", "personal", "project"},
             "delete": {"issue", "from"},
             "update": {"value"},
-            "approve": {"feedback"},
-            "reject": {"feedback"},
+            "approve": {"feedback", "personal", "project"},
+            "reject": {"feedback", "personal", "project"},
         }
 
 
@@ -780,3 +780,55 @@ class TestMultilineFeedback:
             == "1. Flat\n2. Remove this section\n3. cache_hit_token is fine"
         )
 
+
+class TestLaneFlags:
+    """Lane flags on every lane-aware command; both together is a conflict (issue #1479)."""
+
+    @pytest.mark.parametrize(
+        "body, action",
+        [
+            ("/nebuko run workflow --name default --personal", "run"),
+            ("/nebuko resume --personal", "resume"),
+            ("/nebuko approve gate --personal", "approve"),
+            ("/nebuko reject gate --project", "reject"),
+        ],
+    )
+    def test_lane_flag_accepted_on_each_command(self, body, action):
+        result = parse_command(body)
+        assert result.status == "valid", result.detail
+        assert result.command.action == action
+        assert result.command.lane_flag == ("personal" if "personal" in body else "project")
+
+    def test_lane_flag_combines_with_existing_flags(self):
+        result = parse_command("/nebuko approve gate --personal --feedback looks good")
+        assert result.status == "valid"
+        assert result.command.params["feedback"] == "looks good"
+        assert result.command.lane_flag == "personal"
+
+    def test_both_lane_flags_are_a_conflict(self):
+        result = parse_command("/nebuko approve gate --personal --project")
+        assert result.status == "malformed"
+        assert result.detail == "lane_conflict"
+
+    def test_lane_flag_takes_no_value(self):
+        result = parse_command("/nebuko run workflow --personal=x")
+        assert result.status == "malformed"
+
+    def test_no_flag_means_no_lane(self):
+        assert parse_command("/nebuko resume").command.lane_flag is None
+
+    def test_personal_command_classifies_as_personal_dispatch(self):
+        assert classify_comment("/nebuko approve gate --personal").kind == "personal_dispatch"
+
+    def test_personal_repo_run_consumes_the_flag(self):
+        intent = classify_comment("/nebuko approve gate --personal", consume_lane_flag=True)
+        assert intent.kind == "command"
+        assert intent.command == "approve"
+
+    def test_indented_personal_command_is_still_a_dispatch(self):
+        # parse_command strips the first line, so the project side must not
+        # read an indented --personal command as a project run.
+        assert classify_comment("    /nebuko run workflow --personal").kind == "personal_dispatch"
+
+    def test_project_command_is_unaffected(self):
+        assert classify_comment("/nebuko approve gate --project").kind == "command"

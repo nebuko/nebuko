@@ -278,7 +278,7 @@ class TestPostedCommentCarriesEngineRecords:
             type="repository_dispatch",
             payload={
                 **base.payload,
-                "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+                "repository": {"full_name": "olivier-norture/nebuko-personal"},
                 "client_payload": {"org_repo": "nebuko/nebuko", "issue_number": 590},
             },
         )
@@ -348,7 +348,7 @@ def _dispatch_trigger(number: int = 1388, body: str = "/nebuko run workflow"):
         number=number,
         payload={
             "client_payload": {"issue_number": number, "prompt_body": body},
-            "repository": {"full_name": "olivier-norture/nebuko-claude-code"},
+            "repository": {"full_name": "olivier-norture/nebuko-personal"},
         },
     )
 
