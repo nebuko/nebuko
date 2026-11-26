@@ -25,15 +25,24 @@ def load_config(path: str = "agent-config.yaml") -> AppConfig:
         FileNotFoundError: If the config file does not exist.
         ValueError: If the config fails validation or cannot be parsed.
     """
-    if not os.path.isfile(path):
-        from nebuko.engine.lib.default_paths import config_path
+    # A personal-run config is read from the run's frozen snapshot (issue #1485).
+    from nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver import (
+        frozen_agent_config_text,
+    )
 
-        path = config_path(path)
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"Config file not found: {path}")
+    frozen = frozen_agent_config_text(path)
+    if frozen is not None:
+        raw = yaml.safe_load(frozen)
+    else:
+        if not os.path.isfile(path):
+            from nebuko.engine.lib.default_paths import config_path
 
-    with open(path) as f:
-        raw = yaml.safe_load(f)
+            path = config_path(path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Config file not found: {path}")
+
+        with open(path) as f:
+            raw = yaml.safe_load(f)
 
     if not isinstance(raw, dict):
         raise ValueError(f"Config file must contain a YAML mapping, got {type(raw).__name__}")

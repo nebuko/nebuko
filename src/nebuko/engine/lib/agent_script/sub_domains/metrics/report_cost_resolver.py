@@ -49,10 +49,18 @@ def load_config_prices(  # @stub-protected
     Fail-open: a missing file, a parse error or no priced entries all yield
     ``{}`` (issue #1144).
     """
+    from nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver import (
+        frozen_agent_config_text,
+    )
+
     path = config_path or agent_config_file()
     try:
-        with open(path) as stream:
-            config = yaml.safe_load(stream) or {}
+        frozen = frozen_agent_config_text(path)
+        if frozen is not None:
+            config = yaml.safe_load(frozen) or {}
+        else:
+            with open(path) as stream:
+                config = yaml.safe_load(stream) or {}
     except Exception:  # noqa: BLE001 — pricing is a report bonus, never fatal
         return {}
     llms = config.get("llms") or {}
