@@ -16,12 +16,17 @@ permissions:
 
 jobs:
   agent:
+    # A comment carrying --personal belongs to the broker's personal lane (ADR-0017,
+    # #1479); starting a project run for it would duplicate the run.
     if: >-
       github.event_name != 'issue_comment' ||
       (
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                 github.event.comment.author_association) ||
-        github.event.comment.user.login == 'nebuko[bot]'
+        (
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                   github.event.comment.author_association) ||
+          github.event.comment.user.login == 'nebuko[bot]'
+        ) &&
+        !contains(github.event.comment.body, '--personal')
       )
     uses: nebuko/nebuko/.github/workflows/nebuko-workflow.yaml@${pin_ref}
     with:
