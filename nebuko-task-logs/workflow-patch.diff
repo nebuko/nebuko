@@ -1,0 +1,39 @@
+diff --git a/.github/workflows/nebuko-workflow.yaml b/.github/workflows/nebuko-workflow.yaml
+index d7699c7..e73d456 100644
+--- a/.github/workflows/nebuko-workflow.yaml
++++ b/.github/workflows/nebuko-workflow.yaml
+@@ -43,6 +43,11 @@ on:
+         required: false
+         type: string
+         default: ''
++      personal_repo:
++        description: 'The caller''s personal repo (ADR-0017 Lane D, nebuko-personal), checked out read-only into .nebuko-personal for its agent config. Must be the caller repository: the run token only reads that repo. Empty: no personal checkout.'
++        required: false
++        type: string
++        default: ''
+       issue_number:
+         description: 'Issue number in org_repo that the agent answers on (repository_dispatch callers only)'
+         required: false
+@@ -427,6 +432,22 @@ jobs:
+                 echo "REPO_NAME=$ORG_REPO" >> "$GITHUB_ENV"
+                 echo "TARGET_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_ENV"
+ 
++            # Lane D: the personal repo's .nebuko/agents and manifest. Read-only,
++            # default branch, no credentials kept; the path is kept out of the
++            # project's commits and read only by the personal lane.
++            - name: Checkout personal repository
++              if: inputs.personal_repo != ''
++              uses: actions/checkout@v5
++              with:
++                repository: ${{ inputs.personal_repo }}
++                token: ${{ github.token }}
++                path: .nebuko-personal
++                persist-credentials: false
++
++            - name: Keep personal checkout out of the project commits
++              if: inputs.personal_repo != ''
++              run: echo "/.nebuko-personal/" >> .git/info/exclude
++
+             # Always a separate checkout, nebuko's own runs included: the engine
+             # creates, merges and commits the feature branch in the workspace,
+             # so running it from there would swap its own code mid-run (and a
