@@ -83,49 +83,22 @@ class TestPersonalLane:
 class TestNamePrecedence:
     def test_flag_beats_everything(self):
         name, source = select_config_name(
-            flag="f.yaml", previous="p.yaml", personal_manifest="m.yaml",
-            project_manifest="j.yaml", carry_previous=True,
+            flag="f.yaml", personal_manifest="m.yaml", project_manifest="j.yaml",
         )
         assert (name, source) == ("f.yaml", "flag")
 
-    def test_previous_state_beats_manifests(self):
-        name, source = select_config_name(
-            flag=None, previous="p.yaml", personal_manifest="m.yaml",
-            project_manifest="j.yaml", carry_previous=True,
-        )
-        assert (name, source) == ("p.yaml", "previous")
-
     def test_personal_manifest_then_project_manifest(self):
         assert select_config_name(
-            flag=None, previous=None, personal_manifest="m.yaml",
-            project_manifest="j.yaml", carry_previous=True,
+            flag=None, personal_manifest="m.yaml", project_manifest="j.yaml",
         ) == ("m.yaml", "personal_manifest")
         assert select_config_name(
-            flag=None, previous=None, personal_manifest=None,
-            project_manifest="j.yaml", carry_previous=True,
+            flag=None, personal_manifest=None, project_manifest="j.yaml",
         ) == ("j.yaml", "project_manifest")
 
     def test_nothing_set_means_shipped_default(self):
         assert select_config_name(
-            flag=None, previous=None, personal_manifest=None,
-            project_manifest=None, carry_previous=True,
+            flag=None, personal_manifest=None, project_manifest=None,
         ) == (None, None)
-
-    def test_takeover_or_lane_switch_drops_previous_name(self):
-        # The first person's config name must not be looked up in the second
-        # person's personal repo.
-        name, source = select_config_name(
-            flag=None, previous="first.yaml", personal_manifest="second.yaml",
-            project_manifest=None, carry_previous=False,
-        )
-        assert (name, source) == ("second.yaml", "personal_manifest")
-
-    def test_flag_still_applies_after_takeover(self):
-        name, _ = select_config_name(
-            flag="mine.yaml", previous="first.yaml", personal_manifest=None,
-            project_manifest=None, carry_previous=False,
-        )
-        assert name == "mine.yaml"
 
 
 class TestHelpers:

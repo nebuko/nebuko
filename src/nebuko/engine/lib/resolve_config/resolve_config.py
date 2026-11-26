@@ -201,8 +201,6 @@ def _apply_dispatch_fields(
     return WorkflowCommand(action=wf_cmd.action, resource=wf_cmd.resource, params=params), None
 
 
-_LANE_CHANGE_ACTIONS = frozenset({"takeover", "move_to_project", "switch_to_personal"})
-
 #: Intents that run something. Lane stickiness guards only these: plain prose on
 #: a personal thread is never refused (issue #1479).
 _RUNNING_INTENTS = frozenset({"command", "agent_trigger"})
@@ -253,17 +251,14 @@ def _is_path_like(name: str) -> bool:
 def _agent_config_selection(
     trigger_body: str,
     wf_cmd: Optional[WorkflowCommand],
-    prev_state,
     *,
     requested_config: Optional[str],
-    lane_action: str,
     personal_lane: bool,
 ) -> dict:
     """Agent-config keys for this run (issues #1389, #1479).
 
-    Name order: ``--config``, the previous state's name (dropped on a takeover
-    or lane switch), the personal manifest (personal lane only), the project
-    manifest, then the shipped default. The personal lane resolves names only
+    Name order: ``--config``, the personal manifest (personal lane only), the
+    project manifest, then the shipped default. The personal lane resolves names only
     in the personal checkout and the shipped defaults, never in the project's
     ``.nebuko/agents``, and checks the config's secrets against the personal
     environment. Returns ``{}`` to keep the workflow's own AGENT_CONFIG_PATH.
@@ -304,32 +299,11 @@ def _agent_config_selection(
             "manifest and agent configs were not read, so this run uses the shipped "
             "defaults"
         )
-    previous_name = prev_state.agent_config if prev_state is not None else None
-    carry_previous = lane_action not in _LANE_CHANGE_ACTIONS
     name, source = select_config_name(
         flag=requested_config,
-        previous=previous_name,
         personal_manifest=personal_manifest_name,
         project_manifest=project_manifest_name,
-        carry_previous=carry_previous,
     )
-    if source == "previous" and name and not _is_path_like(name):
-        try:
-            resolver.resolve(name)
-        except AgentConfigNotFound:
-            # A persisted name that no longer resolves falls back to the manifests
-            # and shipped default, in both lanes, instead of failing the resume.
-            print(
-                f"Warning: persisted agent config '{name}' not found; falling back to the manifest or default",
-                file=sys.stderr,
-            )
-            name, source = select_config_name(
-                flag=None,
-                previous=None,
-                personal_manifest=personal_manifest_name,
-                project_manifest=project_manifest_name,
-                carry_previous=False,
-            )
     if name is None and personal_lane:
         name = Path(os.environ.get("AGENT_CONFIG_PATH") or "agent-config.yaml").name
         source = "shipped"
@@ -761,9 +735,7 @@ def resolve_config(
         _agent_config_selection(
             trigger_body,
             wf_cmd,
-            prev_state,
             requested_config=requested_config,
-            lane_action=lane_action,
             personal_lane=personal_lane,
         )
     )

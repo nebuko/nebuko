@@ -141,27 +141,21 @@ class AgentConfigResolver:
 def select_config_name(
     *,
     flag: Optional[str],
-    previous: Optional[str],
     personal_manifest: Optional[str],
     project_manifest: Optional[str],
-    carry_previous: bool,
 ) -> tuple[Optional[str], Optional[str]]:
     """The config name and its source, first non-empty wins (issue #1479).
 
-    Order: the ``--config`` flag, the previous state's name, the personal
-    manifest (personal lane only; pass ``None`` elsewhere), the project
-    manifest. ``None`` means the shipped default applies.
-
-    ``carry_previous`` is False on a takeover or a lane switch: the previous
-    name belongs to the other person or lane and must not be looked up again.
+    Order: the ``--config`` flag, the personal manifest (personal lane only;
+    pass ``None`` elsewhere), the project manifest. ``None`` means the shipped
+    default applies.
 
     Returns:
-        ``(name, source)``; ``source`` is ``"flag"``, ``"previous"``,
-        ``"personal_manifest"``, ``"project_manifest"`` or ``None``.
+        ``(name, source)``; ``source`` is ``"flag"``, ``"personal_manifest"``,
+        ``"project_manifest"`` or ``None``.
     """
     candidates = (
         ("flag", flag),
-        ("previous", previous if carry_previous else None),
         ("personal_manifest", personal_manifest),
         ("project_manifest", project_manifest),
     )
