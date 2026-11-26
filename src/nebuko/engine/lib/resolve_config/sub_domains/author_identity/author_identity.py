@@ -12,7 +12,7 @@ login/type/association come from CI environment variables (see the CI wiring in
 from scanning the body for known agent tokens.
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
@@ -107,12 +107,30 @@ def build_author_identity(
     user_type: str,
     association: str,
     trigger_body: str,
+    dispatch_actor: Optional[str] = None,
+    dispatch_actor_verified: bool = False,
+    dispatch_association: str = "",
 ) -> AuthorIdentity:
     """Assemble an :class:`AuthorIdentity` from CI event fields.
 
     The login/type/association come from the GitHub event (CI environment),
     never from body markers; only ``is_machine_comment`` reads the body.
+
+    A personal-repo dispatch has no comment author, so the event fields are
+    empty and the author would be the bot. When the engine has verified the
+    dispatch actor (issue #1482), pass it as ``dispatch_actor`` with
+    ``dispatch_actor_verified=True``: the identity is then that actor with the
+    ``dispatch_association`` the engine looked up. Unverified, the arguments
+    are ignored.
     """
+    if dispatch_actor_verified and (dispatch_actor or "").strip():
+        verified_login = dispatch_actor.strip()
+        return AuthorIdentity(
+            login=verified_login,
+            is_bot=is_bot_login(verified_login),
+            association=(dispatch_association or "").strip(),
+            is_machine_comment=is_machine_comment(trigger_body or ""),
+        )
     normalized_login = (login or "").strip()
     is_bot = (user_type or "").strip() == "Bot" or is_bot_login(normalized_login)
     return AuthorIdentity(

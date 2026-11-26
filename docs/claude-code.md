@@ -89,7 +89,9 @@ A `step` dispatch is a `run workflow` entry. `_resolve_human_path` in
 `resolve_route.py` enters the step without calling `_gate_pending` or `_armed_gate`,
 which only the resume, outcome and bot paths consult, so the dispatch does not check
 a gate lock. A `/nebuko approve gate` comment on the org issue cannot release a gate
-for a user-repo workflow (see Known limits).
+for a user-repo workflow (see Known limits). A dispatched `approve gate` to the
+personal repo can, when it comes from the repository owner with write access on the
+project repo (ADR 0017, issue #1482).
 
 - `single_step`: `true` runs exactly one step and stops, as before single-job mode.
   The same switch is `WORKFLOW_SINGLE_STEP=1` in the job environment.
@@ -235,11 +237,10 @@ Current behaviour and the follow-ups still open:
   design issue #1433 is closed, but the routing is still open.
 - Comment commands on the org issue never use the user's credential. The org
   workflow cannot run a user-repo workflow, so `/nebuko approve gate` and similar
-  comments are refused with `lane-binding` and the approval is NOT recorded. Until a
-  dispatch can approve a gate, the owner dispatches `step=<next step>` directly. That
-  entry does not check the gate lock (see "Manual dispatch"). The org-side notice in
-  `src/nebuko/engine/step_driver.py` (`_CONTINUE_TODAY`) still says to run
-  `/nebuko approve gate` on the org issue; that is a code fix, not a docs fix.
+  comments are refused with `lane-binding` and the approval is NOT recorded. The
+  owner dispatches `/nebuko approve gate` to the personal repo instead (issue #1482;
+  the project-repo permission lookup must be measured once, see ADR 0017). The
+  `step=<next step>` dispatch does not check the gate lock (see "Manual dispatch").
 - The bridge is not deployed (token-broker#53).
 - Per-run Actions minutes apply to the user's repo. The 6 h job cap applies to
   the single job, so the wall-clock budget (`WORKFLOW_WALL_CLOCK_S`, default 3000 s)
