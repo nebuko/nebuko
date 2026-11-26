@@ -171,6 +171,7 @@ _MANAGED_ENV_KEYS = (
 )
 
 _MANIFEST_RELPATH = ".nebuko/nebuko.yaml"
+_MANIFEST_NOTE_ENV = "NEBUKO_MANIFEST_NOTE"
 _DEFAULT_BASE_BRANCH = "main"
 _BRANCH_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
 
@@ -623,56 +624,92 @@ def _manifest_overlay(workspace: Path | None) -> dict[str, str] | None:
     """The engine env with the committed manifest filling unset keys (issue #1475).
 
     ``None`` without a workspace, where the child keeps the ambient environment.
+    A manifest that could not be read or is invalid leaves a note in
+    ``NEBUKO_MANIFEST_NOTE`` so ``run_tests`` can say so instead of "not configured".
     """
     if workspace is None:
         return None
-    return _committed_manifest(workspace).overlay_env(os.environ)
+    manifest, note = _committed_manifest(workspace)
+    env = manifest.overlay_env(os.environ)
+    if note:
+        env[_MANIFEST_NOTE_ENV] = note
+    return env
 
 
-def _committed_manifest(workspace: Path) -> NebukoManifest:
+def _committed_manifest(workspace: Path) -> tuple[NebukoManifest, str | None]:
     """The manifest committed on the base branch, never the working-tree copy.
 
     The session checkout is the branch under review and the dev agent can edit
-    it, so a ``test_command`` changed there must not change what ``run_tests``
-    runs. The base name only locates the ref: it is read from the working tree,
-    validated, and defaults to ``main``. An absent or unreadable committed
-    manifest means no manifest settings.
+    it, so nothing read from it may pick the ref or change what ``run_tests``
+    runs. Returns the manifest and a note when it could not be read from
+    ``origin/<base>`` (ref not fetched, git failure) or is invalid. An absent
+    file on a readable base is a repo without a manifest: no note.
     """
     import yaml
 
-    base = _working_tree_base_branch(workspace)
+    base = _trusted_base_branch(workspace)
+    ref = f"origin/{base}"
+    unreadable = f"committed {_MANIFEST_RELPATH} could not be read from {ref}; no test_command was checked"
     try:
+        listed = subprocess.run(
+            ["git", "-C", str(workspace), "ls-tree", "--name-only", ref, "--", _MANIFEST_RELPATH],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if listed.returncode != 0:
+            log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+            return NebukoManifest(), unreadable
+        if not listed.stdout.strip():
+            return NebukoManifest(), None
         completed = subprocess.run(
-            ["git", "-C", str(workspace), "show", f"origin/{base}:{_MANIFEST_RELPATH}"],
+            ["git", "-C", str(workspace), "show", f"{ref}:{_MANIFEST_RELPATH}"],
             capture_output=True,
             text=True,
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired):
-        log.warning("could not read %s from origin/%s", _MANIFEST_RELPATH, base)
-        return NebukoManifest()
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
     if completed.returncode != 0:
-        return NebukoManifest()
+        log.warning("could not read %s from %s", _MANIFEST_RELPATH, ref)
+        return NebukoManifest(), unreadable
     try:
         raw = yaml.safe_load(completed.stdout) or {}
         if not isinstance(raw, dict):
             raise ValueError("manifest must be a mapping")
-        return NebukoManifest.model_validate(raw)
+        return NebukoManifest.model_validate(raw), None
     except (ValueError, yaml.YAMLError) as exc:
-        log.warning("committed %s on origin/%s is invalid: %s", _MANIFEST_RELPATH, base, exc)
-        return NebukoManifest()
+        log.warning("committed %s on %s is invalid: %s", _MANIFEST_RELPATH, ref, exc)
+        invalid = f"committed {_MANIFEST_RELPATH} on {ref} is invalid; no test_command was checked"
+        return NebukoManifest(), invalid
 
 
-def _working_tree_base_branch(workspace: Path) -> str:
-    """The base branch named by the working-tree manifest; only used to find its ref."""
-    import yaml
+def _trusted_base_branch(workspace: Path) -> str:
+    """The base branch that locates the committed manifest; never the working tree.
 
+    The engine's own ``NEBUKO_BASE_BRANCH`` first, then the remote's default
+    branch (``origin/HEAD``), then ``main``. The working-tree manifest is not
+    read: a branch that names another base could otherwise pick its own ref.
+    """
+    engine_base = (os.environ.get("NEBUKO_BASE_BRANCH") or "").strip()
+    if engine_base and _is_branch_name(engine_base):
+        return engine_base
+    if engine_base:
+        log.warning("NEBUKO_BASE_BRANCH %r is not a valid branch name; ignored", engine_base)
     try:
-        raw = yaml.safe_load((workspace / _MANIFEST_RELPATH).read_text(encoding="utf-8"))
-        base = NebukoManifest.model_validate(raw or {}).base_branch
-    except (OSError, ValueError, yaml.YAMLError):
-        base = None
-    return base or _DEFAULT_BASE_BRANCH
+        head = subprocess.run(
+            ["git", "-C", str(workspace), "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return _DEFAULT_BASE_BRANCH
+    name = head.stdout.strip()
+    if head.returncode == 0 and name.startswith("origin/") and _is_branch_name(name[len("origin/"):]):
+        return name[len("origin/"):]
+    return _DEFAULT_BASE_BRANCH
 
 
 def _script_process_context(

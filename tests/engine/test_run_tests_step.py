@@ -8,6 +8,7 @@ repository whose committed ``.nebuko/nebuko.yaml`` is the trusted copy.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
@@ -56,6 +57,15 @@ def _repo(tmp_path: Path, committed: str | None, working: str | None) -> Path:
         (checkout / ".nebuko").mkdir(exist_ok=True)
         (checkout / ".nebuko" / "nebuko.yaml").write_text(working)
     return checkout
+
+
+def _publish_branch(checkout: Path, name: str, manifest: str) -> None:
+    """Push ``name`` to origin with ``manifest`` committed, then leave the checkout on the feature branch."""
+    _git(checkout, "checkout", "-q", "-b", name, "origin/main")
+    (checkout / ".nebuko" / "nebuko.yaml").write_text(manifest)
+    _git(checkout, "commit", "-q", "-am", name)
+    _git(checkout, "push", "-q", "origin", name)
+    _git(checkout, "checkout", "-q", "feature/issue-1-x")
 
 
 def _shipped_script(workflow: str, step_name: str):
@@ -159,6 +169,61 @@ class TestRunTestsStep:
 
         assert NO_COMMAND in result.output
         assert "edited-cmd" not in result.output
+
+    def test_a_base_named_on_the_branch_does_not_pick_the_ref(self, tmp_path, monkeypatch, engine_env):
+        checkout = _repo(tmp_path, committed="test_command: echo committed-cmd\n", working=None)
+        _publish_branch(checkout, "evil", "test_command: echo evil-cmd\n")
+        (checkout / ".nebuko" / "nebuko.yaml").write_text(
+            "base_branch: evil\ntest_command: echo edited-cmd\n"
+        )
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
+
+        result = _run_tests_step().execute(adapter=None)
+
+        assert result.ok
+        assert "committed-cmd" in result.output
+        assert "evil-cmd" not in result.output
+        assert "edited-cmd" not in result.output
+
+    def test_the_engine_base_branch_selects_the_ref(self, tmp_path, monkeypatch, engine_env):
+        checkout = _repo(tmp_path, committed="test_command: echo committed-cmd\n", working=None)
+        _publish_branch(checkout, "evil", "test_command: echo evil-cmd\n")
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
+        monkeypatch.setenv("NEBUKO_BASE_BRANCH", "evil")
+
+        result = _run_tests_step().execute(adapter=None)
+
+        assert "evil-cmd" in result.output
+        assert "committed-cmd" not in result.output
+
+    def test_a_base_not_fetched_is_reported_as_unreadable_not_as_none(
+        self, tmp_path, monkeypatch, engine_env, caplog
+    ):
+        checkout = _repo(tmp_path, committed="test_command: echo committed-cmd\n", working=None)
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
+        monkeypatch.setenv("NEBUKO_BASE_BRANCH", "not-fetched")
+
+        with caplog.at_level(logging.WARNING):
+            result = _run_tests_step().execute(adapter=None)
+
+        assert result.ok
+        assert "could not be read from origin/not-fetched" in result.output
+        assert NO_COMMAND not in result.output
+        assert "could not read .nebuko/nebuko.yaml from origin/not-fetched" in caplog.text
+
+    def test_an_invalid_committed_manifest_is_reported_as_invalid(
+        self, tmp_path, monkeypatch, engine_env, caplog
+    ):
+        checkout = _repo(tmp_path, committed='base_branch: "../evil"\n', working=None)
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(checkout))
+
+        with caplog.at_level(logging.WARNING):
+            result = _run_tests_step().execute(adapter=None)
+
+        assert result.ok
+        assert "is invalid" in result.output
+        assert NO_COMMAND not in result.output
+        assert "is invalid" in caplog.text
 
     def test_an_explicit_step_env_beats_the_committed_manifest(
         self, tmp_path, monkeypatch, engine_env

@@ -772,7 +772,9 @@ test evidence. Review does not run the suite itself and calls a failure
 pre-existing only with a run of that test on the base branch.
 
 Trust model: `test_command` is read from the base branch's committed manifest,
-so a branch cannot change the command that runs. The tests themselves are the
+so a branch cannot change the command that runs. The base ref is the engine's
+`NEBUKO_BASE_BRANCH`, else `origin/HEAD`, else `main`; the working-tree manifest
+is never read for it. The tests themselves are the
 branch's code (a `conftest.py` on the branch runs inside the engine job, next
 to the provider and GitHub secrets). `run_tests` does not set
 `NEBUKO_MERGE_MAIN=0`: it merges `origin/<base_branch>` after `git_diff` has read

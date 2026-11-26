@@ -33,10 +33,14 @@ command that runs on its own code.
 
 - A `test_command` changed on the branch does not change what `run_tests` runs.
   It takes effect once it is merged to the base branch.
-- The working-tree copy is read only to find the base branch name, which must be
-  valid. It defaults to `main`.
+- The base ref is found without the working tree: the engine's `NEBUKO_BASE_BRANCH`,
+  else the remote's default branch (`origin/HEAD`), else `main`. A working-tree
+  `base_branch` is ignored, so a branch cannot point the lookup at a ref it made.
 - A repo with no committed manifest on the base branch gets no manifest settings
   in script steps. `run_tests` then reports `no test_command configured`.
+- If the committed manifest cannot be read (`origin/<base>` not fetched, or git
+  fails) or is invalid, `run_tests` says so, exits 0 so review still runs, and
+  logs a warning. It does not report `no test_command configured`.
 
 **Trust model.** `test_command` runs with `eval` inside the engine job. That job
 holds the provider secrets and the GitHub token. Whoever can merge to the base

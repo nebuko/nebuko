@@ -42,7 +42,7 @@ steps:
         - "-c"
         - >-
           case "$(printf '%s' "${NEBUKO_TEST_COMMAND:-}" | tr -d '[:space:]')" in
-          "") echo "no test_command configured in .nebuko/nebuko.yaml"; exit 0 ;;
+          "") if [ -n "${NEBUKO_MANIFEST_NOTE:-}" ]; then echo "$NEBUKO_MANIFEST_NOTE"; else echo "no test_command configured in .nebuko/nebuko.yaml"; fi; exit 0 ;;
           esac;
           eval "$NEBUKO_TEST_COMMAND"
       timeout_minutes: 20

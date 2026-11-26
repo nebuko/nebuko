@@ -417,3 +417,55 @@ class TestSingleJobHandOff:
         assert outcome.exit_code == ExitCode.ADVANCE
         assert f"branch: `{BRANCH}`" in outcome.posted_body
         assert pushed in outcome.posted_body
+
+    def test_run_tests_reads_the_manifest_from_the_base_ref(
+        self, tmp_path, workspace, monkeypatch
+    ):
+        """The in-process loop must read ``test_command`` from ``origin/main``, not the checkout."""
+        remote = _git(workspace, "remote", "get-url", "origin")
+        publisher = tmp_path / "publisher"
+        subprocess.run(["git", "clone", "-q", remote, str(publisher)], check=True)
+        _git(publisher, "config", "user.name", "t")
+        _git(publisher, "config", "user.email", "t@example.com")
+        (publisher / ".nebuko").mkdir()
+        (publisher / ".nebuko" / "nebuko.yaml").write_text("test_command: echo committed-cmd\n")
+        _git(publisher, "add", "-A")
+        _git(publisher, "commit", "-q", "-m", "manifest")
+        _git(publisher, "push", "-q", "origin", "HEAD:main")
+        _git(workspace, "fetch", "-q", "origin", "main")
+        (workspace / ".nebuko").mkdir(exist_ok=True)
+        (workspace / ".nebuko" / "nebuko.yaml").write_text("test_command: echo edited-cmd\n")
+        monkeypatch.delenv("NEBUKO_BASE_BRANCH", raising=False)
+        monkeypatch.delenv("NEBUKO_TEST_COMMAND", raising=False)
+        engine = _engine(tmp_path, workspace, monkeypatch)
+        handed = WorkflowState.model_validate(
+            {
+                "workflow": "default",
+                "step": "implement",
+                "agent": "dev",
+                "current_context": {},
+                "git": {"branch_name": BRANCH},
+                "history": [
+                    {
+                        "step": "implement",
+                        "agent": "dev",
+                        "turn_outcome": {"status": "completed", "appreciation": "approved"},
+                    }
+                ],
+            }
+        )
+        monkeypatch.setattr("nebuko.engine.run_loop.handed_over_state", lambda: handed)
+        _patch_resolver(
+            monkeypatch,
+            _script_resolved(
+                "sh",
+                ["-c", 'echo "RAN:${NEBUKO_TEST_COMMAND}"'],
+                SCRIPT_ENV=json.dumps({"NEBUKO_MERGE_MAIN": "0"}),
+            ),
+        )
+
+        outcome = engine.run()
+
+        assert outcome.exit_code == ExitCode.ADVANCE
+        assert "RAN:echo committed-cmd" in outcome.posted_body
+        assert "edited-cmd" not in outcome.posted_body
