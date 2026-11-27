@@ -297,7 +297,11 @@ def resolve_llm_config(args, prompt: str) -> tuple[dict, str, object | None]:
     # ── Agent-config file (sole source of LLM configuration) ─────
     # The legacy LLM_* env-var fallback was removed (issue #925): every failure
     # below is fatal and typed, never a silent substitution.
-    if not os.path.isfile(config_path):
+    from nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver import (
+        frozen_agent_config_text,
+    )
+
+    if not os.path.isfile(config_path) and frozen_agent_config_text(config_path) is None:
         raise LLMConfigError.config_file_missing(config_path, role_name)
 
     from nebuko.engine.lib.config import load_config

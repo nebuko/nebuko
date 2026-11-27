@@ -36,6 +36,7 @@ from .features.resolve_route.agent_config_resolver import (
     PERSONAL_CHECKOUT_DIR,
     AgentConfigNotFound,
     AgentConfigResolver,
+    current_personal_snapshot,
     personal_run_from_env,
     required_secret_envs,
     select_config_name,
@@ -274,15 +275,24 @@ def _agent_config_selection(
 
     caller_root = ConfigPathAnchor.resolve_caller_root(os.environ)
     personal_root = caller_root / PERSONAL_CHECKOUT_DIR
+    # The personal manifest was read once before the run's first step (issue #1485).
+    snapshot = current_personal_snapshot() if personal_lane else None
     personal_manifest_name = None
-    if personal_lane:
+    if personal_lane and snapshot is not None:
+        ignored = list(snapshot.manifest_ignored)
+        personal_manifest_name = snapshot.config_name
+        if snapshot.note:
+            print(f"Warning: {snapshot.note}", file=sys.stderr)
+    elif personal_lane:
         manifest, ignored = PersonalManifest.load(personal_root / ".nebuko" / "nebuko.yaml")
+        personal_manifest_name = manifest.agent_config
+    if personal_lane:
         for key in ignored:
             print(
                 f"Warning: ignoring '{key}' in the personal manifest; only agent_config is read there",
                 file=sys.stderr,
             )
-        personal_manifest_name = manifest.agent_config
+    personal_present = personal_lane and (snapshot is not None or personal_root.is_dir())
     try:
         project_manifest_name = load_manifest(caller_root / ".nebuko" / "nebuko.yaml").agent_config
     except Exception as exc:  # noqa: BLE001 - a bad manifest must not crash routing
@@ -292,11 +302,11 @@ def _agent_config_selection(
     resolver = AgentConfigResolver.for_run(
         "personal" if personal_lane else "project",
         caller_root,
-        personal_root if personal_lane and personal_root.is_dir() else None,
+        personal_root if personal_present else None,
         checkout_root() / "defaults" / "agents",
     )
     checkout_notice = ""
-    if personal_lane and not personal_root.is_dir():
+    if personal_lane and not personal_present:
         # Without the checkout the personal manifest and overrides cannot be read,
         # so whether they would have changed the config is unknowable: say so.
         checkout_notice = (
@@ -369,7 +379,10 @@ def _agent_config_selection(
 
     if personal_lane:
         try:
-            required = required_secret_envs(resolved.path)
+            if resolved.layer == "personal" and snapshot is not None and name == snapshot.config_name:
+                required = list(snapshot.secret_names)
+            else:
+                required = required_secret_envs(resolved.path)
         except Exception as exc:  # noqa: BLE001 - reported to the thread, not a crash
             return {"task": "", "config_command_error": f"agent config '{name}' is unreadable: {exc}"}
         message = check_personal_secrets(name, required, os.environ)

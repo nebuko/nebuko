@@ -6042,3 +6042,78 @@ class TestUnpublishedBranchNotice:
         assert engine._notice_base() == "trunk"
         assert engine._branch_publish_note() == ""
 
+
+
+class TestPersonalConfigFrozenForAgentInvocation:
+    """The env an agent invocation gets carries the personal config frozen at run start (issue #1485).
+
+    A dev step rewrites the personal config and manifest; the next invocation's
+    env must still resolve the original endpoint in the child process.
+    """
+
+    PERSONAL_ENDPOINT = "https://personal.example/v1"
+    EVIL_ENDPOINT = "https://evil.example/v1"
+
+    def _personal_workspace(self, tmp_path, monkeypatch) -> Path:
+        workspace = tmp_path / "ws"
+        personal = workspace / ".nebuko-personal" / ".nebuko"
+        (personal / "agents").mkdir(parents=True)
+        (personal / "nebuko.yaml").write_text("agent_config: agent-config-personal.yaml\n")
+        shipped = (repo_root() / "defaults" / "agents" / "agent-config-openrouter.yaml").read_text(
+            encoding="utf-8"
+        )
+        (personal / "agents" / "agent-config-personal.yaml").write_text(
+            shipped.replace("https://openrouter.ai/api/v1", self.PERSONAL_ENDPOINT), encoding="utf-8"
+        )
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "alice/nebuko-personal")
+        # The agent child resolves its role from the environment; pin it so the test
+        # does not depend on what the surrounding process happens to export.
+        monkeypatch.setenv("ROLE_NAME", "architect")
+        monkeypatch.delenv("AGENT_CONFIG_PATH", raising=False)
+        return workspace
+
+    def test_a_mid_run_rewrite_does_not_reach_the_next_agent_invocation(self, tmp_path, monkeypatch):
+        import importlib
+        from types import SimpleNamespace
+
+        resolver = importlib.import_module(
+            "nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver"
+        )
+        resolve_llm = importlib.import_module(
+            "nebuko.engine.lib.agent_script.features.resolve_llm_config.resolve_llm_config"
+        )
+        workspace = self._personal_workspace(tmp_path, monkeypatch)
+        personal = workspace / ".nebuko-personal" / ".nebuko"
+        config_path = personal / "agents" / "agent-config-personal.yaml"
+        engine = _engine(
+            tmp_path,
+            env={
+                "GITHUB_REPOSITORY": "alice/nebuko-personal",
+                "GITHUB_WORKSPACE": str(workspace),
+                "AGENT_CONFIG_PATH": str(config_path),
+            },
+        )
+        _stub_resolved(monkeypatch, {"ROLE_NAME": "dev", "TASK": "dev"})
+
+        with resolver.personal_snapshot_scope(workspace):
+            first_env = engine._agent_env()
+            # The dev agent's step rewrites the endpoint and repoints the manifest.
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8").replace(self.PERSONAL_ENDPOINT, self.EVIL_ENDPOINT),
+                encoding="utf-8",
+            )
+            (personal / "nebuko.yaml").write_text("agent_config: agent-config-evil.yaml\n", encoding="utf-8")
+            second_env = engine._agent_env()
+
+        def child_base_url(env):
+            # The agent child: a fresh process that sees only the engine's hand-off env.
+            monkeypatch.setattr(resolver, "_CURRENT_SNAPSHOT", None)
+            monkeypatch.setenv(resolver.PERSONAL_SNAPSHOT_ENV, env[resolver.PERSONAL_SNAPSHOT_ENV])
+            monkeypatch.setenv("AGENT_CONFIG_PATH", env["AGENT_CONFIG_PATH"])
+            llm_config, _prompt, _agent = resolve_llm.resolve_llm_config(SimpleNamespace(), "")
+            return llm_config["base_url"]
+
+        assert second_env["AGENT_CONFIG_PATH"] == str(config_path)
+        assert child_base_url(first_env).startswith(self.PERSONAL_ENDPOINT)
+        assert child_base_url(second_env) == child_base_url(first_env)

@@ -104,6 +104,9 @@ from nebuko.engine.lib.workflow_state import (
     TurnOutcome,
     TurnStatus,
 )
+from nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver import (
+    personal_snapshot_child_env,
+)
 from nebuko.engine.lib.resolve_config.sub_domains.author_identity.author_identity import (
     is_bot_login,
 )
@@ -3450,7 +3453,10 @@ class Engine:
             env, self._step_input_state.get("results") or []
         )
         env = _with_context_bodies(env, self._context_bodies())
-        return _anchor_config_path(env, self.repo_root, self._caller_root())
+        env = _anchor_config_path(env, self.repo_root, self._caller_root())
+        # The frozen personal config, so the child never re-reads the personal checkout (issue #1485).
+        env.update(personal_snapshot_child_env(env.get("AGENT_CONFIG_PATH")))
+        return env
 
     def _active_trigger(self) -> Trigger | None:
         """The trigger the resolver annotated the hand-off with, if any.

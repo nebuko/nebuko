@@ -19,7 +19,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nebuko.engine.lib.loop_step import LOOP_STEP_ENV
-from nebuko.engine.models import ExitCode, RunOutcome, SkipKind, base_snapshot_scope
+from nebuko.engine.lib.resolve_config.features.resolve_route.agent_config_resolver import (
+    personal_snapshot_scope,
+)
+from nebuko.engine.models import (
+    ExitCode,
+    RunOutcome,
+    SkipKind,
+    base_snapshot_scope,
+    session_workspace,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import bootstrap only
     from nebuko.engine.run_loop import Engine
@@ -176,7 +185,7 @@ class StepDriver:
         The base branch is resolved inside one snapshot scope before the first
         step, so no agent step of the run can move the refs script steps read (issue #1475).
         """
-        with base_snapshot_scope():
+        with base_snapshot_scope(), personal_snapshot_scope(session_workspace()):
             if not self._cfg.enabled:
                 # Outside the loop the step runs exactly as before: same env, same token.
                 return self._run_step(1, looping=False)
