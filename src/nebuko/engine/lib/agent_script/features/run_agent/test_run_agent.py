@@ -1256,6 +1256,9 @@ class TestLaneBinding(unittest.TestCase):
 
     def test_bot_created_dispatch_with_owner_payload_binds_the_user_repo_lane(self):
         from nebuko.engine.harness.credentials import authorize_lane_binding
+        from nebuko.engine.lib.resolve_config.sub_domains.dispatch_actor.dispatch_actor import (
+            personal_dispatch_actor,
+        )
 
         self._bot_dispatch_env("alice")
         ctx = self.ra._trigger_facts_from_env()
@@ -1263,8 +1266,15 @@ class TestLaneBinding(unittest.TestCase):
         self.assertIsNone(self.ra._continuation_from_env())
         self.assertEqual((ctx.lane, ctx.credential_owner), ("user-repo", "alice"))
         self.assertTrue(authorize_lane_binding(ctx).allowed)
+        self.assertEqual(personal_dispatch_actor(os.environ), ("alice", ""))
 
     def test_bot_created_dispatch_with_other_payload_actor_is_not_the_user_lane(self):
+        from nebuko.engine.lib.resolve_config.sub_domains.dispatch_actor.dispatch_actor import (
+            REASON_NOT_OWNER,
+            personal_dispatch_actor,
+        )
+
         self._bot_dispatch_env("mallory")
         ctx = self.ra._trigger_facts_from_env()
         self.assertEqual((ctx.lane, ctx.credential_owner), (None, None))
+        self.assertEqual(personal_dispatch_actor(os.environ), ("mallory", REASON_NOT_OWNER))
