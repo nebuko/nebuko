@@ -255,6 +255,9 @@ links to its run stays open until per-run URLs are recorded.
 - The secret lives only in the user's repo. Never store it in a shared repo.
 - Guard 3 (`nebuko-workflow.yaml`): schedule, actor-less and bot-started runs
   are refused. Bot continuations are allowed only under the rule from #1427.
+  A `repository_dispatch` created by the broker's bot is attributed to
+  `client_payload.actor` when it equals `github.repository_owner`; any other
+  payload actor is refused (ADR 0017, #1490).
 - Guard 4 (`owner-guard` job): asserts `client_payload.actor` equals the
   repository owner before any job that can reach the token.
 - Never use the shared org token for a user-started workflow. The repo owner

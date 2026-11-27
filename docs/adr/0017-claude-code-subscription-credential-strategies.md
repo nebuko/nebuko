@@ -334,6 +334,20 @@ CALLER_AUTH association (and equals the credential owner in the per-user lane).
 The engine enforces this in `run_agent._enforce_harness_credentials`. The
 Lane D bridge (token-broker#53) needs the same rule; that is tracked there.
 
+#### Verified dispatch actor (#1490)
+
+A broker-created `repository_dispatch` is made with the App installation token,
+so `github.actor` is the bot (`nebuko-staging[bot]`) and not the human. Guard 3
+therefore takes the initiator from `client_payload.actor`, and only when that
+equals `github.repository_owner`, a value GitHub sets. The bot is transport
+only: the broker has already checked that the commenter holds a write
+association on the project repo, and it dispatches only to
+`{commenter}/nebuko-personal`. A dispatch whose payload actor is not the owner,
+a `schedule` or actor-less event, and a bot on any other event are still refused.
+This widens Guard 3's "no bot-started runs on a personal credential" for
+owner-verified dispatches; the engine's `personal_dispatch_actor` is the shared
+check behind it.
+
 ### Lane binding (user-repo continuations)
 
 A workflow started in a user's own `<login>/nebuko-personal` repo (Lane D)

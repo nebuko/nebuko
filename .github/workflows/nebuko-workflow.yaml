@@ -272,8 +272,8 @@ jobs:
                 EVENT_NAME: ${{ github.event_name }}
                 RUNNER_STRATEGY: ${{ inputs.runner_strategy || 'static' }}
                 RUNS_ON: ${{ inputs.runs_on || '' }}
-                ACTOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login || github.actor || '' }}
-                ACTOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type || '' }}
+                ACTOR_LOGIN: ${{ github.event.comment.user.login || github.event.issue.user.login || (github.event_name == 'repository_dispatch' && github.event.client_payload.actor == github.repository_owner && github.event.client_payload.actor) || github.actor || '' }}
+                ACTOR_TYPE: ${{ github.event.comment.user.type || github.event.issue.user.type || (github.event_name == 'repository_dispatch' && github.event.client_payload.actor == github.repository_owner && 'User') || '' }}
                 CLAUDE_CODE_OAUTH_TOKEN_SECRET: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
                 TRUSTED_BOTS: ${{ inputs.TRUSTED_BOTS || '["nebuko[bot]"]' }}
                 TRIGGER_COMMENT_HEADER: ${{ github.event.comment.body }}

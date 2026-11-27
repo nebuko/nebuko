@@ -1237,3 +1237,44 @@ class TestLaneBinding(unittest.TestCase):
         self.assertEqual(lane_binding_from_env(os.environ, actor), ("user-repo", "alice"))
         os.environ["GITHUB_REPOSITORY_OWNER"] = "nebuko"
         self.assertEqual(lane_binding_from_env(os.environ, actor), (None, None))
+
+    def _bot_dispatch_env(self, payload_actor):
+        import json
+
+        event = os.path.join(self._tmp.name, "event.json")
+        with open(event, "w", encoding="utf-8") as handle:
+            json.dump({"client_payload": {"actor": payload_actor}}, handle)
+        os.environ.update(
+            GITHUB_EVENT_NAME="repository_dispatch",
+            GITHUB_EVENT_PATH=event,
+            GITHUB_ACTOR="nebuko-staging[bot]",
+            GITHUB_REPOSITORY="alice/nebuko-personal",
+            GITHUB_REPOSITORY_OWNER="alice",
+        )
+        for key in ("TRIGGER_AUTHOR_LOGIN", "TRIGGER_AUTHOR_TYPE"):
+            os.environ.pop(key, None)
+
+    def test_bot_created_dispatch_with_owner_payload_binds_the_user_repo_lane(self):
+        from nebuko.engine.harness.credentials import authorize_lane_binding
+        from nebuko.engine.lib.resolve_config.sub_domains.dispatch_actor.dispatch_actor import (
+            personal_dispatch_actor,
+        )
+
+        self._bot_dispatch_env("alice")
+        ctx = self.ra._trigger_facts_from_env()
+        self.assertEqual((ctx.trigger_login, ctx.trigger_type), ("", ""))
+        self.assertIsNone(self.ra._continuation_from_env())
+        self.assertEqual((ctx.lane, ctx.credential_owner), ("user-repo", "alice"))
+        self.assertTrue(authorize_lane_binding(ctx).allowed)
+        self.assertEqual(personal_dispatch_actor(os.environ), ("alice", ""))
+
+    def test_bot_created_dispatch_with_other_payload_actor_is_not_the_user_lane(self):
+        from nebuko.engine.lib.resolve_config.sub_domains.dispatch_actor.dispatch_actor import (
+            REASON_NOT_OWNER,
+            personal_dispatch_actor,
+        )
+
+        self._bot_dispatch_env("mallory")
+        ctx = self.ra._trigger_facts_from_env()
+        self.assertEqual((ctx.lane, ctx.credential_owner), (None, None))
+        self.assertEqual(personal_dispatch_actor(os.environ), ("mallory", REASON_NOT_OWNER))
